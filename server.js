@@ -1173,6 +1173,59 @@ app.delete('/api/reference-presentations/:id', async (req, res) => {
   }
 });
 
+// Public privacy policy page (no auth required — needed for Google OAuth verification)
+app.get('/privacy', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy — Slide Generator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-gray-800">
+  <div class="max-w-3xl mx-auto px-6 py-12">
+    <h1 class="text-3xl font-bold mb-2">Privacy Policy</h1>
+    <p class="text-sm text-gray-500 mb-8">Last updated: June 29, 2026</p>
+
+    <p class="mb-6">Slide Generator ("the App") is an internal demo tool built by Salesforce employees for creating AI-powered Google Slides presentations. This privacy policy explains how the App handles your data.</p>
+
+    <h2 class="text-xl font-semibold mt-8 mb-3">Information We Collect</h2>
+    <p class="mb-4">When you use the App, we collect:</p>
+    <p class="mb-2"><strong>Account Information:</strong> Your Salesforce email address (used for login via Magic Link) and your name.</p>
+    <p class="mb-4"><strong>Google Account Information:</strong> When you connect your Google account, we store OAuth tokens (access and refresh tokens) and your Google email address to create presentations on your behalf.</p>
+    <p class="mb-4"><strong>Presentation Data:</strong> The content and metadata of presentations you create through the App.</p>
+
+    <h2 class="text-xl font-semibold mt-8 mb-3">How We Use Your Information</h2>
+    <p class="mb-2">We use your information solely to:</p>
+    <p class="mb-2">• Authenticate you into the App</p>
+    <p class="mb-2">• Create Google Slides presentations in your Google Drive on your behalf</p>
+    <p class="mb-2">• Share presentations with other users when you choose to do so</p>
+    <p class="mb-4">• Improve the App experience</p>
+
+    <h2 class="text-xl font-semibold mt-8 mb-3">Google API Scopes</h2>
+    <p class="mb-4">The App requests access to the following Google API scopes:</p>
+    <p class="mb-2"><strong>Google Slides (presentations):</strong> To create and modify presentations in your Google account.</p>
+    <p class="mb-2"><strong>Google Drive (drive.file):</strong> To save created presentations to your Google Drive. This scope only accesses files created by the App — not your other Drive files.</p>
+    <p class="mb-4"><strong>User Info (userinfo.email):</strong> To identify which Google account you connected.</p>
+
+    <h2 class="text-xl font-semibold mt-8 mb-3">Data Storage & Security</h2>
+    <p class="mb-4">Your data is stored securely in a managed database. OAuth tokens are stored encrypted. We do not sell, share, or distribute your personal data to third parties.</p>
+
+    <h2 class="text-xl font-semibold mt-8 mb-3">Data Retention & Deletion</h2>
+    <p class="mb-4">You can disconnect your Google account at any time through the App, which deletes your stored OAuth tokens. You can also request deletion of your account and all associated data by contacting the App administrator.</p>
+
+    <h2 class="text-xl font-semibold mt-8 mb-3">Contact</h2>
+    <p class="mb-4">For privacy-related questions, contact the App administrator at the email address provided in the App.</p>
+
+    <div class="mt-12 pt-6 border-t border-gray-200">
+      <p class="text-sm text-gray-400">Slide Generator — An Aubreydemo App</p>
+    </div>
+  </div>
+</body>
+</html>`);
+});
+
 // SPA catch-all — serve index.html for any non-API route (enables deep links like /views/:id)
 app.get('/{*splat}', (req, res) => {
   res.sendFile(path.join(__dirname, 'index.html'));
