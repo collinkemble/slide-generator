@@ -414,17 +414,20 @@ async function getAuthenticatedClient(userId) {
 app.get('/api/auth/google', (req, res) => {
   const state = req.query.email || '';
   const client = createOAuth2Client();
-  const url = client.generateAuthUrl({
+  // Use 'consent' to force consent + refresh token, then append
+  // select_account via URL param so Google shows the account chooser
+  let url = client.generateAuthUrl({
     access_type: 'offline',
-    prompt: 'select_account consent',
+    prompt: 'consent',
     scope: [
       'https://www.googleapis.com/auth/presentations',
       'https://www.googleapis.com/auth/drive.file',
       'https://www.googleapis.com/auth/userinfo.email'
     ],
-    state,
-    include_granted_scopes: true
+    state
   });
+  // Replace prompt=consent with prompt=consent%20select_account in the URL
+  url = url.replace('prompt=consent', 'prompt=consent%20select_account');
   res.redirect(url);
 });
 
