@@ -416,13 +416,14 @@ app.get('/api/auth/google', (req, res) => {
   const client = createOAuth2Client();
   const url = client.generateAuthUrl({
     access_type: 'offline',
-    prompt: 'consent',
+    prompt: 'select_account consent',
     scope: [
       'https://www.googleapis.com/auth/presentations',
       'https://www.googleapis.com/auth/drive.file',
       'https://www.googleapis.com/auth/userinfo.email'
     ],
-    state
+    state,
+    include_granted_scopes: true
   });
   res.redirect(url);
 });
