@@ -41,36 +41,65 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 
 -- =============================================
--- APP-SPECIFIC TABLES — Replace this section
--- Rename "items" to your asset type (e.g. scripts, projects, demos)
+-- APP-SPECIFIC TABLES — Slide Generator
 -- =============================================
 
--- Items table (your app's main asset)
-CREATE TABLE IF NOT EXISTS items (
+-- Presentations (main asset)
+CREATE TABLE IF NOT EXISTS presentations (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_id INT NOT NULL,
   name VARCHAR(255) NOT NULL,
   data JSON,
+  google_presentation_id VARCHAR(255),
+  google_presentation_url VARCHAR(512),
+  status ENUM('draft', 'generating', 'completed', 'failed') DEFAULT 'draft',
   shared_by_email VARCHAR(255) DEFAULT NULL,
   shared_at TIMESTAMP NULL DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-  INDEX idx_user_items (user_id)
+  INDEX idx_user_presentations (user_id)
 );
 
--- Shared items tracking table
-CREATE TABLE IF NOT EXISTS shared_items (
+-- Google OAuth tokens (per user)
+CREATE TABLE IF NOT EXISTS google_tokens (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  item_id INT NOT NULL,
+  user_id INT NOT NULL UNIQUE,
+  access_token TEXT,
+  refresh_token TEXT,
+  token_expiry DATETIME,
+  google_email VARCHAR(255),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Reference presentations for Context Grounding (admin-managed)
+CREATE TABLE IF NOT EXISTS reference_presentations (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  content LONGTEXT,
+  content_length INT DEFAULT 0,
+  industry_tag VARCHAR(100),
+  presentation_type_tag VARCHAR(100),
+  synopsis TEXT,
+  slide_count INT DEFAULT 0,
+  uploaded_by VARCHAR(255),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Shared presentations tracking
+CREATE TABLE IF NOT EXISTS shared_presentations (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  presentation_id INT NOT NULL,
   sender_user_id INT NOT NULL,
   sender_email VARCHAR(255) NOT NULL,
   recipient_email VARCHAR(255) NOT NULL,
-  copied_item_id INT,
+  copied_presentation_id INT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+  FOREIGN KEY (presentation_id) REFERENCES presentations(id) ON DELETE CASCADE,
   FOREIGN KEY (sender_user_id) REFERENCES users(id) ON DELETE CASCADE,
-  FOREIGN KEY (copied_item_id) REFERENCES items(id) ON DELETE SET NULL,
+  FOREIGN KEY (copied_presentation_id) REFERENCES presentations(id) ON DELETE SET NULL,
   INDEX idx_recipient (recipient_email),
-  INDEX idx_sender_item (sender_user_id, item_id)
+  INDEX idx_sender (sender_user_id, presentation_id)
 )

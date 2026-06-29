@@ -167,6 +167,7 @@
           <button id="nav-api-keys" onclick="showPage('api-keys')" class="cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: transparent; border: none; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; transition: background 0.15s ease;" onmouseenter="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.07)'" onmouseleave="if(!this.dataset.active)this.style.background='transparent'">API Keys</button>
           <button id="nav-feedback" onclick="showPage('feedback')" class="hidden cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: transparent; border: none; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; transition: background 0.15s ease;" onmouseenter="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.07)'" onmouseleave="if(!this.dataset.active)this.style.background='transparent'">Feedback</button>
           <button id="nav-users" onclick="showPage('users')" class="hidden cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: transparent; border: none; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; transition: background 0.15s ease;" onmouseenter="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.07)'" onmouseleave="if(!this.dataset.active)this.style.background='transparent'">Users</button>
+          <button id="nav-grounding" onclick="showPage('grounding')" class="hidden cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: transparent; border: none; color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; transition: background 0.15s ease;" onmouseenter="if(!this.dataset.active)this.style.background='rgba(255,255,255,0.07)'" onmouseleave="if(!this.dataset.active)this.style.background='transparent'">Grounding</button>
         </div>
 
         <!-- Right — User actions (desktop only) -->
@@ -189,6 +190,7 @@
         <button id="mob-nav-api-keys" onclick="showPage('api-keys'); closeMobileMenu();">🔑 API Keys</button>
         <button id="mob-nav-feedback" onclick="showPage('feedback'); closeMobileMenu();" style="display:none;">📋 Feedback</button>
         <button id="mob-nav-users" onclick="showPage('users'); closeMobileMenu();" style="display:none;">👤 Users</button>
+        <button id="mob-nav-grounding" onclick="showPage('grounding'); closeMobileMenu();" style="display:none;">📊 Grounding</button>
         <div class="mobile-divider"></div>
         <button onclick="openFeedbackDialog(); closeMobileMenu();">💬 Give Feedback</button>
         <button onclick="handleLogout(); closeMobileMenu();">🚪 Sign Out</button>
@@ -198,35 +200,43 @@
     <div style="flex: 1;">
 
     <!-- ═══════════════════════════════════════════════ -->
-    <!-- APP-SPECIFIC CONTENT — Replace this section    -->
+    <!-- APP: Presentations Home                        -->
     <!-- ═══════════════════════════════════════════════ -->
     <div id="items-home" style="max-width: 912px; margin: 0 auto; padding: 32px 16px 0;">
+      <!-- Google Connection Banner -->
+      <div id="google-banner" class="hidden" style="margin-bottom: 20px; border-radius: 12px; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between;">
+        <div id="google-banner-content" class="flex items-center gap-3">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+          <span id="google-banner-text" style="font-size: 14px; color: #374151;"></span>
+        </div>
+        <div id="google-banner-actions"></div>
+      </div>
+
       <!-- Header row -->
       <div class="flex items-center justify-between" style="margin-bottom: 24px;">
         <div>
           <h2 style="font-size: 35px; line-height: 40px; letter-spacing: -0.025em; font-weight: 700; color: #032D60; margin: 0 0 4px 0;">Presentations</h2>
-          <p style="font-size: 14px; line-height: 20px; color: #888; margin: 0;">Your saved items</p>
+          <p style="font-size: 14px; line-height: 20px; color: #888; margin: 0;">Your AI-generated presentations</p>
         </div>
-        <button onclick="openNewItemDialog()" class="cursor-pointer" style="background: #0176D3; color: white; font-weight: 700; font-size: 16px; height: 40px; padding: 0 16px; border-radius: 8px; border: none;">+ New Presentation</button>
+        <button onclick="openNewPresentationDialog()" class="cursor-pointer" style="background: #0176D3; color: white; font-weight: 700; font-size: 16px; height: 40px; padding: 0 16px; border-radius: 8px; border: none;">+ New Presentation</button>
       </div>
 
-      <!-- Item cards grid -->
+      <!-- Presentation cards grid -->
       <div id="items-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px;"></div>
 
       <!-- Empty state -->
       <div id="items-empty" class="hidden">
         <div style="background: white; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); padding: 60px 40px; text-align: center;">
-          <p style="font-size: 28px; margin-bottom: 8px;">📝</p>
-          <h3 style="font-size: 18px; font-weight: 500; margin-bottom: 8px; color: #111;">No items yet</h3>
-          <p style="font-size: 14px; color: #888; margin-bottom: 16px;">Create your first item to get started.</p>
-          <button onclick="openNewItemDialog()" class="cursor-pointer" style="background: #0176D3; color: white; font-weight: 500; font-size: 15px; height: 40px; padding: 0 16px; border-radius: 8px; border: none;">+ Create Presentation</button>
+          <p style="font-size: 28px; margin-bottom: 8px;">📊</p>
+          <h3 style="font-size: 18px; font-weight: 500; margin-bottom: 8px; color: #111;">No presentations yet</h3>
+          <p style="font-size: 14px; color: #888; margin-bottom: 16px;">Create your first AI-powered presentation to get started.</p>
+          <button onclick="openNewPresentationDialog()" class="cursor-pointer" style="background: #0176D3; color: white; font-weight: 500; font-size: 15px; height: 40px; padding: 0 16px; border-radius: 8px; border: none;">+ Create Presentation</button>
         </div>
       </div>
     </div>
-    <!-- END APP-SPECIFIC CONTENT -->
 
     <!-- ═══════════════════════════════════════════════ -->
-    <!-- SHARED: Item Detail Page                       -->
+    <!-- APP: Presentation Detail Page                  -->
     <!-- ═══════════════════════════════════════════════ -->
     <div id="item-detail" class="hidden" style="max-width: 912px; margin: 0 auto; padding: 32px 16px 0;">
       <!-- Header row with back button -->
@@ -237,31 +247,46 @@
           <h2 id="detail-breadcrumb" style="font-size: 20px; font-weight: 700; color: #032D60; margin: 0;"></h2>
         </div>
         <div class="flex items-center gap-2">
+          <a id="detail-google-link" href="#" target="_blank" class="hidden" style="background: #10B981; color: white; font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 8px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px;">Open in Google Slides ↗</a>
           <button onclick="openShareDialogForItem()" class="cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #374151; font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 8px;">Share</button>
         </div>
       </div>
 
-      <!-- View Settings card -->
+      <!-- Status banner -->
+      <div id="detail-status-banner" class="hidden" style="margin-bottom: 16px; border-radius: 10px; padding: 12px 16px; display: flex; align-items: center; gap: 8px;">
+        <span id="detail-status-icon"></span>
+        <span id="detail-status-text" style="font-size: 14px; font-weight: 600;"></span>
+      </div>
+
+      <!-- Presentation Settings card -->
       <div class="mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
         <p class="font-bold mb-4" style="font-size: 15px; color: #032D60;">Presentation Settings</p>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-          <!-- APP-SPECIFIC: Add your editable fields here -->
-          <!-- Example fields (customize per app): -->
           <div>
             <label class="block text-xs font-bold mb-1" style="color: #032D60;">Name <span style="color: #ea001e;">*</span></label>
             <input id="edit-name" type="text" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
           </div>
           <div>
-            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Website URL</label>
-            <input id="edit-website" type="url" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Topic</label>
+            <input id="edit-topic" type="text" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
           </div>
-          <div style="grid-column: 1 / -1;">
-            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Description</label>
-            <textarea id="edit-description" rows="2" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm resize-none"></textarea>
+          <div>
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Audience</label>
+            <input id="edit-audience" type="text" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Style</label>
+            <select id="edit-style" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+              <option value="professional">Professional</option>
+              <option value="creative">Creative</option>
+              <option value="minimal">Minimal</option>
+              <option value="technical">Technical</option>
+              <option value="executive">Executive</option>
+            </select>
           </div>
         </div>
 
-        <!-- Save Settings button (hidden until fields change) -->
+        <!-- Save Settings button -->
         <div id="save-settings-bar" class="hidden" style="margin-top: 14px; display: none;">
           <div class="flex items-center justify-between" style="background: #FFFBEB; border: 1px solid #F59E0B; border-radius: 10px; padding: 10px 16px;">
             <span style="font-size: 13px; color: #92400E;">⚠️ You have unsaved changes</span>
@@ -270,13 +295,31 @@
         </div>
       </div>
 
-      <!-- APP-SPECIFIC: Add your item content/preview area here -->
-      <div id="item-content" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <p class="font-bold mb-4" style="font-size: 15px; color: #032D60;">Content</p>
-        <div id="item-content-body">
-          <!-- Customize: Render your item content here (e.g. prompt, table, preview) -->
-          <p style="color: #999; font-size: 14px;">Item content will be rendered here.</p>
+      <!-- Generate / Regenerate button -->
+      <div class="mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="font-bold" style="font-size: 15px; color: #032D60;">Google Slides</p>
+            <p id="generate-subtitle" style="font-size: 13px; color: #888; margin-top: 4px;">Generate a presentation in your Google Drive</p>
+          </div>
+          <button id="generate-btn" onclick="generatePresentation()" class="cursor-pointer" style="background: #0176D3; color: white; font-weight: 700; font-size: 14px; height: 40px; padding: 0 20px; border-radius: 8px; border: none;">🚀 Generate Slides</button>
         </div>
+        <div id="generate-progress" class="hidden" style="margin-top: 16px;">
+          <div class="flex items-center gap-3">
+            <div class="flex gap-1.5">
+              <div class="w-2 h-2 bg-brand rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0s;"></div>
+              <div class="w-2 h-2 bg-brand rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.2s;"></div>
+              <div class="w-2 h-2 bg-brand rounded-full" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.4s;"></div>
+            </div>
+            <span id="generate-status" style="font-size: 13px; color: #6B7280;">Generating slides...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Generated slides preview -->
+      <div id="slides-preview" class="hidden" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 16px;">
+        <p class="font-bold mb-4" style="font-size: 15px; color: #032D60;">Generated Slides Preview</p>
+        <div id="slides-preview-body"></div>
       </div>
 
       <!-- Metadata -->
@@ -355,6 +398,83 @@
         <div class="flex justify-end gap-3">
           <button onclick="closeDeleteDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Cancel</button>
           <button id="delete-confirm-btn" onclick="confirmDeleteItem()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #E5534B;">Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════ -->
+    <!-- APP: New Presentation Dialog                   -->
+    <!-- ═══════════════════════════════════════════════ -->
+    <div id="new-presentation-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8" style="max-height: 90vh; overflow-y: auto;">
+        <h3 class="text-lg font-bold text-gray-800 mb-1">New Presentation</h3>
+        <p class="text-sm text-gray-500 mb-5">AI will generate a complete Google Slides presentation.</p>
+
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Presentation Name <span style="color: #ea001e;">*</span></label>
+          <input id="np-name" type="text" placeholder="e.g. Q3 Sales Review" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Topic <span style="color: #ea001e;">*</span></label>
+          <input id="np-topic" type="text" placeholder="What is this presentation about?" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;" class="mb-3">
+          <div>
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Slide Count</label>
+            <input id="np-slidecount" type="number" value="10" min="3" max="30" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Style</label>
+            <select id="np-style" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+              <option value="professional">Professional</option>
+              <option value="creative">Creative</option>
+              <option value="minimal">Minimal</option>
+              <option value="technical">Technical</option>
+              <option value="executive">Executive</option>
+            </select>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Target Audience</label>
+          <input id="np-audience" type="text" placeholder="e.g. C-suite executives, sales team" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;" class="mb-3">
+          <div>
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Industry</label>
+            <select id="np-industry" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+              <option value="">— Select —</option>
+              <option value="Technology">Technology</option>
+              <option value="Healthcare">Healthcare</option>
+              <option value="Financial Services">Financial Services</option>
+              <option value="Retail">Retail</option>
+              <option value="Manufacturing">Manufacturing</option>
+              <option value="Education">Education</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Presentation Type</label>
+            <select id="np-type" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+              <option value="">— Select —</option>
+              <option value="Sales Pitch">Sales Pitch</option>
+              <option value="Product Demo">Product Demo</option>
+              <option value="Quarterly Review">Quarterly Review</option>
+              <option value="Training">Training</option>
+              <option value="Strategy">Strategy</option>
+              <option value="General">General</option>
+            </select>
+          </div>
+        </div>
+        <div class="mb-4">
+          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Additional Context <span style="color: #888; font-weight: 400;">(optional)</span></label>
+          <textarea id="np-context" rows="3" placeholder="Any extra details or instructions for the AI..." class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm resize-none"></textarea>
+        </div>
+
+        <p id="np-error" class="hidden text-sm mb-3" style="color: #C23934;"></p>
+
+        <div class="flex justify-end gap-3">
+          <button onclick="closeNewPresentationDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Cancel</button>
+          <button id="np-create-btn" onclick="createPresentation()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Create & Generate</button>
         </div>
       </div>
     </div>
@@ -492,6 +612,100 @@
       <div id="users-empty" class="hidden text-center py-10">
         <p class="text-2xl mb-1">👤</p>
         <p class="text-gray-400">No users found.</p>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════ -->
+    <!-- APP: Context Grounding (Admin)                 -->
+    <!-- ═══════════════════════════════════════════════ -->
+    <div id="admin-grounding-section" class="hidden" style="max-width: 1024px; margin: 0 auto; padding: 32px 16px 0;">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-800 mb-1">Context Grounding</h2>
+          <p class="text-sm text-gray-500">Upload reference presentations to guide AI generation style and structure.</p>
+        </div>
+        <button onclick="openAddReferenceDialog()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">+ Add Reference</button>
+      </div>
+
+      <div id="grounding-table-wrap" class="bg-white rounded-2xl shadow-md overflow-hidden">
+        <table class="w-full text-sm">
+          <thead style="background: #F4F6F9;">
+            <tr>
+              <th class="text-left px-5 py-3 font-semibold text-gray-600">Name</th>
+              <th class="text-left px-5 py-3 font-semibold text-gray-600">Industry</th>
+              <th class="text-left px-5 py-3 font-semibold text-gray-600">Type</th>
+              <th class="text-left px-5 py-3 font-semibold text-gray-600">Slides</th>
+              <th class="text-left px-5 py-3 font-semibold text-gray-600">Characters</th>
+              <th class="text-left px-5 py-3 font-semibold text-gray-600">Uploaded By</th>
+              <th class="px-5 py-3"></th>
+            </tr>
+          </thead>
+          <tbody id="grounding-tbody"></tbody>
+        </table>
+      </div>
+
+      <div id="grounding-empty" class="hidden text-center py-10">
+        <p class="text-2xl mb-1">📊</p>
+        <p class="text-gray-400 text-sm">No reference presentations yet. Add one to ground AI generation.</p>
+      </div>
+    </div>
+
+    <!-- Add Reference Dialog -->
+    <div id="add-reference-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8" style="max-height: 90vh; overflow-y: auto;">
+        <h3 class="text-lg font-bold text-gray-800 mb-1">Add Reference Presentation</h3>
+        <p class="text-sm text-gray-500 mb-5">Paste the text content of a reference presentation to use as style guidance.</p>
+
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Name <span style="color: #ea001e;">*</span></label>
+          <input id="ref-name" type="text" placeholder="e.g. Q2 Sales Deck - Financial Services" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Content <span style="color: #ea001e;">*</span></label>
+          <textarea id="ref-content" rows="8" placeholder="Paste the full text content of your reference presentation here..." class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm resize-none" style="font-family: monospace; font-size: 12px;"></textarea>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;" class="mb-3">
+          <div>
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Industry Tag</label>
+            <select id="ref-industry" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+              <option value="">— Select —</option>
+              <option value="Technology">Technology</option>
+              <option value="Healthcare">Healthcare</option>
+              <option value="Financial Services">Financial Services</option>
+              <option value="Retail">Retail</option>
+              <option value="Manufacturing">Manufacturing</option>
+              <option value="Education">Education</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Presentation Type Tag</label>
+            <select id="ref-type" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+              <option value="">— Select —</option>
+              <option value="Sales Pitch">Sales Pitch</option>
+              <option value="Product Demo">Product Demo</option>
+              <option value="Quarterly Review">Quarterly Review</option>
+              <option value="Training">Training</option>
+              <option value="Strategy">Strategy</option>
+              <option value="General">General</option>
+            </select>
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Synopsis</label>
+          <input id="ref-synopsis" type="text" placeholder="Brief description of this reference" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+        </div>
+        <div class="mb-4">
+          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Slide Count</label>
+          <input id="ref-slidecount" type="number" value="0" min="0" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" style="max-width: 100px;">
+        </div>
+
+        <p id="ref-error" class="hidden text-sm mb-3" style="color: #C23934;"></p>
+
+        <div class="flex justify-end gap-3">
+          <button onclick="closeAddReferenceDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Cancel</button>
+          <button id="ref-create-btn" onclick="createGroundingReference()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Add Reference</button>
+        </div>
       </div>
     </div>
 
@@ -675,7 +889,7 @@ async function showApp(email) {
 
   // Check if URL has a deep link (e.g. /views/123)
   const viewMatch = window.location.pathname.match(/^\/views\/(\d+)$/);
-  const pageMap = { '/api-keys': 'api-keys', '/feedback': 'feedback', '/users': 'users' };
+  const pageMap = { '/api-keys': 'api-keys', '/feedback': 'feedback', '/users': 'users', '/grounding': 'grounding' };
   const urlPage = pageMap[window.location.pathname];
 
   if (viewMatch) {
@@ -698,8 +912,10 @@ async function showApp(email) {
     const data = await resp.json();
     const feedbackNav = document.getElementById('nav-feedback');
     const usersNav = document.getElementById('nav-users');
+    const groundingNav = document.getElementById('nav-grounding');
     if (feedbackNav) feedbackNav.classList.toggle('hidden', !data.isAdmin);
     if (usersNav) usersNav.classList.toggle('hidden', !data.isAdmin);
+    if (groundingNav) groundingNav.classList.toggle('hidden', !data.isAdmin);
     syncMobileAdminNav();
   } catch (err) {
     console.log('Admin check failed:', err.message);
@@ -804,6 +1020,11 @@ function syncMobileAdminNav() {
   if (usersDesktop && usersMobile) {
     usersMobile.style.display = usersDesktop.classList.contains('hidden') ? 'none' : 'block';
   }
+  const groundingDesktop = document.getElementById('nav-grounding');
+  const groundingMobile = document.getElementById('mob-nav-grounding');
+  if (groundingDesktop && groundingMobile) {
+    groundingMobile.style.display = groundingDesktop.classList.contains('hidden') ? 'none' : 'block';
+  }
 }
 
 // ═══════════════════════════════════════════════
@@ -820,10 +1041,11 @@ function showPage(page, skipPush) {
   document.getElementById('api-keys-section').classList.toggle('hidden', page !== 'api-keys');
   document.getElementById('admin-feedback-section').classList.toggle('hidden', page !== 'feedback');
   document.getElementById('admin-users-section').classList.toggle('hidden', page !== 'users');
+  document.getElementById('admin-grounding-section').classList.toggle('hidden', page !== 'grounding');
 
   // Update desktop nav button styles — item-detail highlights the Items tab
   const navPage = page === 'item-detail' ? 'items' : page;
-  ['items', 'api-keys', 'users', 'feedback'].forEach(p => {
+  ['items', 'api-keys', 'users', 'feedback', 'grounding'].forEach(p => {
     const btn = document.getElementById('nav-' + p);
     if (!btn) return;
     const isActive = p === navPage;
@@ -834,7 +1056,7 @@ function showPage(page, skipPush) {
   });
 
   // Update mobile nav active state
-  ['items', 'api-keys', 'feedback', 'users'].forEach(p => {
+  ['items', 'api-keys', 'feedback', 'users', 'grounding'].forEach(p => {
     const mobBtn = document.getElementById('mob-nav-' + p);
     if (!mobBtn) return;
     mobBtn.classList.toggle('mobile-nav-active', p === navPage);
@@ -842,7 +1064,7 @@ function showPage(page, skipPush) {
 
   // Push URL state (skip when triggered by popstate or viewItem which pushes its own)
   if (!skipPush && page !== 'item-detail') {
-    const urlMap = { 'items': '/', 'api-keys': '/api-keys', 'feedback': '/feedback', 'users': '/users' };
+    const urlMap = { 'items': '/', 'api-keys': '/api-keys', 'feedback': '/feedback', 'users': '/users', 'grounding': '/grounding' };
     const url = urlMap[page] || '/';
     history.pushState({ page: page }, '', url);
   }
@@ -852,6 +1074,7 @@ function showPage(page, skipPush) {
   if (page === 'api-keys') loadApiKeys();
   if (page === 'users') loadUsers();
   if (page === 'feedback') loadAdminFeedback();
+  if (page === 'grounding') loadGroundingReferences();
 }
 
 // ═══════════════════════════════════════════════
@@ -1223,7 +1446,7 @@ async function submitShare() {
   showShareState('share-loading-state');
 
   try {
-    const resp = await fetch(`/api/items/${currentItemId}/share`, {
+    const resp = await fetch(`/api/presentations/${currentItemId}/share`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: senderEmail, recipientEmail })
@@ -1252,7 +1475,7 @@ async function confirmShare(action) {
   const senderEmail = document.getElementById('user-email').textContent;
 
   try {
-    const resp = await fetch(`/api/items/${currentItemId}/share/confirm`, {
+    const resp = await fetch(`/api/presentations/${currentItemId}/share/confirm`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: senderEmail, recipientEmail: shareRecipientEmail, action })
@@ -1280,46 +1503,77 @@ async function confirmShare(action) {
 let deleteTargetId = null;
 let deleteTargetName = '';
 
-function deleteItem(id, name) {
-  deleteTargetId = id;
-  deleteTargetName = name;
-  document.getElementById('delete-item-name').textContent = name;
-  document.getElementById('delete-dialog').classList.remove('hidden');
-}
-
 function closeDeleteDialog() {
   document.getElementById('delete-dialog').classList.add('hidden');
   deleteTargetId = null;
   deleteTargetName = '';
 }
 
-async function confirmDeleteItem() {
-  if (!deleteTargetId) return;
+// ═══════════════════════════════════════════════
+// APP: State
+// ═══════════════════════════════════════════════
+let currentPresentationId = null;
+let currentPresentationData = null;
+let googleConnected = false;
 
-  const btn = document.getElementById('delete-confirm-btn');
-  btn.disabled = true;
-  btn.textContent = 'Deleting...';
+// ═══════════════════════════════════════════════
+// APP: Google Connection
+// ═══════════════════════════════════════════════
+async function checkGoogleStatus() {
+  const email = document.getElementById('user-email').textContent;
+  const banner = document.getElementById('google-banner');
+  const bannerText = document.getElementById('google-banner-text');
+  const bannerActions = document.getElementById('google-banner-actions');
 
+  try {
+    const resp = await fetch(`/api/auth/google/status?email=${encodeURIComponent(email)}`);
+    const data = await resp.json();
+    googleConnected = data.connected;
+
+    banner.classList.remove('hidden');
+    banner.style.display = 'flex';
+
+    if (data.connected) {
+      banner.style.background = '#ECFDF5';
+      banner.style.border = '1px solid #6EE7B7';
+      bannerText.textContent = `Connected as ${data.googleEmail}`;
+      bannerText.style.color = '#065F46';
+      bannerActions.innerHTML = `<button onclick="disconnectGoogle()" class="cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #374151; font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 8px;">Disconnect</button>`;
+    } else {
+      banner.style.background = '#FEF3C7';
+      banner.style.border = '1px solid #FCD34D';
+      bannerText.textContent = 'Connect your Google Account to create presentations in Google Slides';
+      bannerText.style.color = '#92400E';
+      bannerActions.innerHTML = `<button onclick="connectGoogle()" class="cursor-pointer" style="background: #0176D3; color: white; font-size: 13px; font-weight: 700; padding: 6px 16px; border-radius: 8px; border: none;">Connect Google</button>`;
+    }
+  } catch (err) {
+    console.log('Google status check failed:', err.message);
+  }
+}
+
+function connectGoogle() {
+  const email = document.getElementById('user-email').textContent;
+  window.location.href = `/api/auth/google?email=${encodeURIComponent(email)}`;
+}
+
+async function disconnectGoogle() {
+  if (!confirm('Disconnect your Google account? You won\'t be able to generate presentations until you reconnect.')) return;
   const email = document.getElementById('user-email').textContent;
   try {
-    const resp = await fetch(`/api/items/${deleteTargetId}?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
-    if (!resp.ok) throw new Error('Failed to delete');
-    closeDeleteDialog();
-    loadItems();
+    await fetch('/api/auth/google/disconnect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    checkGoogleStatus();
   } catch (err) {
-    alert(err.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Delete';
+    alert('Failed to disconnect: ' + err.message);
   }
 }
 
 // ═══════════════════════════════════════════════
-// APP-SPECIFIC LOGIC — Replace this section
+// APP: Load Presentations
 // ═══════════════════════════════════════════════
-// Below are placeholder functions for your app's main asset.
-// Replace "items" with your asset type and customize.
-
 async function loadItems() {
   const email = document.getElementById('user-email').textContent;
   const grid = document.getElementById('items-grid');
@@ -1328,11 +1582,14 @@ async function loadItems() {
   grid.innerHTML = '<p class="text-center text-gray-400 py-10 col-span-full">Loading...</p>';
   empty.classList.add('hidden');
 
+  // Check Google status
+  checkGoogleStatus();
+
   try {
-    const resp = await fetch(`/api/items?email=${encodeURIComponent(email)}`);
-    if (!resp.ok) throw new Error('Failed to load items');
+    const resp = await fetch(`/api/presentations?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to load presentations');
     const data = await resp.json();
-    const items = data.items || [];
+    const items = data.presentations || [];
 
     if (items.length === 0) {
       grid.innerHTML = '';
@@ -1342,8 +1599,17 @@ async function loadItems() {
 
     empty.classList.add('hidden');
 
+    const statusColors = {
+      draft: { bg: '#F3F4F6', color: '#6B7280', label: 'Draft' },
+      generating: { bg: '#FEF3C7', color: '#D97706', label: 'Generating...' },
+      completed: { bg: '#ECFDF5', color: '#059669', label: 'Completed' },
+      failed: { bg: '#FEF2F2', color: '#DC2626', label: 'Failed' }
+    };
+
     grid.innerHTML = items.map((item) => {
       const safeName = esc(item.name).replace(/'/g, "\\'");
+      const status = statusColors[item.status] || statusColors.draft;
+      const googleLink = item.google_presentation_url ? `<a href="${esc(item.google_presentation_url)}" target="_blank" onclick="event.stopPropagation();" style="font-size: 12px; color: #0176D3; text-decoration: none; display: flex; align-items: center; gap: 4px; margin-top: 4px;">📎 Open in Google Slides ↗</a>` : '';
       return `
       <div class="item-card" style="background: white; border-radius: 8px; padding: 20px; cursor: pointer; transition: box-shadow 0.15s ease, transform 0.15s ease; position: relative; box-shadow: 0 1px 3px rgba(0,0,0,0.08); border: 1px solid #e5e7eb;"
         onclick="viewItem(${item.id})"
@@ -1361,7 +1627,11 @@ async function loadItems() {
               <svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.5 1C5.22386 1 5 1.22386 5 1.5C5 1.77614 5.22386 2 5.5 2H9.5C9.77614 2 10 1.77614 10 1.5C10 1.22386 9.77614 1 9.5 1H5.5ZM3 3.5C3 3.22386 3.22386 3 3.5 3H5H10H11.5C11.7761 3 12 3.22386 12 3.5C12 3.77614 11.7761 4 11.5 4H11V12C11 12.5523 10.5523 13 10 13H5C4.44772 13 4 12.5523 4 12V4H3.5C3.22386 4 3 3.77614 3 3.5ZM5 4H10V12H5V4Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/></svg>
             </button>
           </div>
-          <div style="font-size: 12px; color: #888; opacity: 0.6;">Created ${new Date(item.created_at).toLocaleDateString()}</div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px; background: ${status.bg}; color: ${status.color};">${status.label}</span>
+            <span style="font-size: 12px; color: #888;">Created ${new Date(item.created_at).toLocaleDateString()}</span>
+          </div>
+          ${googleLink}
           ${item.shared_by_email ? `
           <div style="font-size: 11px; color: #6b7280; display: flex; align-items: center; gap: 4px; margin-top: 2px;">
             <svg width="12" height="12" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 7.50003C5 8.32845 4.32843 9.00003 3.5 9.00003C2.67157 9.00003 2 8.32845 2 7.50003C2 6.6716 2.67157 6.00003 3.5 6.00003C4.32843 6.00003 5 6.6716 5 7.50003ZM5.71313 8.66388C5.29445 9.45838 4.46048 10 3.5 10C2.11929 10 1 8.88074 1 7.50003C1 6.11931 2.11929 5.00003 3.5 5.00003C4.46048 5.00003 5.29445 5.54167 5.71313 6.33616L9.10424 4.21671C9.03643 3.98968 9 3.74911 9 3.50003C9 2.11931 10.1193 1.00003 11.5 1.00003C12.8807 1.00003 14 2.11931 14 3.50003C14 4.88074 12.8807 6.00003 11.5 6.00003C10.4573 6.00003 9.5609 5.36459 9.17375 4.45794L5.90283 6.50457C5.96658 6.82583 6 7.15899 6 7.50003C6 7.84106 5.96658 8.17422 5.90283 8.49549L9.17375 10.5421C9.5609 9.63548 10.4573 9.00003 11.5 9.00003C12.8807 9.00003 14 10.1193 14 11.5C14 12.8807 12.8807 14 11.5 14C10.1193 14 9 12.8807 9 11.5C9 11.251 9.03643 11.0104 9.10424 10.7834L5.71313 8.66388ZM11.5 5.00003C12.3284 5.00003 13 4.32845 13 3.50003C13 2.6716 12.3284 2.00003 11.5 2.00003C10.6716 2.00003 10 2.6716 10 3.50003C10 4.32845 10.6716 5.00003 11.5 5.00003ZM13 11.5C13 12.3285 12.3284 13 11.5 13C10.6716 13 10 12.3285 10 11.5C10 10.6716 10.6716 10 11.5 10C12.3284 10 13 10.6716 13 11.5Z" fill="currentColor" fill-rule="evenodd" clip-rule="evenodd"/></svg>
@@ -1376,75 +1646,134 @@ async function loadItems() {
 }
 
 // ═══════════════════════════════════════════════
-// SHARED: Item Detail View
+// APP: View Presentation Detail
 // ═══════════════════════════════════════════════
-let currentItemId = null;
-let currentItemData = null;
-
 async function viewItem(id, skipPush) {
   const email = document.getElementById('user-email').textContent;
-
-  // Show detail page immediately
   showPage('item-detail', true);
 
   try {
-    const resp = await fetch(`/api/items/${id}?email=${encodeURIComponent(email)}`);
-    if (!resp.ok) throw new Error('Item not found');
-    const item = await resp.json();
-    const data = typeof item.data === 'string' ? JSON.parse(item.data) : (item.data || {});
+    const resp = await fetch(`/api/presentations/${id}?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Presentation not found');
+    const result = await resp.json();
+    const presentation = result.presentation;
+    const data = typeof presentation.data === 'string' ? JSON.parse(presentation.data) : (presentation.data || {});
 
-    currentItemId = item.id;
-    currentItemData = data;
+    currentPresentationId = presentation.id;
+    currentItemId = presentation.id; // For share functions compatibility
+    currentPresentationData = data;
+    currentItemName = presentation.name; // For share dialog
 
     // Populate header
-    const name = data.metadata?.name || data.metadata?.brand || 'Untitled';
-    document.getElementById('detail-breadcrumb').textContent = name;
+    document.getElementById('detail-breadcrumb').textContent = presentation.name;
 
-    // Populate editable fields — customize these per app
-    const meta = data.metadata || {};
-    document.getElementById('edit-name').value = meta.name || meta.brand || '';
-    document.getElementById('edit-website').value = meta.website || meta.brand_url || '';
-    document.getElementById('edit-description').value = meta.description || meta.brand_desc || '';
+    // Google Slides link
+    const googleLink = document.getElementById('detail-google-link');
+    if (presentation.google_presentation_url) {
+      googleLink.href = presentation.google_presentation_url;
+      googleLink.classList.remove('hidden');
+    } else {
+      googleLink.classList.add('hidden');
+    }
+
+    // Status banner
+    const statusBanner = document.getElementById('detail-status-banner');
+    const statusIcon = document.getElementById('detail-status-icon');
+    const statusText = document.getElementById('detail-status-text');
+    const statusConfig = {
+      draft: { bg: '#F3F4F6', border: '#D1D5DB', color: '#6B7280', icon: '📝', label: 'Draft — Ready to generate' },
+      generating: { bg: '#FEF3C7', border: '#FCD34D', color: '#D97706', icon: '⏳', label: 'Generating slides...' },
+      completed: { bg: '#ECFDF5', border: '#6EE7B7', color: '#059669', icon: '✅', label: 'Completed — Slides created in Google Drive' },
+      failed: { bg: '#FEF2F2', border: '#FECACA', color: '#DC2626', icon: '❌', label: 'Generation failed — try again' }
+    };
+    const sc = statusConfig[presentation.status] || statusConfig.draft;
+    statusBanner.style.background = sc.bg;
+    statusBanner.style.border = `1px solid ${sc.border}`;
+    statusIcon.textContent = sc.icon;
+    statusText.textContent = sc.label;
+    statusText.style.color = sc.color;
+    statusBanner.classList.remove('hidden');
+    statusBanner.style.display = 'flex';
+
+    // Settings fields
+    document.getElementById('edit-name').value = presentation.name || '';
+    document.getElementById('edit-topic').value = data.topic || '';
+    document.getElementById('edit-audience').value = data.audience || '';
+    document.getElementById('edit-style').value = data.style || 'professional';
+
+    // Generate button text
+    const genBtn = document.getElementById('generate-btn');
+    const genSubtitle = document.getElementById('generate-subtitle');
+    if (presentation.status === 'completed') {
+      genBtn.textContent = '🔄 Regenerate Slides';
+      genBtn.disabled = false;
+      genSubtitle.textContent = 'Generate a new version in Google Drive';
+    } else if (presentation.status === 'generating') {
+      genBtn.textContent = '⏳ Generating...';
+      genBtn.disabled = true;
+      genSubtitle.textContent = 'Slides are being generated...';
+    } else {
+      genBtn.textContent = '🚀 Generate Slides';
+      genBtn.disabled = false;
+      genSubtitle.textContent = 'Generate a presentation in your Google Drive';
+    }
+
+    // Slides preview
+    const preview = document.getElementById('slides-preview');
+    const previewBody = document.getElementById('slides-preview-body');
+    if (data.generatedSlides && data.generatedSlides.slides) {
+      preview.classList.remove('hidden');
+      previewBody.innerHTML = data.generatedSlides.slides.map((slide, i) => `
+        <div style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 8px;">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+            <span style="font-size: 11px; font-weight: 700; color: #6B7280; min-width: 20px;">${i+1}</span>
+            <span style="font-size: 11px; padding: 1px 6px; border-radius: 3px; background: #F3F4F6; color: #6B7280;">${esc(slide.layout)}</span>
+            <span style="font-size: 14px; font-weight: 600; color: #111;">${esc(slide.title || '')}</span>
+          </div>
+          ${slide.body ? `<p style="font-size: 12px; color: #666; margin-left: 28px; white-space: pre-line; line-height: 1.5;">${esc(slide.body).substring(0, 200)}${slide.body.length > 200 ? '...' : ''}</p>` : ''}
+          ${slide.subtitle ? `<p style="font-size: 12px; color: #888; margin-left: 28px; font-style: italic;">${esc(slide.subtitle)}</p>` : ''}
+        </div>
+      `).join('');
+    } else {
+      preview.classList.add('hidden');
+    }
 
     // Metadata timestamps
-    document.getElementById('detail-meta-created').textContent = 'Created: ' + new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    document.getElementById('detail-meta-updated').textContent = item.updated_at ? 'Updated: ' + new Date(item.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+    document.getElementById('detail-meta-created').textContent = 'Created: ' + new Date(presentation.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    document.getElementById('detail-meta-updated').textContent = presentation.updated_at ? 'Updated: ' + new Date(presentation.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
 
     // Store original values for change detection
     window._origSettings = {
-      name: meta.name || meta.brand || '',
-      website: meta.website || meta.brand_url || '',
-      description: meta.description || meta.brand_desc || ''
+      name: presentation.name || '',
+      topic: data.topic || '',
+      audience: data.audience || '',
+      style: data.style || 'professional'
     };
     hideSaveSettingsBar();
 
-    // APP-SPECIFIC: Render item content in #item-content-body
-    // renderItemContent(data);
-
-    // Push URL state for deep linking
     if (!skipPush) {
       history.pushState({ page: 'item-detail', itemId: id }, '', `/views/${id}`);
     }
   } catch (err) {
-    alert('Failed to load item: ' + err.message);
+    alert('Failed to load presentation: ' + err.message);
     showPage('items');
   }
 }
 
 function openShareDialogForItem() {
-  if (!currentItemId) return;
-  openShareDialog(currentItemId, document.getElementById('detail-breadcrumb').textContent);
+  if (!currentPresentationId) return;
+  currentItemId = currentPresentationId;
+  currentItemName = document.getElementById('detail-breadcrumb').textContent;
+  openShareDialog();
 }
 
 // ═══════════════════════════════════════════════
-// SHARED: Save Settings & Change Detection
+// APP: Save Settings & Change Detection
 // ═══════════════════════════════════════════════
 function checkSettingsChanged() {
   const orig = window._origSettings;
   if (!orig) return;
-  // Compare current field values against originals
-  const fields = Object.keys(orig);
-  const changed = fields.some(f => {
+  const changed = ['name', 'topic', 'audience', 'style'].some(f => {
     const el = document.getElementById('edit-' + f);
     return el && el.value !== orig[f];
   });
@@ -1465,33 +1794,28 @@ async function saveItemSettings() {
   btn.textContent = 'Saving...';
 
   try {
-    // Read current field values — customize field names per app
     const name = document.getElementById('edit-name').value.trim();
-    const website = document.getElementById('edit-website').value.trim();
-    const description = document.getElementById('edit-description').value.trim();
+    const topic = document.getElementById('edit-topic').value.trim();
+    const audience = document.getElementById('edit-audience').value.trim();
+    const style = document.getElementById('edit-style').value;
 
     if (!name) { alert('Name is required.'); btn.textContent = '💾 Save Settings'; btn.disabled = false; return; }
 
-    // Update currentItemData metadata
-    currentItemData.metadata = currentItemData.metadata || {};
-    currentItemData.metadata.name = name;
-    currentItemData.metadata.website = website || null;
-    currentItemData.metadata.description = description || null;
+    currentPresentationData = currentPresentationData || {};
+    currentPresentationData.topic = topic;
+    currentPresentationData.audience = audience;
+    currentPresentationData.style = style;
 
     const email = document.getElementById('user-email').textContent;
-    const resp = await fetch(`/api/items/${currentItemId}`, {
+    const resp = await fetch(`/api/presentations/${currentPresentationId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, data: currentItemData })
+      body: JSON.stringify({ email, name, data: currentPresentationData })
     });
     if (!resp.ok) throw new Error('Save failed');
 
-    // Update original values to new state
-    window._origSettings = { name, website, description };
-
-    // Update the breadcrumb
+    window._origSettings = { name, topic, audience, style };
     document.getElementById('detail-breadcrumb').textContent = name;
-
     hideSaveSettingsBar();
     btn.textContent = '✓ Saved!';
     setTimeout(() => { btn.textContent = '💾 Save Settings'; btn.disabled = false; }, 1500);
@@ -1502,12 +1826,294 @@ async function saveItemSettings() {
   }
 }
 
-// Attach change listeners to settings fields
-['edit-name', 'edit-website', 'edit-description'].forEach(id => {
+// Attach change listeners
+['edit-name', 'edit-topic', 'edit-audience'].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('input', checkSettingsChanged);
-  if (el && el.tagName === 'SELECT') el.addEventListener('change', checkSettingsChanged);
 });
+document.getElementById('edit-style').addEventListener('change', checkSettingsChanged);
+
+// ═══════════════════════════════════════════════
+// APP: Create Presentation
+// ═══════════════════════════════════════════════
+function openNewPresentationDialog() {
+  document.getElementById('np-name').value = '';
+  document.getElementById('np-topic').value = '';
+  document.getElementById('np-slidecount').value = '10';
+  document.getElementById('np-audience').value = '';
+  document.getElementById('np-style').value = 'professional';
+  document.getElementById('np-industry').value = '';
+  document.getElementById('np-type').value = '';
+  document.getElementById('np-context').value = '';
+  document.getElementById('np-error').classList.add('hidden');
+  document.getElementById('new-presentation-dialog').classList.remove('hidden');
+  document.getElementById('np-name').focus();
+}
+
+function closeNewPresentationDialog() {
+  document.getElementById('new-presentation-dialog').classList.add('hidden');
+}
+
+async function createPresentation() {
+  const name = document.getElementById('np-name').value.trim();
+  const topic = document.getElementById('np-topic').value.trim();
+  const errorEl = document.getElementById('np-error');
+
+  if (!name || !topic) {
+    errorEl.textContent = 'Name and topic are required.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  errorEl.classList.add('hidden');
+
+  const btn = document.getElementById('np-create-btn');
+  btn.disabled = true;
+  btn.textContent = 'Creating...';
+
+  const email = document.getElementById('user-email').textContent;
+  const presData = {
+    topic,
+    slideCount: parseInt(document.getElementById('np-slidecount').value) || 10,
+    audience: document.getElementById('np-audience').value.trim() || 'general business audience',
+    style: document.getElementById('np-style').value,
+    industryTag: document.getElementById('np-industry').value || null,
+    presentationTypeTag: document.getElementById('np-type').value || null,
+    additionalContext: document.getElementById('np-context').value.trim() || null
+  };
+
+  try {
+    const resp = await fetch('/api/presentations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, name, data: presData })
+    });
+    if (!resp.ok) {
+      const d = await resp.json();
+      throw new Error(d.error || 'Failed to create presentation');
+    }
+    const result = await resp.json();
+    closeNewPresentationDialog();
+
+    // Navigate to the new presentation detail
+    viewItem(result.presentation.id);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Create & Generate';
+  }
+}
+
+// ═══════════════════════════════════════════════
+// APP: Generate Slides
+// ═══════════════════════════════════════════════
+async function generatePresentation() {
+  if (!currentPresentationId) return;
+  if (!googleConnected) {
+    alert('Please connect your Google account first.');
+    return;
+  }
+
+  const btn = document.getElementById('generate-btn');
+  const progress = document.getElementById('generate-progress');
+  const statusEl = document.getElementById('generate-status');
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating...';
+  progress.classList.remove('hidden');
+  statusEl.textContent = 'Sending to AI...';
+
+  const email = document.getElementById('user-email').textContent;
+
+  try {
+    statusEl.textContent = 'Generating slide content with AI...';
+    const resp = await fetch(`/api/presentations/${currentPresentationId}/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Generation failed');
+
+    statusEl.textContent = 'Done! Slides created.';
+
+    // Refresh the detail view
+    setTimeout(() => {
+      viewItem(currentPresentationId, true);
+    }, 1000);
+
+  } catch (err) {
+    alert('Generation failed: ' + err.message);
+    btn.disabled = false;
+    btn.textContent = '🚀 Generate Slides';
+    progress.classList.add('hidden');
+  }
+}
+
+// ═══════════════════════════════════════════════
+// APP: Delete
+// ═══════════════════════════════════════════════
+function deleteItem(id, name) {
+  deleteTargetId = id;
+  deleteTargetName = name;
+  document.getElementById('delete-item-name').textContent = name;
+  document.getElementById('delete-dialog').classList.remove('hidden');
+}
+
+async function confirmDeleteItem() {
+  if (!deleteTargetId) return;
+  const btn = document.getElementById('delete-confirm-btn');
+  btn.disabled = true;
+  btn.textContent = 'Deleting...';
+
+  const email = document.getElementById('user-email').textContent;
+  try {
+    const resp = await fetch(`/api/presentations/${deleteTargetId}?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
+    if (!resp.ok) throw new Error('Failed to delete');
+    closeDeleteDialog();
+    loadItems();
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Delete';
+  }
+}
+
+// ═══════════════════════════════════════════════
+// APP: Context Grounding (Admin)
+// ═══════════════════════════════════════════════
+async function loadGroundingReferences() {
+  const email = document.getElementById('user-email').textContent;
+  const tbody = document.getElementById('grounding-tbody');
+  const emptyEl = document.getElementById('grounding-empty');
+  const tableWrap = document.getElementById('grounding-table-wrap');
+
+  tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400 py-6">Loading...</td></tr>';
+  emptyEl.classList.add('hidden');
+  tableWrap.classList.remove('hidden');
+
+  try {
+    const resp = await fetch(`/api/reference-presentations?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to load references');
+    const data = await resp.json();
+    const refs = data.references || [];
+
+    if (refs.length === 0) {
+      tableWrap.classList.add('hidden');
+      emptyEl.classList.remove('hidden');
+      return;
+    }
+
+    tbody.innerHTML = refs.map(ref => `
+      <tr class="border-t border-gray-100">
+        <td class="px-5 py-3 font-bold text-gray-800">${esc(ref.name)}</td>
+        <td class="px-5 py-3 text-gray-500">${esc(ref.industry_tag || '—')}</td>
+        <td class="px-5 py-3 text-gray-500">${esc(ref.presentation_type_tag || '—')}</td>
+        <td class="px-5 py-3 text-gray-500">${ref.slide_count || 0}</td>
+        <td class="px-5 py-3 text-gray-500">${(ref.content_length || 0).toLocaleString()}</td>
+        <td class="px-5 py-3 text-gray-500">${esc(ref.uploaded_by || '—')}</td>
+        <td class="px-5 py-3 text-right">
+          <button onclick="deleteGroundingReference(${ref.id})" class="px-3 py-1 text-xs font-medium text-red-500 rounded-md cursor-pointer" style="background: #FEE2E2;">Delete</button>
+        </td>
+      </tr>
+    `).join('');
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="7" class="text-center text-red-500 py-6">${esc(err.message)}</td></tr>`;
+  }
+}
+
+function openAddReferenceDialog() {
+  document.getElementById('ref-name').value = '';
+  document.getElementById('ref-content').value = '';
+  document.getElementById('ref-industry').value = '';
+  document.getElementById('ref-type').value = '';
+  document.getElementById('ref-synopsis').value = '';
+  document.getElementById('ref-slidecount').value = '0';
+  document.getElementById('ref-error').classList.add('hidden');
+  document.getElementById('add-reference-dialog').classList.remove('hidden');
+  document.getElementById('ref-name').focus();
+}
+
+function closeAddReferenceDialog() {
+  document.getElementById('add-reference-dialog').classList.add('hidden');
+}
+
+async function createGroundingReference() {
+  const name = document.getElementById('ref-name').value.trim();
+  const content = document.getElementById('ref-content').value.trim();
+  const errorEl = document.getElementById('ref-error');
+
+  if (!name || !content) {
+    errorEl.textContent = 'Name and content are required.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  errorEl.classList.add('hidden');
+
+  const btn = document.getElementById('ref-create-btn');
+  btn.disabled = true;
+  btn.textContent = 'Adding...';
+
+  const email = document.getElementById('user-email').textContent;
+
+  try {
+    const resp = await fetch('/api/reference-presentations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email,
+        name,
+        content,
+        industryTag: document.getElementById('ref-industry').value || null,
+        presentationTypeTag: document.getElementById('ref-type').value || null,
+        synopsis: document.getElementById('ref-synopsis').value.trim() || null,
+        slideCount: parseInt(document.getElementById('ref-slidecount').value) || 0
+      })
+    });
+    if (!resp.ok) {
+      const d = await resp.json();
+      throw new Error(d.error || 'Failed to create reference');
+    }
+    closeAddReferenceDialog();
+    loadGroundingReferences();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Add Reference';
+  }
+}
+
+async function deleteGroundingReference(id) {
+  if (!confirm('Delete this reference presentation?')) return;
+  const email = document.getElementById('user-email').textContent;
+  try {
+    const resp = await fetch(`/api/reference-presentations/${id}?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
+    if (!resp.ok) throw new Error('Failed to delete reference');
+    loadGroundingReferences();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+// ═══════════════════════════════════════════════
+// APP: URL Params Check (Google OAuth callback)
+// ═══════════════════════════════════════════════
+(function checkUrlParams() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('google_connected') === 'true') {
+    // Clean URL
+    history.replaceState({}, '', '/');
+  }
+  if (params.get('google_error')) {
+    alert('Google connection failed: ' + params.get('google_error'));
+    history.replaceState({}, '', '/');
+  }
+})();
 
 // ═══════════════════════════════════════════════
 // SHARED: Browser Back/Forward Navigation
@@ -1522,12 +2128,6 @@ window.addEventListener('popstate', function(e) {
     showPage('items', true);
   }
 });
-
-// Placeholder: Open new item dialog — customize for your app
-function openNewItemDialog() {
-  // TODO: Open a dialog to create a new item
-  alert('openNewItemDialog() — replace this with your create dialog logic');
-}
 </script>
 </body>
 </html>

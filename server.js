@@ -6,13 +6,14 @@ const path = require('path');
 const crypto = require('crypto');
 const { query } = require('./src/db/connection');
 const { migrate } = require('./src/db/migrate');
+const { google } = require('googleapis');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ─── Middleware ───
 app.use(cors());
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '10mb' }));
 
 // Serve static files (index.html, etc.)
 app.use(express.static(path.join(__dirname)));
@@ -229,7 +230,6 @@ app.delete('/api/api-keys/:id', async (req, res) => {
 // ═══════════════════════════════════════════════
 
 // GET /api/users — admin-only: list all users with asset counts
-// NOTE: Update the LEFT JOIN to match your app-specific asset table
 app.get('/api/users', async (req, res) => {
   try {
     const email = req.query.email;
@@ -238,9 +238,9 @@ app.get('/api/users', async (req, res) => {
     }
     const rows = await query(`
       SELECT u.id, u.email, u.name, u.created_at, u.last_login_at,
-             COUNT(i.id) AS item_count
+             COUNT(p.id) AS item_count
       FROM users u
-      LEFT JOIN items i ON i.user_id = u.id
+      LEFT JOIN presentations p ON p.user_id = u.id
       GROUP BY u.id
       ORDER BY u.created_at DESC
     `);
@@ -363,68 +363,204 @@ app.post('/api/generate', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
-// APP-SPECIFIC ROUTES — Replace this section
+// APP-SPECIFIC — Google OAuth Helpers
 // ═══════════════════════════════════════════════
-// Below are example CRUD + sharing routes for "items".
-// Rename "items" to your asset type and customize the logic.
-//
-// GET  /api/items              — list items for user
-// GET  /api/items/:id          — get single item
-// POST /api/items              — create item
-// PUT  /api/items/:id          — update item
-// DELETE /api/items/:id        — delete item
-// POST /api/items/:id/share    — share item
-// POST /api/items/:id/share/confirm — replace or send new copy
 
-// GET /api/items — list items for a user
-app.get('/api/items', async (req, res) => {
+function createOAuth2Client() {
+  return new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+}
+
+async function getAuthenticatedClient(userId) {
+  const tokens = await query('SELECT * FROM google_tokens WHERE user_id = ?', [userId]);
+  if (tokens.length === 0) return null;
+
+  const tokenRow = tokens[0];
+  const client = createOAuth2Client();
+  client.setCredentials({
+    access_token: tokenRow.access_token,
+    refresh_token: tokenRow.refresh_token,
+    expiry_date: tokenRow.token_expiry ? new Date(tokenRow.token_expiry).getTime() : null
+  });
+
+  // If token is expired or about to expire, refresh it
+  if (tokenRow.token_expiry && new Date(tokenRow.token_expiry) < new Date(Date.now() + 5 * 60 * 1000)) {
+    try {
+      const { credentials } = await client.refreshAccessToken();
+      await query(
+        'UPDATE google_tokens SET access_token = ?, token_expiry = ? WHERE user_id = ?',
+        [credentials.access_token, credentials.expiry_date ? new Date(credentials.expiry_date) : null, userId]
+      );
+      client.setCredentials(credentials);
+    } catch (err) {
+      console.error('Token refresh failed:', err.message);
+      // Delete invalid tokens
+      await query('DELETE FROM google_tokens WHERE user_id = ?', [userId]);
+      return null;
+    }
+  }
+
+  return client;
+}
+
+// ═══════════════════════════════════════════════
+// APP-SPECIFIC — Google OAuth Routes
+// ═══════════════════════════════════════════════
+
+// GET /api/auth/google — redirect user to Google OAuth consent
+app.get('/api/auth/google', (req, res) => {
+  const state = req.query.email || '';
+  const client = createOAuth2Client();
+  const url = client.generateAuthUrl({
+    access_type: 'offline',
+    prompt: 'consent',
+    scope: [
+      'https://www.googleapis.com/auth/presentations',
+      'https://www.googleapis.com/auth/drive.file',
+      'https://www.googleapis.com/auth/userinfo.email'
+    ],
+    state
+  });
+  res.redirect(url);
+});
+
+// GET /api/auth/google/callback — handle OAuth callback
+app.get('/api/auth/google/callback', async (req, res) => {
+  try {
+    const { code, state } = req.query;
+    const email = state || '';
+
+    if (!code) {
+      return res.redirect('/?google_error=no_code');
+    }
+
+    const client = createOAuth2Client();
+    const { tokens } = await client.getToken(code);
+    client.setCredentials(tokens);
+
+    // Get Google email
+    const oauth2 = google.oauth2({ version: 'v2', auth: client });
+    const userInfo = await oauth2.userinfo.get();
+    const googleEmail = userInfo.data.email;
+
+    // Get or create user
+    const user = await getOrCreateUser(email);
+
+    // Upsert tokens
+    const existing = await query('SELECT id FROM google_tokens WHERE user_id = ?', [user.id]);
+    if (existing.length > 0) {
+      await query(
+        'UPDATE google_tokens SET access_token = ?, refresh_token = ?, token_expiry = ?, google_email = ? WHERE user_id = ?',
+        [tokens.access_token, tokens.refresh_token || null, tokens.expiry_date ? new Date(tokens.expiry_date) : null, googleEmail, user.id]
+      );
+    } else {
+      await query(
+        'INSERT INTO google_tokens (user_id, access_token, refresh_token, token_expiry, google_email) VALUES (?, ?, ?, ?, ?)',
+        [user.id, tokens.access_token, tokens.refresh_token || null, tokens.expiry_date ? new Date(tokens.expiry_date) : null, googleEmail]
+      );
+    }
+
+    res.redirect('/?google_connected=true');
+  } catch (err) {
+    console.error('Google OAuth callback error:', err);
+    res.redirect('/?google_error=' + encodeURIComponent(err.message));
+  }
+});
+
+// GET /api/auth/google/status — check if user has connected Google
+app.get('/api/auth/google/status', async (req, res) => {
   try {
     const email = req.query.email;
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
-    const items = await query(
-      'SELECT id, name, shared_by_email, shared_at, created_at, updated_at FROM items WHERE user_id = ? ORDER BY updated_at DESC',
-      [user.id]
-    );
-    res.json({ items });
+    const tokens = await query('SELECT google_email, token_expiry FROM google_tokens WHERE user_id = ?', [user.id]);
+
+    if (tokens.length === 0) {
+      return res.json({ connected: false });
+    }
+
+    res.json({
+      connected: true,
+      googleEmail: tokens[0].google_email
+    });
   } catch (err) {
-    console.error('Failed to list items:', err);
-    res.status(500).json({ error: 'Failed to list items' });
+    console.error('Google status check error:', err);
+    res.status(500).json({ error: 'Failed to check Google status' });
   }
 });
 
-// GET /api/items/:id — get single item with full data
-app.get('/api/items/:id', async (req, res) => {
+// POST /api/auth/google/disconnect — remove Google connection
+app.post('/api/auth/google/disconnect', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+    await query('DELETE FROM google_tokens WHERE user_id = ?', [user.id]);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Google disconnect error:', err);
+    res.status(500).json({ error: 'Failed to disconnect Google' });
+  }
+});
+
+// ═══════════════════════════════════════════════
+// APP-SPECIFIC — Presentations CRUD
+// ═══════════════════════════════════════════════
+
+// GET /api/presentations — list presentations for a user
+app.get('/api/presentations', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+    const presentations = await query(
+      'SELECT id, name, status, google_presentation_url, shared_by_email, shared_at, created_at, updated_at FROM presentations WHERE user_id = ? ORDER BY updated_at DESC',
+      [user.id]
+    );
+    res.json({ presentations });
+  } catch (err) {
+    console.error('Failed to list presentations:', err);
+    res.status(500).json({ error: 'Failed to list presentations' });
+  }
+});
+
+// GET /api/presentations/:id — get single presentation
+app.get('/api/presentations/:id', async (req, res) => {
   try {
     const email = req.query.email;
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
     const rows = await query(
-      'SELECT * FROM items WHERE id = ? AND user_id = ?',
+      'SELECT * FROM presentations WHERE id = ? AND user_id = ?',
       [req.params.id, user.id]
     );
 
     if (rows.length === 0) {
-      return res.status(404).json({ error: 'Item not found' });
+      return res.status(404).json({ error: 'Presentation not found' });
     }
 
-    const item = rows[0];
-    // Parse data if it's a string
-    if (typeof item.data === 'string') {
-      item.data = JSON.parse(item.data);
+    const presentation = rows[0];
+    if (typeof presentation.data === 'string') {
+      try { presentation.data = JSON.parse(presentation.data); } catch(e) {}
     }
 
-    res.json({ item });
+    res.json({ presentation });
   } catch (err) {
-    console.error('Failed to get item:', err);
-    res.status(500).json({ error: 'Failed to get item' });
+    console.error('Failed to get presentation:', err);
+    res.status(500).json({ error: 'Failed to get presentation' });
   }
 });
 
-// POST /api/items — create a new item
-app.post('/api/items', async (req, res) => {
+// POST /api/presentations — create a new presentation
+app.post('/api/presentations', async (req, res) => {
   try {
     const { email, name, data } = req.body;
     if (!email || !name) {
@@ -433,91 +569,124 @@ app.post('/api/items', async (req, res) => {
 
     const user = await getOrCreateUser(email);
     const result = await query(
-      'INSERT INTO items (user_id, name, data) VALUES (?, ?, ?)',
+      'INSERT INTO presentations (user_id, name, data) VALUES (?, ?, ?)',
       [user.id, name.trim(), data ? JSON.stringify(data) : null]
     );
 
     res.status(201).json({
-      item: {
+      presentation: {
         id: result.insertId,
         name: name.trim(),
+        status: 'draft',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }
     });
   } catch (err) {
-    console.error('Failed to create item:', err);
-    res.status(500).json({ error: 'Failed to create item' });
+    console.error('Failed to create presentation:', err);
+    res.status(500).json({ error: 'Failed to create presentation' });
   }
 });
 
-// PUT /api/items/:id — update an item
-app.put('/api/items/:id', async (req, res) => {
+// PUT /api/presentations/:id — update a presentation
+app.put('/api/presentations/:id', async (req, res) => {
   try {
-    const { email, data } = req.body;
-    if (!email || !data) {
-      return res.status(400).json({ error: 'Email and data required' });
+    const { email, name, data, status, google_presentation_id, google_presentation_url } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Email required' });
     }
 
     const user = await getOrCreateUser(email);
 
     // Verify ownership
-    const existing = await query('SELECT id FROM items WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    const existing = await query('SELECT * FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
     if (existing.length === 0) {
-      return res.status(404).json({ error: 'Item not found' });
+      return res.status(404).json({ error: 'Presentation not found' });
     }
 
+    const updates = [];
+    const params = [];
+
+    if (name !== undefined) { updates.push('name = ?'); params.push(name.trim()); }
+    if (data !== undefined) { updates.push('data = ?'); params.push(JSON.stringify(data)); }
+    if (status !== undefined) { updates.push('status = ?'); params.push(status); }
+
+    // Three-state race condition guard for URL fields
+    if (google_presentation_id !== undefined && google_presentation_id !== null) {
+      if (google_presentation_id === '') {
+        updates.push('google_presentation_id = NULL');
+      } else {
+        updates.push('google_presentation_id = ?'); params.push(google_presentation_id);
+      }
+    }
+    if (google_presentation_url !== undefined && google_presentation_url !== null) {
+      if (google_presentation_url === '') {
+        updates.push('google_presentation_url = NULL');
+      } else {
+        updates.push('google_presentation_url = ?'); params.push(google_presentation_url);
+      }
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    updates.push('updated_at = NOW()');
+    params.push(req.params.id, user.id);
+
     await query(
-      'UPDATE items SET data = ?, updated_at = NOW() WHERE id = ? AND user_id = ?',
-      [JSON.stringify(data), req.params.id, user.id]
+      `UPDATE presentations SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`,
+      params
     );
 
     res.json({ success: true });
   } catch (err) {
-    console.error('Failed to update item:', err);
-    res.status(500).json({ error: 'Failed to update item' });
+    console.error('Failed to update presentation:', err);
+    res.status(500).json({ error: 'Failed to update presentation' });
   }
 });
 
-// DELETE /api/items/:id — delete an item
-app.delete('/api/items/:id', async (req, res) => {
+// DELETE /api/presentations/:id — delete a presentation
+app.delete('/api/presentations/:id', async (req, res) => {
   try {
     const email = req.query.email;
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
     const result = await query(
-      'DELETE FROM items WHERE id = ? AND user_id = ?',
+      'DELETE FROM presentations WHERE id = ? AND user_id = ?',
       [req.params.id, user.id]
     );
 
     if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Item not found' });
+      return res.status(404).json({ error: 'Presentation not found' });
     }
 
     res.json({ success: true });
   } catch (err) {
-    console.error('Failed to delete item:', err);
-    res.status(500).json({ error: 'Failed to delete item' });
+    console.error('Failed to delete presentation:', err);
+    res.status(500).json({ error: 'Failed to delete presentation' });
   }
 });
 
-// ─── Share Items ───
+// ═══════════════════════════════════════════════
+// APP-SPECIFIC — Share Presentations
+// ═══════════════════════════════════════════════
 
-// Helper: create a shared copy of an item for a recipient
-async function createSharedCopy(sourceItem, senderEmail, recipientEmail) {
+// Helper: create a shared copy
+async function createSharedCopy(sourcePresentation, senderEmail, recipientEmail) {
   const recipientUser = await getOrCreateUser(recipientEmail);
 
   const copyResult = await query(
-    'INSERT INTO items (user_id, name, data, shared_by_email, shared_at) VALUES (?, ?, ?, ?, NOW())',
-    [recipientUser.id, sourceItem.name, typeof sourceItem.data === 'string' ? sourceItem.data : JSON.stringify(sourceItem.data), senderEmail]
+    'INSERT INTO presentations (user_id, name, data, status, shared_by_email, shared_at) VALUES (?, ?, ?, ?, ?, NOW())',
+    [recipientUser.id, sourcePresentation.name, typeof sourcePresentation.data === 'string' ? sourcePresentation.data : JSON.stringify(sourcePresentation.data), sourcePresentation.status || 'draft', senderEmail]
   );
 
   return copyResult.insertId;
 }
 
-// POST /api/items/:id/share — share an item with another user
-app.post('/api/items/:id/share', async (req, res) => {
+// POST /api/presentations/:id/share
+app.post('/api/presentations/:id/share', async (req, res) => {
   try {
     const { email, recipientEmail } = req.body;
     if (!email || !recipientEmail) {
@@ -525,21 +694,19 @@ app.post('/api/items/:id/share', async (req, res) => {
     }
 
     if (email.toLowerCase() === recipientEmail.toLowerCase()) {
-      return res.status(400).json({ error: 'You cannot share an item with yourself' });
+      return res.status(400).json({ error: 'You cannot share a presentation with yourself' });
     }
 
     const sender = await getOrCreateUser(email);
 
-    // Verify sender owns the item
-    const items = await query('SELECT * FROM items WHERE id = ? AND user_id = ?', [req.params.id, sender.id]);
-    if (items.length === 0) {
-      return res.status(404).json({ error: 'Item not found' });
+    const presentations = await query('SELECT * FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, sender.id]);
+    if (presentations.length === 0) {
+      return res.status(404).json({ error: 'Presentation not found' });
     }
-    const sourceItem = items[0];
+    const sourcePresentation = presentations[0];
 
-    // Check if already shared to this recipient from this item
     const existing = await query(
-      'SELECT id, copied_item_id, created_at FROM shared_items WHERE item_id = ? AND sender_user_id = ? AND recipient_email = ?',
+      'SELECT id, copied_presentation_id, created_at FROM shared_presentations WHERE presentation_id = ? AND sender_user_id = ? AND recipient_email = ?',
       [req.params.id, sender.id, recipientEmail.toLowerCase()]
     );
 
@@ -547,28 +714,27 @@ app.post('/api/items/:id/share', async (req, res) => {
       return res.json({
         alreadyShared: true,
         sharedAt: existing[0].created_at,
-        copiedItemId: existing[0].copied_item_id,
+        copiedPresentationId: existing[0].copied_presentation_id,
         shareRecordId: existing[0].id
       });
     }
 
-    // First-time share: create copy and tracking record
-    const copiedItemId = await createSharedCopy(sourceItem, email, recipientEmail);
+    const copiedPresentationId = await createSharedCopy(sourcePresentation, email, recipientEmail);
 
     await query(
-      'INSERT INTO shared_items (item_id, sender_user_id, sender_email, recipient_email, copied_item_id) VALUES (?, ?, ?, ?, ?)',
-      [req.params.id, sender.id, email.toLowerCase(), recipientEmail.toLowerCase(), copiedItemId]
+      'INSERT INTO shared_presentations (presentation_id, sender_user_id, sender_email, recipient_email, copied_presentation_id) VALUES (?, ?, ?, ?, ?)',
+      [req.params.id, sender.id, email.toLowerCase(), recipientEmail.toLowerCase(), copiedPresentationId]
     );
 
-    res.status(201).json({ success: true, copiedItemId });
+    res.status(201).json({ success: true, copiedPresentationId });
   } catch (err) {
-    console.error('Failed to share item:', err);
-    res.status(500).json({ error: 'Failed to share item' });
+    console.error('Failed to share presentation:', err);
+    res.status(500).json({ error: 'Failed to share presentation' });
   }
 });
 
-// POST /api/items/:id/share/confirm — replace or send new copy
-app.post('/api/items/:id/share/confirm', async (req, res) => {
+// POST /api/presentations/:id/share/confirm
+app.post('/api/presentations/:id/share/confirm', async (req, res) => {
   try {
     const { email, recipientEmail, action } = req.body;
     if (!email || !recipientEmail || !action) {
@@ -579,53 +745,428 @@ app.post('/api/items/:id/share/confirm', async (req, res) => {
     }
 
     const sender = await getOrCreateUser(email);
-
-    // Verify sender owns the item
-    const items = await query('SELECT * FROM items WHERE id = ? AND user_id = ?', [req.params.id, sender.id]);
-    if (items.length === 0) {
-      return res.status(404).json({ error: 'Item not found' });
+    const presentations = await query('SELECT * FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, sender.id]);
+    if (presentations.length === 0) {
+      return res.status(404).json({ error: 'Presentation not found' });
     }
-    const sourceItem = items[0];
+    const sourcePresentation = presentations[0];
 
     if (action === 'replace') {
-      // Find existing share record
       const existing = await query(
-        'SELECT id, copied_item_id FROM shared_items WHERE item_id = ? AND sender_user_id = ? AND recipient_email = ?',
+        'SELECT id, copied_presentation_id FROM shared_presentations WHERE presentation_id = ? AND sender_user_id = ? AND recipient_email = ?',
         [req.params.id, sender.id, recipientEmail.toLowerCase()]
       );
+      if (existing.length === 0) return res.status(404).json({ error: 'No previous share found' });
 
-      if (existing.length === 0) {
-        return res.status(404).json({ error: 'No previous share found' });
-      }
-
-      const copiedId = existing[0].copied_item_id;
-
-      // Update the existing copy with current data
+      const copiedId = existing[0].copied_presentation_id;
       if (copiedId) {
         await query(
-          'UPDATE items SET name = ?, data = ?, shared_by_email = ?, shared_at = NOW(), updated_at = NOW() WHERE id = ?',
-          [sourceItem.name, typeof sourceItem.data === 'string' ? sourceItem.data : JSON.stringify(sourceItem.data), email.toLowerCase(), copiedId]
+          'UPDATE presentations SET name = ?, data = ?, shared_by_email = ?, shared_at = NOW(), updated_at = NOW() WHERE id = ?',
+          [sourcePresentation.name, typeof sourcePresentation.data === 'string' ? sourcePresentation.data : JSON.stringify(sourcePresentation.data), email.toLowerCase(), copiedId]
         );
       }
-
-      // Update tracking timestamp
-      await query('UPDATE shared_items SET created_at = NOW() WHERE id = ?', [existing[0].id]);
-
-      res.json({ success: true, action: 'replaced', copiedItemId: copiedId });
+      await query('UPDATE shared_presentations SET created_at = NOW() WHERE id = ?', [existing[0].id]);
+      res.json({ success: true, action: 'replaced', copiedPresentationId: copiedId });
     } else {
-      // Send a new copy
-      const copiedItemId = await createSharedCopy(sourceItem, email, recipientEmail);
-
+      const copiedPresentationId = await createSharedCopy(sourcePresentation, email, recipientEmail);
       await query(
-        'INSERT INTO shared_items (item_id, sender_user_id, sender_email, recipient_email, copied_item_id) VALUES (?, ?, ?, ?, ?)',
-        [req.params.id, sender.id, email.toLowerCase(), recipientEmail.toLowerCase(), copiedItemId]
+        'INSERT INTO shared_presentations (presentation_id, sender_user_id, sender_email, recipient_email, copied_presentation_id) VALUES (?, ?, ?, ?, ?)',
+        [req.params.id, sender.id, email.toLowerCase(), recipientEmail.toLowerCase(), copiedPresentationId]
       );
-
-      res.status(201).json({ success: true, action: 'copied', copiedItemId });
+      res.status(201).json({ success: true, action: 'copied', copiedPresentationId });
     }
   } catch (err) {
     console.error('Failed to confirm share:', err);
     res.status(500).json({ error: 'Failed to complete share action' });
+  }
+});
+
+// ═══════════════════════════════════════════════
+// APP-SPECIFIC — Google Slides Generation
+// ═══════════════════════════════════════════════
+
+// POST /api/presentations/:id/generate — generate Google Slides
+app.post('/api/presentations/:id/generate', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+
+    // Verify ownership and get presentation
+    const rows = await query('SELECT * FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    const presentation = rows[0];
+    let presData = presentation.data;
+    if (typeof presData === 'string') {
+      try { presData = JSON.parse(presData); } catch(e) { presData = {}; }
+    }
+    presData = presData || {};
+
+    // Check Google connection
+    const authClient = await getAuthenticatedClient(user.id);
+    if (!authClient) {
+      return res.status(400).json({ error: 'Google account not connected. Please connect your Google account first.' });
+    }
+
+    // Mark as generating
+    await query('UPDATE presentations SET status = ? WHERE id = ?', ['generating', presentation.id]);
+
+    // Build the Gemini prompt
+    const slides = presData.slides || [];
+    const topic = presData.topic || presentation.name;
+    const slideCount = presData.slideCount || 10;
+    const audience = presData.audience || 'general business audience';
+    const style = presData.style || 'professional';
+
+    // Context Grounding: Find matching reference presentations
+    let refSection = '';
+    try {
+      const refs = await findMatchingReferences(presData.industryTag, presData.presentationTypeTag);
+      if (refs.length > 0) {
+        refSection = '\n\n--- REFERENCE PRESENTATIONS FOR STYLE AND STRUCTURE GUIDANCE ---\n';
+        refs.forEach((ref, i) => {
+          refSection += `\n[Reference ${i+1}: "${ref.name}" (${ref.industry_tag || 'general'} / ${ref.presentation_type_tag || 'general'})]\n`;
+          // Truncate content to avoid huge prompts
+          const content = (ref.content || '').substring(0, 8000);
+          refSection += content + '\n';
+        });
+        refSection += '\n--- END REFERENCE PRESENTATIONS ---\n';
+        refSection += 'Use the above reference presentations as style and structural inspiration. Match their tone, format, and approach while creating original content for the topic below.\n';
+      }
+    } catch (err) {
+      console.error('Context grounding lookup failed:', err.message);
+    }
+
+    const systemPrompt = `You are an expert presentation designer. Generate a Google Slides presentation as structured JSON.
+${refSection}
+
+Create a ${slideCount}-slide presentation about: "${topic}"
+Target audience: ${audience}
+Style: ${style}
+${presData.additionalContext ? `Additional context: ${presData.additionalContext}` : ''}
+
+Return a JSON object with this exact structure:
+{
+  "title": "Presentation Title",
+  "slides": [
+    {
+      "layout": "TITLE",
+      "title": "Slide Title",
+      "subtitle": "Optional subtitle"
+    },
+    {
+      "layout": "TITLE_AND_BODY",
+      "title": "Slide Title",
+      "body": "Slide body content. Use \\n for line breaks. Use bullet points with • character."
+    },
+    {
+      "layout": "SECTION_HEADER",
+      "title": "Section Title",
+      "subtitle": "Optional section subtitle"
+    },
+    {
+      "layout": "TWO_COLUMNS",
+      "title": "Comparison Title",
+      "leftColumn": "Left column content",
+      "rightColumn": "Right column content"
+    }
+  ]
+}
+
+Available layouts: TITLE (first slide only), TITLE_AND_BODY (main content), SECTION_HEADER (section dividers), TWO_COLUMNS (side-by-side).
+Make the content substantive, detailed, and professional. Each body should have 3-5 meaningful bullet points.
+Return ONLY valid JSON, no markdown fences.`;
+
+    // Call Gemini
+    const geminiApiKey = process.env.GEMINI_API_KEY;
+    if (!geminiApiKey) {
+      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
+      return res.status(500).json({ error: 'GEMINI_API_KEY not configured' });
+    }
+
+    const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
+
+    const geminiResp = await fetch(geminiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: systemPrompt }] }],
+        generationConfig: { temperature: 0.7, maxOutputTokens: 8192 }
+      })
+    });
+
+    if (!geminiResp.ok) {
+      const errData = await geminiResp.json().catch(() => ({}));
+      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
+      return res.status(500).json({ error: errData.error?.message || 'Gemini API error' });
+    }
+
+    const geminiData = await geminiResp.json();
+    let content = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!content) {
+      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
+      return res.status(500).json({ error: 'No content returned from AI' });
+    }
+
+    // Parse JSON from response
+    content = content.trim();
+    const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) content = jsonMatch[1].trim();
+
+    let slideData;
+    try {
+      slideData = JSON.parse(content);
+    } catch (e) {
+      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
+      return res.status(500).json({ error: 'Failed to parse AI response as JSON' });
+    }
+
+    // Create Google Slides presentation
+    try {
+      const slidesService = google.slides({ version: 'v1', auth: authClient });
+
+      // Create blank presentation
+      const createResp = await slidesService.presentations.create({
+        requestBody: { title: slideData.title || presentation.name }
+      });
+
+      const presentationId = createResp.data.presentationId;
+      const presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
+
+      // Build batch update requests
+      const requests = [];
+      const generatedSlides = slideData.slides || [];
+
+      // Delete the default blank slide
+      if (createResp.data.slides && createResp.data.slides.length > 0) {
+        requests.push({
+          deleteObject: { objectId: createResp.data.slides[0].objectId }
+        });
+      }
+
+      // Add each slide
+      for (let i = 0; i < generatedSlides.length; i++) {
+        const slide = generatedSlides[i];
+        const slideId = `slide_${i}`;
+        const titleId = `title_${i}`;
+        const bodyId = `body_${i}`;
+        const subtitleId = `subtitle_${i}`;
+        const leftColId = `leftcol_${i}`;
+        const rightColId = `rightcol_${i}`;
+
+        let predefinedLayout = 'BLANK';
+        if (slide.layout === 'TITLE') predefinedLayout = 'TITLE';
+        else if (slide.layout === 'SECTION_HEADER') predefinedLayout = 'SECTION_HEADER';
+        else if (slide.layout === 'TITLE_AND_BODY') predefinedLayout = 'TITLE_AND_BODY';
+        else if (slide.layout === 'TWO_COLUMNS') predefinedLayout = 'TITLE_AND_TWO_COLUMNS';
+
+        requests.push({
+          createSlide: {
+            objectId: slideId,
+            insertionIndex: i,
+            slideLayoutReference: { predefinedLayout }
+          }
+        });
+      }
+
+      // Execute slide creation first
+      if (requests.length > 0) {
+        await slidesService.presentations.batchUpdate({
+          presentationId,
+          requestBody: { requests }
+        });
+      }
+
+      // Get the created presentation to find placeholder IDs
+      const createdPres = await slidesService.presentations.get({ presentationId });
+
+      // Now populate text in each slide
+      const textRequests = [];
+      for (let i = 0; i < generatedSlides.length; i++) {
+        const slide = generatedSlides[i];
+        const pageSlide = createdPres.data.slides[i];
+        if (!pageSlide) continue;
+
+        const elements = pageSlide.pageElements || [];
+
+        for (const element of elements) {
+          const placeholder = element.shape?.placeholder;
+          if (!placeholder) continue;
+
+          let text = '';
+          if (placeholder.type === 'TITLE' || placeholder.type === 'CENTERED_TITLE') {
+            text = slide.title || '';
+          } else if (placeholder.type === 'SUBTITLE') {
+            text = slide.subtitle || '';
+          } else if (placeholder.type === 'BODY') {
+            if (slide.layout === 'TWO_COLUMNS') {
+              // For two columns, first body placeholder gets left, second gets right
+              // This is a simplification - in practice we handle by index
+              text = slide.body || slide.leftColumn || '';
+            } else {
+              text = slide.body || '';
+            }
+          }
+
+          if (text) {
+            textRequests.push({
+              insertText: {
+                objectId: element.objectId,
+                text: text.replace(/\\n/g, '\n'),
+                insertionIndex: 0
+              }
+            });
+          }
+        }
+      }
+
+      if (textRequests.length > 0) {
+        await slidesService.presentations.batchUpdate({
+          presentationId,
+          requestBody: { requests: textRequests }
+        });
+      }
+
+      // Update presentation record
+      presData.generatedSlides = slideData;
+      await query(
+        'UPDATE presentations SET status = ?, google_presentation_id = ?, google_presentation_url = ?, data = ?, updated_at = NOW() WHERE id = ?',
+        ['completed', presentationId, presentationUrl, JSON.stringify(presData), presentation.id]
+      );
+
+      res.json({
+        success: true,
+        presentationId,
+        presentationUrl,
+        slideCount: generatedSlides.length
+      });
+
+    } catch (err) {
+      console.error('Google Slides creation error:', err);
+      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
+      res.status(500).json({ error: 'Failed to create Google Slides: ' + err.message });
+    }
+
+  } catch (err) {
+    console.error('Generate presentation error:', err);
+    res.status(500).json({ error: 'Failed to generate presentation' });
+  }
+});
+
+// ═══════════════════════════════════════════════
+// APP-SPECIFIC — Context Grounding: Reference Presentations
+// ═══════════════════════════════════════════════
+
+// ─── Context Grounding: 5-tier matching ───
+async function findMatchingReferences(industryTag, presentationTypeTag) {
+  // Tier 1: exact match on both tags
+  if (industryTag && presentationTypeTag) {
+    const exact = await query(
+      'SELECT * FROM reference_presentations WHERE industry_tag = ? AND presentation_type_tag = ? ORDER BY created_at DESC LIMIT 3',
+      [industryTag, presentationTypeTag]
+    );
+    if (exact.length > 0) return exact;
+  }
+
+  // Tier 2: type match only
+  if (presentationTypeTag) {
+    const typeOnly = await query(
+      'SELECT * FROM reference_presentations WHERE presentation_type_tag = ? ORDER BY created_at DESC LIMIT 3',
+      [presentationTypeTag]
+    );
+    if (typeOnly.length > 0) return typeOnly;
+  }
+
+  // Tier 3: industry match only
+  if (industryTag) {
+    const industryOnly = await query(
+      'SELECT * FROM reference_presentations WHERE industry_tag = ? ORDER BY created_at DESC LIMIT 3',
+      [industryTag]
+    );
+    if (industryOnly.length > 0) return industryOnly;
+  }
+
+  // Tier 4: any with content
+  const fallback = await query(
+    'SELECT * FROM reference_presentations WHERE content IS NOT NULL AND content != "" ORDER BY created_at DESC LIMIT 2'
+  );
+  if (fallback.length > 0) return fallback;
+
+  // Tier 5: nothing
+  return [];
+}
+
+// GET /api/reference-presentations — list all (admin)
+app.get('/api/reference-presentations', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email || !isAdmin(email)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const refs = await query(
+      'SELECT id, name, industry_tag, presentation_type_tag, synopsis, slide_count, content_length, uploaded_by, created_at FROM reference_presentations ORDER BY created_at DESC'
+    );
+    res.json({ references: refs });
+  } catch (err) {
+    console.error('Failed to list reference presentations:', err);
+    res.status(500).json({ error: 'Failed to list references' });
+  }
+});
+
+// POST /api/reference-presentations — create from pasted text (admin)
+app.post('/api/reference-presentations', async (req, res) => {
+  try {
+    const { email, name, content, industryTag, presentationTypeTag, synopsis, slideCount } = req.body;
+    if (!email || !isAdmin(email)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    if (!name || !content) {
+      return res.status(400).json({ error: 'Name and content are required' });
+    }
+
+    const result = await query(
+      'INSERT INTO reference_presentations (name, content, content_length, industry_tag, presentation_type_tag, synopsis, slide_count, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [name.trim(), content, content.length, industryTag || null, presentationTypeTag || null, synopsis || null, slideCount || 0, email]
+    );
+
+    res.status(201).json({
+      reference: {
+        id: result.insertId,
+        name: name.trim(),
+        content_length: content.length,
+        industry_tag: industryTag || null,
+        presentation_type_tag: presentationTypeTag || null,
+        synopsis: synopsis || null,
+        slide_count: slideCount || 0
+      }
+    });
+  } catch (err) {
+    console.error('Failed to create reference presentation:', err);
+    res.status(500).json({ error: 'Failed to create reference' });
+  }
+});
+
+// DELETE /api/reference-presentations/:id (admin)
+app.delete('/api/reference-presentations/:id', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email || !isAdmin(email)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const result = await query('DELETE FROM reference_presentations WHERE id = ?', [req.params.id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Reference not found' });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to delete reference:', err);
+    res.status(500).json({ error: 'Failed to delete reference' });
   }
 });
 
