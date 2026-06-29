@@ -23,12 +23,12 @@ This template is the foundation for all `aubreydemo.com` subdomain apps. Changes
 
 All app-specific values use `{{DOUBLE_BRACE}}` tokens:
 
-- `{{APP_NAME}}` — Display name
-- `{{APP_SLUG}}` — URL-safe identifier
-- `{{APP_TAGLINE}}` — Short description
-- `{{APP_ASSET_NAME}}` — Plural asset name (e.g., "Scripts")
-- `{{APP_ASSET_SINGULAR}}` — Singular asset name (e.g., "Script")
-- `{{API_KEY_PREFIX}}` — 4-character API key prefix
+- `Slide Generator` — Display name
+- `slide-generator` — URL-safe identifier
+- `AI-powered presentation slides` — Short description
+- `Presentations` — Plural asset name (e.g., "Scripts")
+- `Presentation` — Singular asset name (e.g., "Script")
+- `slgn` — 4-character API key prefix
 
 ### Code Section Labels
 

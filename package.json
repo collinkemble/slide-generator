@@ -1,7 +1,7 @@
 {
-  "name": "{{APP_SLUG}}",
+  "name": "slide-generator",
   "version": "1.0.0",
-  "description": "{{APP_TAGLINE}}",
+  "description": "AI-powered presentation slides",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
