@@ -414,11 +414,9 @@ async function getAuthenticatedClient(userId) {
 app.get('/api/auth/google', (req, res) => {
   const state = req.query.email || '';
   const client = createOAuth2Client();
-  // Use 'consent' to force consent + refresh token, then append
-  // select_account via URL param so Google shows the account chooser
-  let url = client.generateAuthUrl({
+  const url = client.generateAuthUrl({
     access_type: 'offline',
-    prompt: 'consent',
+    prompt: 'select_account',
     scope: [
       'https://www.googleapis.com/auth/presentations',
       'https://www.googleapis.com/auth/drive.file',
@@ -426,8 +424,6 @@ app.get('/api/auth/google', (req, res) => {
     ],
     state
   });
-  // Replace prompt=consent with prompt=consent%20select_account in the URL
-  url = url.replace('prompt=consent', 'prompt=consent%20select_account');
   res.redirect(url);
 });
 
@@ -453,17 +449,20 @@ app.get('/api/auth/google/callback', async (req, res) => {
     // Get or create user
     const user = await getOrCreateUser(email);
 
-    // Upsert tokens
-    const existing = await query('SELECT id FROM google_tokens WHERE user_id = ?', [user.id]);
+    // Upsert tokens — preserve existing refresh_token if Google doesn't return a new one
+    const existing = await query('SELECT id, refresh_token FROM google_tokens WHERE user_id = ?', [user.id]);
+    const refreshToken = tokens.refresh_token || (existing.length > 0 ? existing[0].refresh_token : null);
+    const tokenExpiry = tokens.expiry_date ? new Date(tokens.expiry_date) : null;
+
     if (existing.length > 0) {
       await query(
         'UPDATE google_tokens SET access_token = ?, refresh_token = ?, token_expiry = ?, google_email = ? WHERE user_id = ?',
-        [tokens.access_token, tokens.refresh_token || null, tokens.expiry_date ? new Date(tokens.expiry_date) : null, googleEmail, user.id]
+        [tokens.access_token, refreshToken, tokenExpiry, googleEmail, user.id]
       );
     } else {
       await query(
         'INSERT INTO google_tokens (user_id, access_token, refresh_token, token_expiry, google_email) VALUES (?, ?, ?, ?, ?)',
-        [user.id, tokens.access_token, tokens.refresh_token || null, tokens.expiry_date ? new Date(tokens.expiry_date) : null, googleEmail]
+        [user.id, tokens.access_token, refreshToken, tokenExpiry, googleEmail]
       );
     }
 
