@@ -406,6 +406,88 @@ async function getAuthenticatedClient(userId) {
   return client;
 }
 
+// ─── Google Slides Content Extraction (uses API key, not OAuth) ───
+
+function extractTextFromElement(element) {
+  let text = '';
+  if (element.shape && element.shape.text) {
+    for (const te of (element.shape.text.textElements || [])) {
+      if (te.textRun && te.textRun.content) {
+        text += te.textRun.content;
+      }
+    }
+  }
+  if (element.table) {
+    for (const row of (element.table.tableRows || [])) {
+      for (const cell of (row.tableCells || [])) {
+        if (cell.text) {
+          for (const te of (cell.text.textElements || [])) {
+            if (te.textRun && te.textRun.content) {
+              text += te.textRun.content;
+            }
+          }
+        }
+      }
+    }
+  }
+  if (element.elementGroup && element.elementGroup.children) {
+    for (const child of element.elementGroup.children) {
+      text += extractTextFromElement(child);
+    }
+  }
+  return text;
+}
+
+async function extractGoogleSlidesContent(presentationId) {
+  const apiKey = process.env.GOOGLE_API_KEY;
+  if (!apiKey) throw new Error('GOOGLE_API_KEY not configured');
+
+  const slides = google.slides({ version: 'v1' });
+  const res = await slides.presentations.get({
+    presentationId,
+    key: apiKey
+  });
+
+  const presentation = res.data;
+  const title = presentation.title || 'Untitled';
+  let content = `PRESENTATION: ${title}\n${'='.repeat(50)}\n`;
+  let slideCount = 0;
+
+  for (const slide of (presentation.slides || [])) {
+    slideCount++;
+    content += `\n--- Slide ${slideCount} ---\n`;
+
+    // Extract text from all page elements
+    let slideText = '';
+    for (const element of (slide.pageElements || [])) {
+      slideText += extractTextFromElement(element);
+    }
+    content += slideText.trim() || '(no text content)';
+
+    // Extract speaker notes
+    if (slide.slideProperties && slide.slideProperties.notesPage) {
+      const notesPage = slide.slideProperties.notesPage;
+      let notesText = '';
+      for (const element of (notesPage.pageElements || [])) {
+        if (element.shape && element.shape.shapeType === 'TEXT_BOX' && element.shape.text) {
+          for (const te of (element.shape.text.textElements || [])) {
+            if (te.textRun && te.textRun.content) {
+              notesText += te.textRun.content;
+            }
+          }
+        }
+      }
+      const trimmedNotes = notesText.trim();
+      if (trimmedNotes) {
+        content += `\n[Speaker Notes: ${trimmedNotes}]`;
+      }
+    }
+    content += '\n';
+  }
+
+  return { title, content: content.trim(), slideCount };
+}
+
 // ═══════════════════════════════════════════════
 // APP-SPECIFIC — Google OAuth Routes
 // ═══════════════════════════════════════════════
@@ -1101,6 +1183,40 @@ async function findMatchingReferences(industryTag, presentationTypeTag) {
   return [];
 }
 
+// POST /api/reference-presentations/extract-slides — extract content from a Google Slides URL (admin)
+app.post('/api/reference-presentations/extract-slides', async (req, res) => {
+  try {
+    const { email, url } = req.body;
+    if (!email || !isAdmin(email)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    if (!url) {
+      return res.status(400).json({ error: 'Google Slides URL is required' });
+    }
+
+    // Extract presentation ID from URL
+    const match = url.match(/\/presentation\/d\/([a-zA-Z0-9_-]+)/);
+    if (!match) {
+      return res.status(400).json({ error: 'Invalid Google Slides URL. Expected format: https://docs.google.com/presentation/d/{ID}/edit' });
+    }
+    const presentationId = match[1];
+
+    const result = await extractGoogleSlidesContent(presentationId);
+    res.json({
+      title: result.title,
+      content: result.content,
+      slideCount: result.slideCount,
+      presentationId
+    });
+  } catch (err) {
+    console.error('Failed to extract slides:', err.message);
+    if (err.code === 403 || err.code === 404 || (err.response && (err.response.status === 403 || err.response.status === 404))) {
+      return res.status(400).json({ error: 'Cannot access this presentation. Make sure it is shared as "Anyone with the link can view".' });
+    }
+    res.status(500).json({ error: 'Failed to extract slides: ' + err.message });
+  }
+});
+
 // GET /api/reference-presentations — list all (admin)
 app.get('/api/reference-presentations', async (req, res) => {
   try {
@@ -1110,7 +1226,7 @@ app.get('/api/reference-presentations', async (req, res) => {
     }
 
     const refs = await query(
-      'SELECT id, name, industry_tag, presentation_type_tag, synopsis, slide_count, content_length, uploaded_by, created_at FROM reference_presentations ORDER BY created_at DESC'
+      'SELECT id, name, industry_tag, presentation_type_tag, synopsis, slide_count, content_length, google_slides_url, uploaded_by, created_at FROM reference_presentations ORDER BY created_at DESC'
     );
     res.json({ references: refs });
   } catch (err) {
@@ -1119,10 +1235,10 @@ app.get('/api/reference-presentations', async (req, res) => {
   }
 });
 
-// POST /api/reference-presentations — create from pasted text (admin)
+// POST /api/reference-presentations — create from pasted text or Google Slides (admin)
 app.post('/api/reference-presentations', async (req, res) => {
   try {
-    const { email, name, content, industryTag, presentationTypeTag, synopsis, slideCount } = req.body;
+    const { email, name, content, industryTag, presentationTypeTag, synopsis, slideCount, googleSlidesUrl } = req.body;
     if (!email || !isAdmin(email)) {
       return res.status(403).json({ error: 'Admin access required' });
     }
@@ -1131,8 +1247,8 @@ app.post('/api/reference-presentations', async (req, res) => {
     }
 
     const result = await query(
-      'INSERT INTO reference_presentations (name, content, content_length, industry_tag, presentation_type_tag, synopsis, slide_count, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [name.trim(), content, content.length, industryTag || null, presentationTypeTag || null, synopsis || null, slideCount || 0, email]
+      'INSERT INTO reference_presentations (name, content, content_length, industry_tag, presentation_type_tag, synopsis, slide_count, google_slides_url, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [name.trim(), content, content.length, industryTag || null, presentationTypeTag || null, synopsis || null, slideCount || 0, googleSlidesUrl || null, email]
     );
 
     res.status(201).json({
@@ -1143,7 +1259,8 @@ app.post('/api/reference-presentations', async (req, res) => {
         industry_tag: industryTag || null,
         presentation_type_tag: presentationTypeTag || null,
         synopsis: synopsis || null,
-        slide_count: slideCount || 0
+        slide_count: slideCount || 0,
+        google_slides_url: googleSlidesUrl || null
       }
     });
   } catch (err) {

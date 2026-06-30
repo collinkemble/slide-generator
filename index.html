@@ -674,6 +674,7 @@
           <thead style="background: #F4F6F9;">
             <tr>
               <th class="text-left px-5 py-3 font-semibold text-gray-600">Name</th>
+              <th class="text-left px-5 py-3 font-semibold text-gray-600">Source</th>
               <th class="text-left px-5 py-3 font-semibold text-gray-600">Industry</th>
               <th class="text-left px-5 py-3 font-semibold text-gray-600">Type</th>
               <th class="text-left px-5 py-3 font-semibold text-gray-600">Slides</th>
@@ -696,7 +697,18 @@
     <div id="add-reference-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8" style="max-height: 90vh; overflow-y: auto;">
         <h3 class="text-lg font-bold text-gray-800 mb-1">Add Reference Presentation</h3>
-        <p class="text-sm text-gray-500 mb-5">Paste the text content of a reference presentation to use as style guidance.</p>
+        <p class="text-sm text-gray-500 mb-5">Import from Google Slides or paste content manually.</p>
+
+        <!-- Google Slides import section -->
+        <div class="mb-4 p-4 rounded-xl" style="background: #EEF4FF; border: 1px solid #D4E4FC;">
+          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Import from Google Slides</label>
+          <p class="text-xs text-gray-500 mb-2">Paste a Google Slides URL. The presentation must be shared as "Anyone with the link can view".</p>
+          <div class="flex gap-2">
+            <input id="ref-slides-url" type="url" placeholder="https://docs.google.com/presentation/d/.../edit" class="flex-1 px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+            <button id="ref-extract-btn" onclick="extractGoogleSlides()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer whitespace-nowrap" style="background: #0176D3;">Extract Content</button>
+          </div>
+          <p id="ref-extract-status" class="hidden text-xs mt-2"></p>
+        </div>
 
         <div class="mb-3">
           <label class="block text-xs font-bold mb-1" style="color: #032D60;">Name <span style="color: #ea001e;">*</span></label>
@@ -704,7 +716,7 @@
         </div>
         <div class="mb-3">
           <label class="block text-xs font-bold mb-1" style="color: #032D60;">Content <span style="color: #ea001e;">*</span></label>
-          <textarea id="ref-content" rows="8" placeholder="Paste the full text content of your reference presentation here..." class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm resize-none" style="font-family: monospace; font-size: 12px;"></textarea>
+          <textarea id="ref-content" rows="8" placeholder="Paste content manually or use Extract Content above..." class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm resize-none" style="font-family: monospace; font-size: 12px;"></textarea>
         </div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;" class="mb-3">
           <div>
@@ -2052,6 +2064,7 @@ async function loadGroundingReferences() {
     tbody.innerHTML = refs.map(ref => `
       <tr class="border-t border-gray-100">
         <td class="px-5 py-3 font-bold text-gray-800">${esc(ref.name)}</td>
+        <td class="px-5 py-3 text-gray-500">${ref.google_slides_url ? `<a href="${esc(ref.google_slides_url)}" target="_blank" class="text-blue-600 hover:underline text-xs font-medium">Google Slides ↗</a>` : '<span class="text-xs text-gray-400">Manual</span>'}</td>
         <td class="px-5 py-3 text-gray-500">${esc(ref.industry_tag || '—')}</td>
         <td class="px-5 py-3 text-gray-500">${esc(ref.presentation_type_tag || '—')}</td>
         <td class="px-5 py-3 text-gray-500">${ref.slide_count || 0}</td>
@@ -2068,6 +2081,7 @@ async function loadGroundingReferences() {
 }
 
 function openAddReferenceDialog() {
+  document.getElementById('ref-slides-url').value = '';
   document.getElementById('ref-name').value = '';
   document.getElementById('ref-content').value = '';
   document.getElementById('ref-industry').value = '';
@@ -2075,12 +2089,62 @@ function openAddReferenceDialog() {
   document.getElementById('ref-synopsis').value = '';
   document.getElementById('ref-slidecount').value = '0';
   document.getElementById('ref-error').classList.add('hidden');
+  const statusEl = document.getElementById('ref-extract-status');
+  statusEl.classList.add('hidden');
+  statusEl.textContent = '';
   document.getElementById('add-reference-dialog').classList.remove('hidden');
-  document.getElementById('ref-name').focus();
+  document.getElementById('ref-slides-url').focus();
 }
 
 function closeAddReferenceDialog() {
   document.getElementById('add-reference-dialog').classList.add('hidden');
+}
+
+async function extractGoogleSlides() {
+  const url = document.getElementById('ref-slides-url').value.trim();
+  const statusEl = document.getElementById('ref-extract-status');
+  const btn = document.getElementById('ref-extract-btn');
+
+  if (!url) {
+    statusEl.textContent = 'Please paste a Google Slides URL.';
+    statusEl.style.color = '#C23934';
+    statusEl.classList.remove('hidden');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Extracting...';
+  statusEl.textContent = 'Reading presentation from Google Slides...';
+  statusEl.style.color = '#0176D3';
+  statusEl.classList.remove('hidden');
+
+  const email = document.getElementById('user-email').textContent;
+
+  try {
+    const resp = await fetch('/api/reference-presentations/extract-slides', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, url })
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Extraction failed');
+
+    // Auto-fill fields
+    document.getElementById('ref-content').value = data.content;
+    document.getElementById('ref-slidecount').value = data.slideCount || 0;
+    if (!document.getElementById('ref-name').value.trim()) {
+      document.getElementById('ref-name').value = data.title || '';
+    }
+
+    statusEl.textContent = `✓ Extracted ${data.slideCount} slides (${data.content.length.toLocaleString()} characters)`;
+    statusEl.style.color = '#2E844A';
+  } catch (err) {
+    statusEl.textContent = err.message;
+    statusEl.style.color = '#C23934';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Extract Content';
+  }
 }
 
 async function createGroundingReference() {
@@ -2100,6 +2164,7 @@ async function createGroundingReference() {
   btn.textContent = 'Adding...';
 
   const email = document.getElementById('user-email').textContent;
+  const googleSlidesUrl = document.getElementById('ref-slides-url').value.trim() || null;
 
   try {
     const resp = await fetch('/api/reference-presentations', {
@@ -2112,7 +2177,8 @@ async function createGroundingReference() {
         industryTag: document.getElementById('ref-industry').value || null,
         presentationTypeTag: document.getElementById('ref-type').value || null,
         synopsis: document.getElementById('ref-synopsis').value.trim() || null,
-        slideCount: parseInt(document.getElementById('ref-slidecount').value) || 0
+        slideCount: parseInt(document.getElementById('ref-slidecount').value) || 0,
+        googleSlidesUrl
       })
     });
     if (!resp.ok) {

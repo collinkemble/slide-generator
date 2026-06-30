@@ -34,8 +34,7 @@ async function migrate() {
       // Example: adding share columns to your asset table
       // =============================================
       const appAlters = [
-        // "ALTER TABLE items ADD COLUMN shared_by_email VARCHAR(255) DEFAULT NULL",
-        // "ALTER TABLE items ADD COLUMN shared_at TIMESTAMP NULL DEFAULT NULL",
+        "ALTER TABLE reference_presentations ADD COLUMN google_slides_url VARCHAR(512)",
       ];
 
       const allAlters = [...sharedAlters, ...appAlters];
