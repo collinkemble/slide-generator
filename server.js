@@ -501,6 +501,28 @@ async function extractGoogleSlidesContent(presentationId, authClient) {
     }
     content += '\n';
 
+    // Get slide thumbnail
+    let thumbnailBase64 = null;
+    try {
+      const thumbRes = await slidesApi.presentations.pages.getThumbnail({
+        presentationId,
+        pageObjectId: slide.objectId,
+        'thumbnailProperties.mimeType': 'PNG',
+        'thumbnailProperties.thumbnailSize': 'MEDIUM'
+      });
+      const thumbUrl = thumbRes.data.contentUrl;
+      if (thumbUrl) {
+        // Download the thumbnail image and convert to base64
+        const imgResp = await fetch(thumbUrl);
+        if (imgResp.ok) {
+          const imgBuffer = Buffer.from(await imgResp.arrayBuffer());
+          thumbnailBase64 = imgBuffer.toString('base64');
+        }
+      }
+    } catch (thumbErr) {
+      console.warn(`Could not get thumbnail for slide ${slideCount}:`, thumbErr.message);
+    }
+
     // Derive a default name from the first line of text
     const firstLine = textContent.split('\n')[0].trim();
     const defaultName = firstLine && firstLine !== '(no text content)' ? firstLine.substring(0, 100) : `Slide ${slideCount}`;
@@ -510,7 +532,8 @@ async function extractGoogleSlidesContent(presentationId, authClient) {
       name: defaultName,
       description: '',
       textContent,
-      speakerNotes
+      speakerNotes,
+      thumbnailBase64
     });
   }
 
@@ -935,6 +958,7 @@ app.post('/api/presentations/:id/generate', async (req, res) => {
 
     // Context Grounding: Find matching reference presentations
     let refSection = '';
+    let refImageParts = []; // Multimodal image parts for Gemini
     try {
       const refs = await findMatchingReferences(presData.industryTag, presData.presentationTypeTag);
       if (refs.length > 0) {
@@ -961,6 +985,11 @@ app.post('/api/presentations/:id/generate', async (req, res) => {
               if (slide.speakerNotes) {
                 refSection += `    Notes: ${slide.speakerNotes.substring(0, 200)}\n`;
               }
+              // Collect slide thumbnail for multimodal grounding
+              if (slide.thumbnailBase64) {
+                refImageParts.push({ text: `[Visual of Reference ${i+1}, Slide ${slide.slideNumber}: "${slide.name}"]` });
+                refImageParts.push({ inlineData: { mimeType: 'image/png', data: slide.thumbnailBase64 } });
+              }
             });
           } else {
             // Fallback to flat content
@@ -969,7 +998,7 @@ app.post('/api/presentations/:id/generate', async (req, res) => {
           }
         });
         refSection += '\n--- END REFERENCE PRESENTATIONS ---\n';
-        refSection += 'Use the above reference presentations as style and structural inspiration. Follow the same slide structure, naming patterns, and approach. Match their tone and format while creating original content for the topic below.\n';
+        refSection += 'Use the above reference presentations as style and structural inspiration. Study the attached slide images carefully to match their visual design, color scheme, layout patterns, and formatting style. Follow the same slide structure, naming patterns, and approach while creating original content for the topic below.\n';
       }
     } catch (err) {
       console.error('Context grounding lookup failed:', err.message);
@@ -1029,7 +1058,7 @@ Return ONLY valid JSON, no markdown fences.`;
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: systemPrompt }] }],
+        contents: [{ parts: [{ text: systemPrompt }, ...refImageParts] }],
         generationConfig: { temperature: 0.7, maxOutputTokens: 8192 }
       })
     });
