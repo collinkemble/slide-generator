@@ -438,14 +438,12 @@ function extractTextFromElement(element) {
   return text;
 }
 
-async function extractGoogleSlidesContent(presentationId) {
-  const apiKey = process.env.GOOGLE_API_KEY;
-  if (!apiKey) throw new Error('GOOGLE_API_KEY not configured');
+async function extractGoogleSlidesContent(presentationId, authClient) {
+  if (!authClient) throw new Error('Google account not connected. Please connect your Google account first.');
 
-  const slidesApi = google.slides({ version: 'v1' });
+  const slidesApi = google.slides({ version: 'v1', auth: authClient });
   const res = await slidesApi.presentations.get({
-    presentationId,
-    key: apiKey
+    presentationId
   });
 
   const presentation = res.data;
@@ -1239,7 +1237,14 @@ app.post('/api/reference-presentations/extract-slides', async (req, res) => {
     }
     const presentationId = match[1];
 
-    const result = await extractGoogleSlidesContent(presentationId);
+    // Get the admin's Google OAuth client (requires connected Google account)
+    const user = await getOrCreateUser(email);
+    const authClient = await getAuthenticatedClient(user.id);
+    if (!authClient) {
+      return res.status(400).json({ error: 'Please connect your Google account first to extract slides.' });
+    }
+
+    const result = await extractGoogleSlidesContent(presentationId, authClient);
     res.json({
       title: result.title,
       content: result.content,
@@ -1250,7 +1255,7 @@ app.post('/api/reference-presentations/extract-slides', async (req, res) => {
   } catch (err) {
     console.error('Failed to extract slides:', err.message);
     if (err.code === 403 || err.code === 404 || (err.response && (err.response.status === 403 || err.response.status === 404))) {
-      return res.status(400).json({ error: 'Cannot access this presentation. Make sure it is shared as "Anyone with the link can view".' });
+      return res.status(400).json({ error: 'Cannot access this presentation. Make sure it is shared with your connected Google account.' });
     }
     res.status(500).json({ error: 'Failed to extract slides: ' + err.message });
   }
