@@ -514,6 +514,7 @@ app.get('/api/auth/google', (req, res) => {
     prompt: 'select_account',
     scope: [
       'https://www.googleapis.com/auth/drive.file',
+      'https://www.googleapis.com/auth/presentations.readonly',
       'https://www.googleapis.com/auth/userinfo.email'
     ],
     state
