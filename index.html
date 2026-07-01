@@ -2262,7 +2262,8 @@ async function createGroundingReference() {
         name: nameInput ? nameInput.value.trim() : slide.name,
         description: descInput ? descInput.value.trim() : '',
         textContent: slide.textContent,
-        speakerNotes: slide.speakerNotes || ''
+        speakerNotes: slide.speakerNotes || '',
+        thumbnailBase64: slide.thumbnailBase64 || null
       };
     });
   }
