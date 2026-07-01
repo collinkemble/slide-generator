@@ -452,6 +452,45 @@
         <h3 class="text-lg font-bold text-gray-800 mb-1">New Presentation</h3>
         <p class="text-sm text-gray-500 mb-5">AI will generate a complete Google Slides presentation.</p>
 
+        <!-- Brand Kit Section -->
+        <div id="np-brandkit-section" style="background: linear-gradient(135deg, #f0f7ff, #e8f2ff); border-radius: 10px; padding: 16px; border: 1px dashed #b0d4f1; margin-bottom: 16px;">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+            <span style="font-size: 16px;">🎨</span>
+            <span style="font-size: 13px; font-weight: 700; color: #032D60;">Add Brand Kit</span>
+          </div>
+          <p style="font-size: 12px; color: #5a6f85; margin: 0 0 12px; line-height: 1.4;">
+            Select a brand kit to match your presentation to your company's colors, tone, and visual style.
+          </p>
+
+          <!-- Success badge (hidden by default) -->
+          <div id="np-brandkit-success" class="hidden" style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; background: #E8F5E9; color: #2E7D32; font-size: 11px; font-weight: 600; margin-bottom: 10px;">
+            ✓ Brand kit applied
+          </div>
+
+          <div style="display: flex; gap: 8px; flex-wrap: wrap; position: relative;">
+            <div style="position: relative;" id="np-brandkit-picker-wrap">
+              <button type="button" onclick="toggleBrandKitPicker()" style="padding: 7px 14px; font-size: 12px; font-weight: 600; color: #6d28d9; background: rgba(255,255,255,0.85); border: 1px solid #c4b5fd; border-radius: 7px; cursor: pointer;">
+                📋 Select Brand Kit
+              </button>
+              <div id="np-brandkit-picker" class="hidden" style="position: absolute; top: 100%; left: 0; margin-top: 6px; width: 280px; max-height: 240px; overflow-y: auto; background: #fff; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); border: 1px solid #e5e7eb; z-index: 100;">
+                <div id="np-brandkit-picker-content" style="padding: 20px; text-align: center; font-size: 13px; color: #888;">
+                  ⏳ Loading brand kits...
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 12px; color: #5a6f85; line-height: 1.4;">
+            <span>💡</span>
+            <span>
+              Don't have a Brand Kit?
+              <a href="https://brandkit-builder.aubreydemo.com/" target="_blank" rel="noopener noreferrer" style="color: #0176D3; font-weight: 600; text-decoration: none;">
+                Let Brand Kit Builder make you one →
+              </a>
+            </span>
+          </div>
+        </div>
+
         <div class="mb-3">
           <label class="block text-xs font-bold mb-1" style="color: #032D60;">Presentation Name <span style="color: #ea001e;">*</span></label>
           <input id="np-name" type="text" placeholder="e.g. Q3 Sales Review" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
@@ -1916,6 +1955,115 @@ document.getElementById('edit-style').addEventListener('change', checkSettingsCh
 // ═══════════════════════════════════════════════
 // APP: Create Presentation
 // ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════
+// Brand Kit Picker (New Presentation dialog)
+// ═══════════════════════════════════════════════
+let _selectedBrandKit = null;
+
+async function toggleBrandKitPicker() {
+  const picker = document.getElementById('np-brandkit-picker');
+  if (!picker.classList.contains('hidden')) {
+    picker.classList.add('hidden');
+    return;
+  }
+  picker.classList.remove('hidden');
+  const content = document.getElementById('np-brandkit-picker-content');
+  content.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 13px; color: #888;">⏳ Loading brand kits...</div>';
+
+  const email = document.getElementById('user-email').textContent;
+  if (!email) {
+    content.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 13px; color: #C23934;">Unable to load — email not available.</div>';
+    return;
+  }
+
+  try {
+    const resp = await fetch(`/api/brandkit-builder/items?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to load');
+    const data = await resp.json();
+    const items = data.items || [];
+
+    if (items.length === 0) {
+      content.innerHTML = `
+        <div style="padding: 20px; text-align: center;">
+          <div style="font-size: 13px; color: #888; margin-bottom: 8px;">No brand kits found</div>
+          <a href="https://brandkit-builder.aubreydemo.com/" target="_blank" rel="noopener noreferrer"
+             style="font-size: 12px; color: #0176D3; font-weight: 600; text-decoration: none;">
+            Create one in Brand Kit Builder →
+          </a>
+        </div>`;
+      return;
+    }
+
+    let html = '<div style="padding: 4px 0;">';
+    html += '<div style="padding: 8px 14px; font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.05em;">Your Brand Kits</div>';
+    items.forEach(item => {
+      const initial = (item.name || 'B').charAt(0).toUpperCase();
+      html += `
+        <button onclick="selectBrandKit(${item.id}, this)" style="display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; border: none; background: none; cursor: pointer; font-size: 13px; color: #333; text-align: left;"
+                onmouseenter="this.style.background='#f5f3ff'" onmouseleave="this.style.background='none'">
+          <span style="width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, #7c3aed, #a78bfa); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; flex-shrink: 0;">${initial}</span>
+          <span style="flex: 1; font-weight: 600;">${item.name || 'Untitled'}</span>
+        </button>`;
+    });
+    html += '</div>';
+    content.innerHTML = html;
+  } catch (err) {
+    console.error('Failed to load brand kits:', err);
+    content.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 13px; color: #C23934;">Failed to load brand kits.</div>';
+  }
+}
+
+async function selectBrandKit(itemId, btnEl) {
+  const email = document.getElementById('user-email').textContent;
+  if (!email) return;
+
+  // Show loading state
+  if (btnEl) {
+    const nameSpan = btnEl.querySelector('span:last-child');
+    if (nameSpan) nameSpan.textContent = '⏳ Applying...';
+    btnEl.style.cursor = 'wait';
+    btnEl.disabled = true;
+  }
+
+  try {
+    const resp = await fetch(`/api/brandkit-builder/items/${itemId}?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to fetch brand kit');
+    const data = await resp.json();
+    const bk = data?.item?.data?.brandKit || data?.item?.brandKit || {};
+
+    _selectedBrandKit = {
+      brandName: bk.brand_name || '',
+      brandColorPrimary: bk.visual_style?.primary_color || '',
+      brandColorSecondary: bk.visual_style?.secondary_color || bk.visual_style?.accent_color || '',
+      brandTone: bk.tone?.summary || '',
+      brandVisualStyle: bk.visual_style?.summary || '',
+      brandLogoUrl: bk.logo_url || '',
+      brandDescription: bk.elevator_pitch || bk.mission || '',
+      brandKitId: String(itemId),
+      brandKitSource: bk.brand_name || ''
+    };
+
+    // Close picker, show success badge
+    document.getElementById('np-brandkit-picker').classList.add('hidden');
+    const badge = document.getElementById('np-brandkit-success');
+    badge.textContent = `✓ Brand kit applied — ${_selectedBrandKit.brandName || 'Selected'}`;
+    badge.classList.remove('hidden');
+    badge.style.display = 'inline-flex';
+  } catch (err) {
+    console.error('Failed to apply brand kit:', err);
+    alert('Failed to apply brand kit. Please try again.');
+  }
+}
+
+// Close brand kit picker when clicking outside
+document.addEventListener('click', (e) => {
+  const wrap = document.getElementById('np-brandkit-picker-wrap');
+  const picker = document.getElementById('np-brandkit-picker');
+  if (wrap && picker && !wrap.contains(e.target) && !picker.classList.contains('hidden')) {
+    picker.classList.add('hidden');
+  }
+});
+
 function openNewPresentationDialog() {
   document.getElementById('np-name').value = '';
   document.getElementById('np-topic').value = '';
@@ -1926,6 +2074,11 @@ function openNewPresentationDialog() {
   document.getElementById('np-type').value = '';
   document.getElementById('np-context').value = '';
   document.getElementById('np-error').classList.add('hidden');
+  // Reset brand kit state
+  _selectedBrandKit = null;
+  document.getElementById('np-brandkit-success').classList.add('hidden');
+  document.getElementById('np-brandkit-success').style.display = 'none';
+  document.getElementById('np-brandkit-picker').classList.add('hidden');
   document.getElementById('new-presentation-dialog').classList.remove('hidden');
   document.getElementById('np-name').focus();
 }
@@ -1960,6 +2113,19 @@ async function createPresentation() {
     presentationTypeTag: document.getElementById('np-type').value || null,
     additionalContext: document.getElementById('np-context').value.trim() || null
   };
+
+  // Include brand kit data if selected
+  if (_selectedBrandKit) {
+    presData.brandName = _selectedBrandKit.brandName;
+    presData.brandColorPrimary = _selectedBrandKit.brandColorPrimary;
+    presData.brandColorSecondary = _selectedBrandKit.brandColorSecondary;
+    presData.brandTone = _selectedBrandKit.brandTone;
+    presData.brandVisualStyle = _selectedBrandKit.brandVisualStyle;
+    presData.brandLogoUrl = _selectedBrandKit.brandLogoUrl;
+    presData.brandDescription = _selectedBrandKit.brandDescription;
+    presData.brandKitId = _selectedBrandKit.brandKitId;
+    presData.brandKitSource = _selectedBrandKit.brandKitSource;
+  }
 
   try {
     const resp = await fetch('/api/presentations', {

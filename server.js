@@ -649,6 +649,56 @@ app.post('/api/auth/google/disconnect', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
+// APP-SPECIFIC — Brand Kit Builder Proxy
+// ═══════════════════════════════════════════════
+
+const BRANDKIT_API_URL = process.env.BRANDKIT_BUILDER_URL
+  ? `${process.env.BRANDKIT_BUILDER_URL}/api`
+  : 'https://brandkit-builder.aubreydemo.com/api';
+
+// GET /api/brandkit-builder/items — list brand kits for a user
+app.get('/api/brandkit-builder/items', async (req, res) => {
+  const apiKey = process.env.BRANDKIT_BUILDER_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'Brand Kit Builder not configured' });
+
+  const email = req.query.email;
+  if (!email) return res.status(400).json({ error: 'email query parameter required' });
+
+  try {
+    const resp = await fetch(`${BRANDKIT_API_URL}/items?email=${encodeURIComponent(email)}`, {
+      headers: { 'x-api-key': apiKey },
+    });
+    if (!resp.ok) throw new Error(`Brand Kit Builder responded ${resp.status}`);
+    const data = await resp.json();
+    res.json(data);
+  } catch (err) {
+    console.error('Brand Kit Builder proxy error:', err.message);
+    res.status(502).json({ error: 'Failed to fetch brand kits' });
+  }
+});
+
+// GET /api/brandkit-builder/items/:id — get full brand kit data
+app.get('/api/brandkit-builder/items/:id', async (req, res) => {
+  const apiKey = process.env.BRANDKIT_BUILDER_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'Brand Kit Builder not configured' });
+
+  const email = req.query.email;
+  if (!email) return res.status(400).json({ error: 'email query parameter required' });
+
+  try {
+    const resp = await fetch(`${BRANDKIT_API_URL}/items/${req.params.id}?email=${encodeURIComponent(email)}`, {
+      headers: { 'x-api-key': apiKey },
+    });
+    if (!resp.ok) throw new Error(`Brand Kit Builder responded ${resp.status}`);
+    const data = await resp.json();
+    res.json(data);
+  } catch (err) {
+    console.error('Brand Kit Builder proxy error:', err.message);
+    res.status(502).json({ error: 'Failed to fetch brand kit' });
+  }
+});
+
+// ═══════════════════════════════════════════════
 // APP-SPECIFIC — Presentations CRUD
 // ═══════════════════════════════════════════════
 
@@ -1014,7 +1064,16 @@ Create a ${slideCount}-slide presentation about: "${topic}"
 Target audience: ${audience}
 Style: ${style}
 ${presData.additionalContext ? `Additional context: ${presData.additionalContext}` : ''}
-
+${presData.brandName ? `
+BRAND GUIDELINES:
+Brand Name: ${presData.brandName}
+${presData.brandColorPrimary ? `Primary Color: ${presData.brandColorPrimary}` : ''}
+${presData.brandColorSecondary ? `Secondary Color: ${presData.brandColorSecondary}` : ''}
+${presData.brandTone ? `Tone & Voice: ${presData.brandTone}` : ''}
+${presData.brandVisualStyle ? `Visual Style: ${presData.brandVisualStyle}` : ''}
+${presData.brandDescription ? `Brand Description: ${presData.brandDescription}` : ''}
+Use these brand colors, tone, and visual style throughout the presentation. Ensure the content voice matches the brand's tone. When describing slide designs, reference the brand colors for backgrounds, headers, and accents.
+` : ''}
 Return a JSON object with this exact structure:
 {
   "title": "Presentation Title",
