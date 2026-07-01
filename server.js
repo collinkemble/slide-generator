@@ -468,11 +468,11 @@ async function extractGoogleSlidesContent(presentationId, authClient) {
   let content = `PRESENTATION: ${title}\n${'='.repeat(50)}\n`;
   let slideCount = 0;
 
+  // First pass: extract text and speaker notes
   for (const slide of (presentation.slides || [])) {
     slideCount++;
     content += `\n--- Slide ${slideCount} ---\n`;
 
-    // Extract text from all page elements
     let slideText = '';
     for (const element of (slide.pageElements || [])) {
       slideText += extractTextFromElement(element);
@@ -480,7 +480,6 @@ async function extractGoogleSlidesContent(presentationId, authClient) {
     const textContent = slideText.trim() || '(no text content)';
     content += textContent;
 
-    // Extract speaker notes
     let speakerNotes = '';
     if (slide.slideProperties && slide.slideProperties.notesPage) {
       const notesPage = slide.slideProperties.notesPage;
@@ -501,41 +500,45 @@ async function extractGoogleSlidesContent(presentationId, authClient) {
     }
     content += '\n';
 
-    // Get slide thumbnail
-    let thumbnailBase64 = null;
-    try {
-      const thumbRes = await slidesApi.presentations.pages.getThumbnail({
-        presentationId,
-        pageObjectId: slide.objectId,
-        'thumbnailProperties.mimeType': 'PNG',
-        'thumbnailProperties.thumbnailSize': 'MEDIUM'
-      });
-      const thumbUrl = thumbRes.data.contentUrl;
-      if (thumbUrl) {
-        // Download the thumbnail image and convert to base64
-        const imgResp = await fetch(thumbUrl);
-        if (imgResp.ok) {
-          const imgBuffer = Buffer.from(await imgResp.arrayBuffer());
-          thumbnailBase64 = imgBuffer.toString('base64');
-        }
-      }
-    } catch (thumbErr) {
-      console.warn(`Could not get thumbnail for slide ${slideCount}:`, thumbErr.message);
-    }
-
-    // Derive a default name from the first line of text
     const firstLine = textContent.split('\n')[0].trim();
     const defaultName = firstLine && firstLine !== '(no text content)' ? firstLine.substring(0, 100) : `Slide ${slideCount}`;
 
     slidesData.push({
       slideNumber: slideCount,
+      objectId: slide.objectId,
       name: defaultName,
       description: '',
       textContent,
       speakerNotes,
-      thumbnailBase64
+      thumbnailBase64: null
     });
   }
+
+  // Second pass: fetch all thumbnails in parallel (much faster)
+  const thumbPromises = slidesData.map(async (slideData) => {
+    try {
+      const thumbRes = await slidesApi.presentations.pages.getThumbnail({
+        presentationId,
+        pageObjectId: slideData.objectId,
+        'thumbnailProperties.mimeType': 'PNG',
+        'thumbnailProperties.thumbnailSize': 'SMALL'
+      });
+      const thumbUrl = thumbRes.data.contentUrl;
+      if (thumbUrl) {
+        const imgResp = await fetch(thumbUrl);
+        if (imgResp.ok) {
+          const imgBuffer = Buffer.from(await imgResp.arrayBuffer());
+          slideData.thumbnailBase64 = imgBuffer.toString('base64');
+        }
+      }
+    } catch (thumbErr) {
+      console.warn(`Could not get thumbnail for slide ${slideData.slideNumber}:`, thumbErr.message);
+    }
+  });
+  await Promise.all(thumbPromises);
+
+  // Clean up internal objectId before returning
+  slidesData.forEach(s => delete s.objectId);
 
   return { title, content: content.trim(), slideCount, slides: slidesData };
 }
