@@ -1057,16 +1057,20 @@ app.post('/api/presentations/:id/generate', async (req, res) => {
       console.error('Context grounding lookup failed:', err.message);
     }
 
-    const systemPrompt = `You are an expert presentation designer. Generate a Google Slides presentation as structured JSON.
+    const targetBrand = presData.brand || presData.brandName || '';
+    const systemPrompt = `You are an expert presentation designer creating Salesforce presentations customized for specific brands. Generate a Google Slides presentation as structured JSON.
 ${refSection}
-
+${targetBrand ? `
+TARGET BRAND: ${targetBrand}
+This presentation is being created FROM Salesforce FOR "${targetBrand}". The content should be tailored to this brand — use their name, speak to their specific needs, and frame Salesforce capabilities in terms of value to "${targetBrand}".
+` : ''}
 Create a ${slideCount}-slide presentation about: "${topic}"
 Target audience: ${audience}
 Style: ${style}
 ${presData.additionalContext ? `Additional context: ${presData.additionalContext}` : ''}
-${presData.brandName ? `
-BRAND GUIDELINES:
-Brand Name: ${presData.brandName}
+${(presData.brandName || presData.brandColorPrimary || presData.brandTone) ? `
+BRAND KIT GUIDELINES:
+${presData.brandName ? `Brand Name: ${presData.brandName}` : ''}
 ${presData.brandColorPrimary ? `Primary Color: ${presData.brandColorPrimary}` : ''}
 ${presData.brandColorSecondary ? `Secondary Color: ${presData.brandColorSecondary}` : ''}
 ${presData.brandTone ? `Tone & Voice: ${presData.brandTone}` : ''}

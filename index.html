@@ -450,7 +450,7 @@
     <div id="new-presentation-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8" style="max-height: 90vh; overflow-y: auto;">
         <h3 class="text-lg font-bold text-gray-800 mb-1">New Presentation</h3>
-        <p class="text-sm text-gray-500 mb-5">AI will generate a complete Google Slides presentation.</p>
+        <p class="text-sm text-gray-500 mb-5">Create a branded presentation from Salesforce content, customized to your target brand.</p>
 
         <!-- Brand Kit Section -->
         <div id="np-brandkit-section" style="background: linear-gradient(135deg, #f0f7ff, #e8f2ff); border-radius: 10px; padding: 16px; border: 1px dashed #b0d4f1; margin-bottom: 16px;">
@@ -493,7 +493,12 @@
 
         <div class="mb-3">
           <label class="block text-xs font-bold mb-1" style="color: #032D60;">Presentation Name <span style="color: #ea001e;">*</span></label>
-          <input id="np-name" type="text" placeholder="e.g. Q3 Sales Review" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+          <input id="np-name" type="text" placeholder="e.g. Q3 Sales Review for Acme Corp" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+        </div>
+        <div class="mb-3">
+          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Brand <span style="color: #ea001e;">*</span></label>
+          <input id="np-brand" type="text" placeholder="Target brand name (e.g. Acme Corp)" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+          <p style="font-size: 11px; color: #888; margin-top: 4px;">The brand this presentation is being created for. Auto-filled when you select a Brand Kit above.</p>
         </div>
         <div class="mb-3">
           <label class="block text-xs font-bold mb-1" style="color: #032D60;">Topic <span style="color: #ea001e;">*</span></label>
@@ -2043,6 +2048,18 @@ async function selectBrandKit(itemId, btnEl) {
       brandKitSource: bk.brand_name || ''
     };
 
+    // Auto-populate Brand field
+    const brandField = document.getElementById('np-brand');
+    if (_selectedBrandKit.brandName) {
+      brandField.value = _selectedBrandKit.brandName;
+    }
+
+    // Auto-populate Presentation Name if empty
+    const nameField = document.getElementById('np-name');
+    if (!nameField.value.trim() && _selectedBrandKit.brandName) {
+      nameField.value = `${_selectedBrandKit.brandName} Presentation`;
+    }
+
     // Close picker, show success badge
     document.getElementById('np-brandkit-picker').classList.add('hidden');
     const badge = document.getElementById('np-brandkit-success');
@@ -2066,6 +2083,7 @@ document.addEventListener('click', (e) => {
 
 function openNewPresentationDialog() {
   document.getElementById('np-name').value = '';
+  document.getElementById('np-brand').value = '';
   document.getElementById('np-topic').value = '';
   document.getElementById('np-slidecount').value = '10';
   document.getElementById('np-audience').value = '';
@@ -2089,11 +2107,12 @@ function closeNewPresentationDialog() {
 
 async function createPresentation() {
   const name = document.getElementById('np-name').value.trim();
+  const brand = document.getElementById('np-brand').value.trim();
   const topic = document.getElementById('np-topic').value.trim();
   const errorEl = document.getElementById('np-error');
 
-  if (!name || !topic) {
-    errorEl.textContent = 'Name and topic are required.';
+  if (!name || !brand || !topic) {
+    errorEl.textContent = 'Name, brand, and topic are required.';
     errorEl.classList.remove('hidden');
     return;
   }
@@ -2106,6 +2125,7 @@ async function createPresentation() {
   const email = document.getElementById('user-email').textContent;
   const presData = {
     topic,
+    brand,
     slideCount: parseInt(document.getElementById('np-slidecount').value) || 10,
     audience: document.getElementById('np-audience').value.trim() || 'general business audience',
     style: document.getElementById('np-style').value,
