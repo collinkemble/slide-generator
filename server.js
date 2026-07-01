@@ -442,14 +442,15 @@ async function extractGoogleSlidesContent(presentationId) {
   const apiKey = process.env.GOOGLE_API_KEY;
   if (!apiKey) throw new Error('GOOGLE_API_KEY not configured');
 
-  const slides = google.slides({ version: 'v1' });
-  const res = await slides.presentations.get({
+  const slidesApi = google.slides({ version: 'v1' });
+  const res = await slidesApi.presentations.get({
     presentationId,
     key: apiKey
   });
 
   const presentation = res.data;
   const title = presentation.title || 'Untitled';
+  const slidesData = [];
   let content = `PRESENTATION: ${title}\n${'='.repeat(50)}\n`;
   let slideCount = 0;
 
@@ -462,9 +463,11 @@ async function extractGoogleSlidesContent(presentationId) {
     for (const element of (slide.pageElements || [])) {
       slideText += extractTextFromElement(element);
     }
-    content += slideText.trim() || '(no text content)';
+    const textContent = slideText.trim() || '(no text content)';
+    content += textContent;
 
     // Extract speaker notes
+    let speakerNotes = '';
     if (slide.slideProperties && slide.slideProperties.notesPage) {
       const notesPage = slide.slideProperties.notesPage;
       let notesText = '';
@@ -477,15 +480,27 @@ async function extractGoogleSlidesContent(presentationId) {
           }
         }
       }
-      const trimmedNotes = notesText.trim();
-      if (trimmedNotes) {
-        content += `\n[Speaker Notes: ${trimmedNotes}]`;
+      speakerNotes = notesText.trim();
+      if (speakerNotes) {
+        content += `\n[Speaker Notes: ${speakerNotes}]`;
       }
     }
     content += '\n';
+
+    // Derive a default name from the first line of text
+    const firstLine = textContent.split('\n')[0].trim();
+    const defaultName = firstLine && firstLine !== '(no text content)' ? firstLine.substring(0, 100) : `Slide ${slideCount}`;
+
+    slidesData.push({
+      slideNumber: slideCount,
+      name: defaultName,
+      description: '',
+      textContent,
+      speakerNotes
+    });
   }
 
-  return { title, content: content.trim(), slideCount };
+  return { title, content: content.trim(), slideCount, slides: slidesData };
 }
 
 // ═══════════════════════════════════════════════
@@ -912,12 +927,35 @@ app.post('/api/presentations/:id/generate', async (req, res) => {
         refSection = '\n\n--- REFERENCE PRESENTATIONS FOR STYLE AND STRUCTURE GUIDANCE ---\n';
         refs.forEach((ref, i) => {
           refSection += `\n[Reference ${i+1}: "${ref.name}" (${ref.industry_tag || 'general'} / ${ref.presentation_type_tag || 'general'})]\n`;
-          // Truncate content to avoid huge prompts
-          const content = (ref.content || '').substring(0, 8000);
-          refSection += content + '\n';
+
+          // If slide annotations exist, use structured per-slide info
+          let annotations = ref.slide_annotations;
+          if (typeof annotations === 'string') {
+            try { annotations = JSON.parse(annotations); } catch (e) { annotations = null; }
+          }
+
+          if (annotations && Array.isArray(annotations) && annotations.length > 0) {
+            refSection += 'SLIDE STRUCTURE:\n';
+            annotations.forEach(slide => {
+              refSection += `  Slide ${slide.slideNumber}: "${slide.name}"`;
+              if (slide.description) refSection += ` — ${slide.description}`;
+              refSection += '\n';
+              if (slide.textContent && slide.textContent !== '(no text content)') {
+                const preview = slide.textContent.substring(0, 300);
+                refSection += `    Content: ${preview}${slide.textContent.length > 300 ? '...' : ''}\n`;
+              }
+              if (slide.speakerNotes) {
+                refSection += `    Notes: ${slide.speakerNotes.substring(0, 200)}\n`;
+              }
+            });
+          } else {
+            // Fallback to flat content
+            const content = (ref.content || '').substring(0, 8000);
+            refSection += content + '\n';
+          }
         });
         refSection += '\n--- END REFERENCE PRESENTATIONS ---\n';
-        refSection += 'Use the above reference presentations as style and structural inspiration. Match their tone, format, and approach while creating original content for the topic below.\n';
+        refSection += 'Use the above reference presentations as style and structural inspiration. Follow the same slide structure, naming patterns, and approach. Match their tone and format while creating original content for the topic below.\n';
       }
     } catch (err) {
       console.error('Context grounding lookup failed:', err.message);
@@ -1206,6 +1244,7 @@ app.post('/api/reference-presentations/extract-slides', async (req, res) => {
       title: result.title,
       content: result.content,
       slideCount: result.slideCount,
+      slides: result.slides,
       presentationId
     });
   } catch (err) {
@@ -1226,7 +1265,7 @@ app.get('/api/reference-presentations', async (req, res) => {
     }
 
     const refs = await query(
-      'SELECT id, name, industry_tag, presentation_type_tag, synopsis, slide_count, content_length, google_slides_url, uploaded_by, created_at FROM reference_presentations ORDER BY created_at DESC'
+      'SELECT id, name, industry_tag, presentation_type_tag, synopsis, slide_count, content_length, google_slides_url, slide_annotations, uploaded_by, created_at FROM reference_presentations ORDER BY created_at DESC'
     );
     res.json({ references: refs });
   } catch (err) {
@@ -1238,7 +1277,7 @@ app.get('/api/reference-presentations', async (req, res) => {
 // POST /api/reference-presentations — create from pasted text or Google Slides (admin)
 app.post('/api/reference-presentations', async (req, res) => {
   try {
-    const { email, name, content, industryTag, presentationTypeTag, synopsis, slideCount, googleSlidesUrl } = req.body;
+    const { email, name, content, industryTag, presentationTypeTag, synopsis, slideCount, googleSlidesUrl, slideAnnotations } = req.body;
     if (!email || !isAdmin(email)) {
       return res.status(403).json({ error: 'Admin access required' });
     }
@@ -1246,9 +1285,11 @@ app.post('/api/reference-presentations', async (req, res) => {
       return res.status(400).json({ error: 'Name and content are required' });
     }
 
+    const annotationsJson = slideAnnotations ? JSON.stringify(slideAnnotations) : null;
+
     const result = await query(
-      'INSERT INTO reference_presentations (name, content, content_length, industry_tag, presentation_type_tag, synopsis, slide_count, google_slides_url, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [name.trim(), content, content.length, industryTag || null, presentationTypeTag || null, synopsis || null, slideCount || 0, googleSlidesUrl || null, email]
+      'INSERT INTO reference_presentations (name, content, content_length, industry_tag, presentation_type_tag, synopsis, slide_count, google_slides_url, slide_annotations, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [name.trim(), content, content.length, industryTag || null, presentationTypeTag || null, synopsis || null, slideCount || 0, googleSlidesUrl || null, annotationsJson, email]
     );
 
     res.status(201).json({
@@ -1260,7 +1301,8 @@ app.post('/api/reference-presentations', async (req, res) => {
         presentation_type_tag: presentationTypeTag || null,
         synopsis: synopsis || null,
         slide_count: slideCount || 0,
-        google_slides_url: googleSlidesUrl || null
+        google_slides_url: googleSlidesUrl || null,
+        slide_annotations: slideAnnotations || null
       }
     });
   } catch (err) {

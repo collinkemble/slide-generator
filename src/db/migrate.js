@@ -35,6 +35,7 @@ async function migrate() {
       // =============================================
       const appAlters = [
         "ALTER TABLE reference_presentations ADD COLUMN google_slides_url VARCHAR(512)",
+        "ALTER TABLE reference_presentations ADD COLUMN slide_annotations JSON",
       ];
 
       const allAlters = [...sharedAlters, ...appAlters];

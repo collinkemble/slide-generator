@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS reference_presentations (
   synopsis TEXT,
   slide_count INT DEFAULT 0,
   google_slides_url VARCHAR(512),
+  slide_annotations JSON,
   uploaded_by VARCHAR(255),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

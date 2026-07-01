@@ -714,10 +714,17 @@
           <label class="block text-xs font-bold mb-1" style="color: #032D60;">Name <span style="color: #ea001e;">*</span></label>
           <input id="ref-name" type="text" placeholder="e.g. Q2 Sales Deck - Financial Services" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
         </div>
-        <div class="mb-3">
-          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Content <span style="color: #ea001e;">*</span></label>
-          <textarea id="ref-content" rows="8" placeholder="Paste content manually or use Extract Content above..." class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm resize-none" style="font-family: monospace; font-size: 12px;"></textarea>
+
+        <!-- Per-slide annotations (shown after extraction) -->
+        <div id="ref-slides-section" class="hidden mb-3">
+          <label class="block text-xs font-bold mb-2" style="color: #032D60;">Slide Annotations</label>
+          <p class="text-xs text-gray-500 mb-3">Name each slide and describe its purpose. This helps the AI understand the structure and intent.</p>
+          <div id="ref-slides-list" style="max-height: 300px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 12px;"></div>
         </div>
+
+        <!-- Hidden content field (auto-populated) -->
+        <textarea id="ref-content" class="hidden"></textarea>
+
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;" class="mb-3">
           <div>
             <label class="block text-xs font-bold mb-1" style="color: #032D60;">Industry Tag</label>
@@ -751,7 +758,7 @@
         </div>
         <div class="mb-4">
           <label class="block text-xs font-bold mb-1" style="color: #032D60;">Slide Count</label>
-          <input id="ref-slidecount" type="number" value="0" min="0" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" style="max-width: 100px;">
+          <input id="ref-slidecount" type="number" value="0" min="0" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" style="max-width: 100px;" readonly>
         </div>
 
         <p id="ref-error" class="hidden text-sm mb-3" style="color: #C23934;"></p>
@@ -2080,6 +2087,8 @@ async function loadGroundingReferences() {
   }
 }
 
+let extractedSlides = []; // Holds per-slide data after extraction
+
 function openAddReferenceDialog() {
   document.getElementById('ref-slides-url').value = '';
   document.getElementById('ref-name').value = '';
@@ -2089,11 +2098,29 @@ function openAddReferenceDialog() {
   document.getElementById('ref-synopsis').value = '';
   document.getElementById('ref-slidecount').value = '0';
   document.getElementById('ref-error').classList.add('hidden');
+  document.getElementById('ref-slides-section').classList.add('hidden');
+  document.getElementById('ref-slides-list').innerHTML = '';
+  extractedSlides = [];
   const statusEl = document.getElementById('ref-extract-status');
   statusEl.classList.add('hidden');
   statusEl.textContent = '';
   document.getElementById('add-reference-dialog').classList.remove('hidden');
   document.getElementById('ref-slides-url').focus();
+}
+
+function renderSlideAnnotations(slides) {
+  const container = document.getElementById('ref-slides-list');
+  container.innerHTML = slides.map((slide, i) => `
+    <div style="padding: 12px 16px; ${i > 0 ? 'border-top: 1px solid #e5e7eb;' : ''}" class="hover:bg-gray-50">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="flex-shrink-0 flex items-center justify-center text-xs font-bold text-white rounded-full" style="width: 22px; height: 22px; background: #0176D3;">${slide.slideNumber}</span>
+        <input type="text" data-slide-idx="${i}" data-field="name" value="${esc(slide.name)}" placeholder="Slide name..." class="flex-1 px-2 py-1 rounded border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm font-medium">
+      </div>
+      <input type="text" data-slide-idx="${i}" data-field="description" value="${esc(slide.description)}" placeholder="What does this slide do? e.g. 'Title slide with company logo and tagline'" class="w-full px-2 py-1 rounded border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-xs text-gray-600" style="margin-left: 30px; width: calc(100% - 30px);">
+      <p class="text-xs text-gray-400 mt-1 truncate" style="margin-left: 30px;">${esc(slide.textContent.substring(0, 120))}${slide.textContent.length > 120 ? '...' : ''}</p>
+    </div>
+  `).join('');
+  document.getElementById('ref-slides-section').classList.remove('hidden');
 }
 
 function closeAddReferenceDialog() {
@@ -2136,7 +2163,13 @@ async function extractGoogleSlides() {
       document.getElementById('ref-name').value = data.title || '';
     }
 
-    statusEl.textContent = `✓ Extracted ${data.slideCount} slides (${data.content.length.toLocaleString()} characters)`;
+    // Render per-slide annotation editor
+    extractedSlides = data.slides || [];
+    if (extractedSlides.length > 0) {
+      renderSlideAnnotations(extractedSlides);
+    }
+
+    statusEl.textContent = `✓ Extracted ${data.slideCount} slides — name and describe each slide below`;
     statusEl.style.color = '#2E844A';
   } catch (err) {
     statusEl.textContent = err.message;
@@ -2153,7 +2186,7 @@ async function createGroundingReference() {
   const errorEl = document.getElementById('ref-error');
 
   if (!name || !content) {
-    errorEl.textContent = 'Name and content are required.';
+    errorEl.textContent = 'Name and content are required. Please extract a Google Slides URL first.';
     errorEl.classList.remove('hidden');
     return;
   }
@@ -2165,6 +2198,22 @@ async function createGroundingReference() {
 
   const email = document.getElementById('user-email').textContent;
   const googleSlidesUrl = document.getElementById('ref-slides-url').value.trim() || null;
+
+  // Collect per-slide annotations from the UI inputs
+  let slideAnnotations = null;
+  if (extractedSlides.length > 0) {
+    slideAnnotations = extractedSlides.map((slide, i) => {
+      const nameInput = document.querySelector(`input[data-slide-idx="${i}"][data-field="name"]`);
+      const descInput = document.querySelector(`input[data-slide-idx="${i}"][data-field="description"]`);
+      return {
+        slideNumber: slide.slideNumber,
+        name: nameInput ? nameInput.value.trim() : slide.name,
+        description: descInput ? descInput.value.trim() : '',
+        textContent: slide.textContent,
+        speakerNotes: slide.speakerNotes || ''
+      };
+    });
+  }
 
   try {
     const resp = await fetch('/api/reference-presentations', {
@@ -2178,7 +2227,8 @@ async function createGroundingReference() {
         presentationTypeTag: document.getElementById('ref-type').value || null,
         synopsis: document.getElementById('ref-synopsis').value.trim() || null,
         slideCount: parseInt(document.getElementById('ref-slidecount').value) || 0,
-        googleSlidesUrl
+        googleSlidesUrl,
+        slideAnnotations
       })
     });
     if (!resp.ok) {
