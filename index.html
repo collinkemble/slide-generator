@@ -768,6 +768,27 @@
       </div>
     </div>
 
+    <!-- View/Edit Reference Dialog -->
+    <div id="view-reference-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl p-8" style="max-height: 90vh; overflow-y: auto;">
+        <div class="flex items-center justify-between mb-1">
+          <h3 class="text-lg font-bold text-gray-800" id="view-ref-title">Reference Slides</h3>
+          <button onclick="closeViewReferenceDialog()" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer" style="line-height:1;">&times;</button>
+        </div>
+        <p class="text-sm text-gray-500 mb-5">Review and edit slide names and descriptions. Changes are saved to the AI grounding context.</p>
+
+        <div id="view-ref-slides-list" style="max-height: 60vh; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 12px;"></div>
+
+        <p id="view-ref-error" class="hidden text-sm mt-3" style="color: #C23934;"></p>
+        <p id="view-ref-success" class="hidden text-sm mt-3" style="color: #2E844A;"></p>
+
+        <div class="flex justify-end gap-3 mt-5">
+          <button onclick="closeViewReferenceDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Close</button>
+          <button id="view-ref-save-btn" onclick="saveReferenceAnnotations()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Save Changes</button>
+        </div>
+      </div>
+    </div>
+
     </div><!-- end flex:1 content wrapper -->
 
     <!-- SHARED: Footer -->
@@ -2066,7 +2087,10 @@ async function loadGroundingReferences() {
       return;
     }
 
-    tbody.innerHTML = refs.map(ref => `
+    // Store refs for view/edit access
+    window._groundingRefs = refs;
+
+    tbody.innerHTML = refs.map((ref, idx) => `
       <tr class="border-t border-gray-100">
         <td class="px-5 py-3 font-bold text-gray-800">${esc(ref.name)}</td>
         <td class="px-5 py-3 text-gray-500">${ref.google_slides_url ? `<a href="${esc(ref.google_slides_url)}" target="_blank" class="text-blue-600 hover:underline text-xs font-medium">Google Slides ↗</a>` : '<span class="text-xs text-gray-400">Manual</span>'}</td>
@@ -2075,7 +2099,8 @@ async function loadGroundingReferences() {
         <td class="px-5 py-3 text-gray-500">${ref.slide_count || 0}</td>
         <td class="px-5 py-3 text-gray-500">${(ref.content_length || 0).toLocaleString()}</td>
         <td class="px-5 py-3 text-gray-500">${esc(ref.uploaded_by || '—')}</td>
-        <td class="px-5 py-3 text-right">
+        <td class="px-5 py-3 text-right whitespace-nowrap">
+          <button onclick="openViewReferenceDialog(${idx})" class="px-3 py-1 text-xs font-medium rounded-md cursor-pointer mr-1" style="color: #0176D3; background: #EEF4FF;">View / Edit</button>
           <button onclick="deleteGroundingReference(${ref.id})" class="px-3 py-1 text-xs font-medium text-red-500 rounded-md cursor-pointer" style="background: #FEE2E2;">Delete</button>
         </td>
       </tr>
@@ -2282,6 +2307,97 @@ async function deleteGroundingReference(id) {
     loadGroundingReferences();
   } catch (err) {
     alert(err.message);
+  }
+}
+
+// View / Edit reference dialog
+let viewRefId = null;
+let viewRefSlides = [];
+
+function openViewReferenceDialog(idx) {
+  const ref = window._groundingRefs[idx];
+  if (!ref) return;
+
+  viewRefId = ref.id;
+  let annotations = ref.slide_annotations;
+  if (typeof annotations === 'string') {
+    try { annotations = JSON.parse(annotations); } catch (e) { annotations = []; }
+  }
+  viewRefSlides = annotations || [];
+
+  document.getElementById('view-ref-title').textContent = ref.name;
+  document.getElementById('view-ref-error').classList.add('hidden');
+  document.getElementById('view-ref-success').classList.add('hidden');
+
+  const container = document.getElementById('view-ref-slides-list');
+  if (viewRefSlides.length === 0) {
+    container.innerHTML = '<div class="text-center py-8 text-gray-400 text-sm">No slide data available for this reference.</div>';
+  } else {
+    container.innerHTML = viewRefSlides.map((slide, i) => `
+      <div style="padding: 14px 16px; ${i > 0 ? 'border-top: 1px solid #e5e7eb;' : ''}" class="hover:bg-gray-50">
+        <div class="flex gap-3">
+          ${slide.thumbnailBase64 ? `<div class="flex-shrink-0"><img src="data:image/png;base64,${slide.thumbnailBase64}" alt="Slide ${slide.slideNumber}" style="width: 160px; height: auto; border-radius: 6px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.1);"></div>` : '<div class="flex-shrink-0 flex items-center justify-center" style="width: 160px; height: 90px; background: #f3f4f6; border-radius: 6px; border: 1px solid #e5e7eb;"><span class="text-xs text-gray-400">No thumbnail</span></div>'}
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-2">
+              <span class="flex-shrink-0 flex items-center justify-center text-xs font-bold text-white rounded-full" style="width: 22px; height: 22px; background: #0176D3;">${slide.slideNumber}</span>
+              <input type="text" data-view-idx="${i}" data-view-field="name" value="${esc(slide.name || '')}" placeholder="Slide name..." class="flex-1 px-2 py-1 rounded border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm font-medium">
+            </div>
+            <input type="text" data-view-idx="${i}" data-view-field="description" value="${esc(slide.description || '')}" placeholder="What does this slide do? e.g. 'Title slide with company logo'" class="w-full px-2 py-1 rounded border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-xs text-gray-600 mb-1">
+            <p class="text-xs text-gray-400 mt-1 truncate">${esc((slide.textContent || '').substring(0, 150))}${(slide.textContent || '').length > 150 ? '...' : ''}</p>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  document.getElementById('view-reference-dialog').classList.remove('hidden');
+}
+
+function closeViewReferenceDialog() {
+  document.getElementById('view-reference-dialog').classList.add('hidden');
+  viewRefId = null;
+  viewRefSlides = [];
+}
+
+async function saveReferenceAnnotations() {
+  const btn = document.getElementById('view-ref-save-btn');
+  const errorEl = document.getElementById('view-ref-error');
+  const successEl = document.getElementById('view-ref-success');
+  errorEl.classList.add('hidden');
+  successEl.classList.add('hidden');
+
+  // Collect edits from inputs
+  document.querySelectorAll('[data-view-idx]').forEach(input => {
+    const idx = parseInt(input.dataset.viewIdx);
+    const field = input.dataset.viewField;
+    if (viewRefSlides[idx] && field) {
+      viewRefSlides[idx][field] = input.value;
+    }
+  });
+
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/reference-presentations/${viewRefId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, slideAnnotations: viewRefSlides })
+    });
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(data.error || 'Failed to save');
+    }
+    successEl.textContent = 'Annotations saved successfully!';
+    successEl.classList.remove('hidden');
+    loadGroundingReferences(); // Refresh table data
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save Changes';
   }
 }
 

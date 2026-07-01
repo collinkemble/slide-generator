@@ -1360,6 +1360,30 @@ app.post('/api/reference-presentations', async (req, res) => {
   }
 });
 
+// PUT /api/reference-presentations/:id — update annotations (admin)
+app.put('/api/reference-presentations/:id', async (req, res) => {
+  try {
+    const { email, slideAnnotations } = req.body;
+    if (!email || !isAdmin(email)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const annotationsJson = slideAnnotations ? JSON.stringify(slideAnnotations) : null;
+    const result = await query(
+      'UPDATE reference_presentations SET slide_annotations = ? WHERE id = ?',
+      [annotationsJson, req.params.id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Reference not found' });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to update reference:', err);
+    res.status(500).json({ error: 'Failed to update reference' });
+  }
+});
+
 // DELETE /api/reference-presentations/:id (admin)
 app.delete('/api/reference-presentations/:id', async (req, res) => {
   try {
