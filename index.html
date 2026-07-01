@@ -728,7 +728,7 @@
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;" class="mb-3">
           <div>
             <label class="block text-xs font-bold mb-1" style="color: #032D60;">Industry Tag</label>
-            <select id="ref-industry" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+            <select id="ref-industry" onchange="toggleOtherInput('ref-industry', 'ref-industry-other')" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
               <option value="">— Select —</option>
               <option value="Technology">Technology</option>
               <option value="Healthcare">Healthcare</option>
@@ -738,18 +738,16 @@
               <option value="Education">Education</option>
               <option value="Other">Other</option>
             </select>
+            <input id="ref-industry-other" type="text" placeholder="Enter industry..." class="hidden w-full px-3 py-2 mt-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
           </div>
           <div>
             <label class="block text-xs font-bold mb-1" style="color: #032D60;">Presentation Type Tag</label>
-            <select id="ref-type" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+            <select id="ref-type" onchange="toggleOtherInput('ref-type', 'ref-type-other')" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
               <option value="">— Select —</option>
-              <option value="Sales Pitch">Sales Pitch</option>
-              <option value="Product Demo">Product Demo</option>
-              <option value="Quarterly Review">Quarterly Review</option>
-              <option value="Training">Training</option>
-              <option value="Strategy">Strategy</option>
-              <option value="General">General</option>
+              <option value="SIC">SIC</option>
+              <option value="Other">Other</option>
             </select>
+            <input id="ref-type-other" type="text" placeholder="Enter type..." class="hidden w-full px-3 py-2 mt-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
           </div>
         </div>
         <div class="mb-3">
@@ -2089,6 +2087,26 @@ async function loadGroundingReferences() {
 
 let extractedSlides = []; // Holds per-slide data after extraction
 
+function toggleOtherInput(selectId, inputId) {
+  const sel = document.getElementById(selectId);
+  const inp = document.getElementById(inputId);
+  if (sel.value === 'Other') {
+    inp.classList.remove('hidden');
+    inp.focus();
+  } else {
+    inp.classList.add('hidden');
+    inp.value = '';
+  }
+}
+
+function getTagValue(selectId, inputId) {
+  const sel = document.getElementById(selectId);
+  if (sel.value === 'Other') {
+    return document.getElementById(inputId).value.trim() || null;
+  }
+  return sel.value || null;
+}
+
 function openAddReferenceDialog() {
   document.getElementById('ref-slides-url').value = '';
   document.getElementById('ref-name').value = '';
@@ -2098,6 +2116,10 @@ function openAddReferenceDialog() {
   document.getElementById('ref-synopsis').value = '';
   document.getElementById('ref-slidecount').value = '0';
   document.getElementById('ref-error').classList.add('hidden');
+  document.getElementById('ref-industry-other').classList.add('hidden');
+  document.getElementById('ref-industry-other').value = '';
+  document.getElementById('ref-type-other').classList.add('hidden');
+  document.getElementById('ref-type-other').value = '';
   document.getElementById('ref-slides-section').classList.add('hidden');
   document.getElementById('ref-slides-list').innerHTML = '';
   extractedSlides = [];
@@ -2223,8 +2245,8 @@ async function createGroundingReference() {
         email,
         name,
         content,
-        industryTag: document.getElementById('ref-industry').value || null,
-        presentationTypeTag: document.getElementById('ref-type').value || null,
+        industryTag: getTagValue('ref-industry', 'ref-industry-other'),
+        presentationTypeTag: getTagValue('ref-type', 'ref-type-other'),
         synopsis: document.getElementById('ref-synopsis').value.trim() || null,
         slideCount: parseInt(document.getElementById('ref-slidecount').value) || 0,
         googleSlidesUrl,
