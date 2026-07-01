@@ -374,6 +374,22 @@ function createOAuth2Client() {
   );
 }
 
+// Create a service account auth client for reading Google Slides (context grounding)
+function getServiceAccountClient() {
+  const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+  if (!keyJson) return null;
+  try {
+    const key = JSON.parse(keyJson);
+    return new google.auth.GoogleAuth({
+      credentials: key,
+      scopes: ['https://www.googleapis.com/auth/presentations.readonly']
+    });
+  } catch (e) {
+    console.error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY:', e.message);
+    return null;
+  }
+}
+
 async function getAuthenticatedClient(userId) {
   const tokens = await query('SELECT * FROM google_tokens WHERE user_id = ?', [userId]);
   if (tokens.length === 0) return null;
@@ -439,7 +455,7 @@ function extractTextFromElement(element) {
 }
 
 async function extractGoogleSlidesContent(presentationId, authClient) {
-  if (!authClient) throw new Error('Google account not connected. Please connect your Google account first.');
+  if (!authClient) throw new Error('Service account not configured. Please set GOOGLE_SERVICE_ACCOUNT_KEY.');
 
   const slidesApi = google.slides({ version: 'v1', auth: authClient });
   const res = await slidesApi.presentations.get({
@@ -514,7 +530,6 @@ app.get('/api/auth/google', (req, res) => {
     prompt: 'select_account',
     scope: [
       'https://www.googleapis.com/auth/drive.file',
-      'https://www.googleapis.com/auth/presentations.readonly',
       'https://www.googleapis.com/auth/userinfo.email'
     ],
     state
@@ -1238,14 +1253,13 @@ app.post('/api/reference-presentations/extract-slides', async (req, res) => {
     }
     const presentationId = match[1];
 
-    // Get the admin's Google OAuth client (requires connected Google account)
-    const user = await getOrCreateUser(email);
-    const authClient = await getAuthenticatedClient(user.id);
-    if (!authClient) {
-      return res.status(400).json({ error: 'Please connect your Google account first to extract slides.' });
+    // Use service account to read the presentation
+    const serviceAuth = getServiceAccountClient();
+    if (!serviceAuth) {
+      return res.status(500).json({ error: 'Google service account not configured. Set GOOGLE_SERVICE_ACCOUNT_KEY config var.' });
     }
 
-    const result = await extractGoogleSlidesContent(presentationId, authClient);
+    const result = await extractGoogleSlidesContent(presentationId, serviceAuth);
     res.json({
       title: result.title,
       content: result.content,
@@ -1256,7 +1270,7 @@ app.post('/api/reference-presentations/extract-slides', async (req, res) => {
   } catch (err) {
     console.error('Failed to extract slides:', err.message);
     if (err.code === 403 || err.code === 404 || (err.response && (err.response.status === 403 || err.response.status === 404))) {
-      return res.status(400).json({ error: 'Cannot access this presentation. Make sure it is shared with your connected Google account.' });
+      return res.status(400).json({ error: 'Cannot access this presentation. Make sure it is shared with slide-reader@slide-generator-500915.iam.gserviceaccount.com (Viewer access).' });
     }
     res.status(500).json({ error: 'Failed to extract slides: ' + err.message });
   }
