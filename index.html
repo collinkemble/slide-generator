@@ -2315,43 +2315,54 @@ async function deleteGroundingReference(id) {
 let viewRefId = null;
 let viewRefSlides = [];
 
-function openViewReferenceDialog(idx) {
+async function openViewReferenceDialog(idx) {
   const ref = window._groundingRefs[idx];
   if (!ref) return;
 
   viewRefId = ref.id;
-  let annotations = ref.slide_annotations;
-  if (typeof annotations === 'string') {
-    try { annotations = JSON.parse(annotations); } catch (e) { annotations = []; }
-  }
-  viewRefSlides = annotations || [];
-
   document.getElementById('view-ref-title').textContent = ref.name;
   document.getElementById('view-ref-error').classList.add('hidden');
   document.getElementById('view-ref-success').classList.add('hidden');
+  document.getElementById('view-reference-dialog').classList.remove('hidden');
 
   const container = document.getElementById('view-ref-slides-list');
-  if (viewRefSlides.length === 0) {
-    container.innerHTML = '<div class="text-center py-8 text-gray-400 text-sm">No slide data available for this reference.</div>';
-  } else {
-    container.innerHTML = viewRefSlides.map((slide, i) => `
-      <div style="padding: 14px 16px; ${i > 0 ? 'border-top: 1px solid #e5e7eb;' : ''}" class="hover:bg-gray-50">
-        <div class="flex gap-3">
-          ${slide.thumbnailBase64 ? `<div class="flex-shrink-0"><img src="data:image/png;base64,${slide.thumbnailBase64}" alt="Slide ${slide.slideNumber}" style="width: 160px; height: auto; border-radius: 6px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.1);"></div>` : '<div class="flex-shrink-0 flex items-center justify-center" style="width: 160px; height: 90px; background: #f3f4f6; border-radius: 6px; border: 1px solid #e5e7eb;"><span class="text-xs text-gray-400">No thumbnail</span></div>'}
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2 mb-2">
-              <span class="flex-shrink-0 flex items-center justify-center text-xs font-bold text-white rounded-full" style="width: 22px; height: 22px; background: #0176D3;">${slide.slideNumber}</span>
-              <input type="text" data-view-idx="${i}" data-view-field="name" value="${esc(slide.name || '')}" placeholder="Slide name..." class="flex-1 px-2 py-1 rounded border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm font-medium">
+  container.innerHTML = '<div class="text-center py-8 text-gray-400 text-sm">Loading slides...</div>';
+
+  // Fetch full reference with annotations from server
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/reference-presentations/${ref.id}?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to load reference details');
+    const data = await resp.json();
+
+    let annotations = data.reference.slide_annotations;
+    if (typeof annotations === 'string') {
+      try { annotations = JSON.parse(annotations); } catch (e) { annotations = []; }
+    }
+    viewRefSlides = annotations || [];
+
+    if (viewRefSlides.length === 0) {
+      container.innerHTML = '<div class="text-center py-8 text-gray-400 text-sm">No slide data available for this reference.</div>';
+    } else {
+      container.innerHTML = viewRefSlides.map((slide, i) => `
+        <div style="padding: 14px 16px; ${i > 0 ? 'border-top: 1px solid #e5e7eb;' : ''}" class="hover:bg-gray-50">
+          <div class="flex gap-3">
+            ${slide.thumbnailBase64 ? `<div class="flex-shrink-0"><img src="data:image/png;base64,${slide.thumbnailBase64}" alt="Slide ${slide.slideNumber}" style="width: 160px; height: auto; border-radius: 6px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.1);"></div>` : '<div class="flex-shrink-0 flex items-center justify-center" style="width: 160px; height: 90px; background: #f3f4f6; border-radius: 6px; border: 1px solid #e5e7eb;"><span class="text-xs text-gray-400">No thumbnail</span></div>'}
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="flex-shrink-0 flex items-center justify-center text-xs font-bold text-white rounded-full" style="width: 22px; height: 22px; background: #0176D3;">${slide.slideNumber}</span>
+                <input type="text" data-view-idx="${i}" data-view-field="name" value="${esc(slide.name || '')}" placeholder="Slide name..." class="flex-1 px-2 py-1 rounded border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm font-medium">
+              </div>
+              <input type="text" data-view-idx="${i}" data-view-field="description" value="${esc(slide.description || '')}" placeholder="What does this slide do? e.g. 'Title slide with company logo'" class="w-full px-2 py-1 rounded border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-xs text-gray-600 mb-1">
+              <p class="text-xs text-gray-400 mt-1 truncate">${esc((slide.textContent || '').substring(0, 150))}${(slide.textContent || '').length > 150 ? '...' : ''}</p>
             </div>
-            <input type="text" data-view-idx="${i}" data-view-field="description" value="${esc(slide.description || '')}" placeholder="What does this slide do? e.g. 'Title slide with company logo'" class="w-full px-2 py-1 rounded border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-xs text-gray-600 mb-1">
-            <p class="text-xs text-gray-400 mt-1 truncate">${esc((slide.textContent || '').substring(0, 150))}${(slide.textContent || '').length > 150 ? '...' : ''}</p>
           </div>
         </div>
-      </div>
-    `).join('');
+      `).join('');
+    }
+  } catch (err) {
+    container.innerHTML = `<div class="text-center py-8 text-red-500 text-sm">${esc(err.message)}</div>`;
   }
-
-  document.getElementById('view-reference-dialog').classList.remove('hidden');
 }
 
 function closeViewReferenceDialog() {

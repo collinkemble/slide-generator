@@ -1308,7 +1308,7 @@ app.post('/api/reference-presentations/extract-slides', async (req, res) => {
   }
 });
 
-// GET /api/reference-presentations — list all (admin)
+// GET /api/reference-presentations — list all (admin) — excludes large slide_annotations
 app.get('/api/reference-presentations', async (req, res) => {
   try {
     const email = req.query.email;
@@ -1317,12 +1317,31 @@ app.get('/api/reference-presentations', async (req, res) => {
     }
 
     const refs = await query(
-      'SELECT id, name, industry_tag, presentation_type_tag, synopsis, slide_count, content_length, google_slides_url, slide_annotations, uploaded_by, created_at FROM reference_presentations ORDER BY created_at DESC'
+      'SELECT id, name, industry_tag, presentation_type_tag, synopsis, slide_count, content_length, google_slides_url, uploaded_by, created_at FROM reference_presentations ORDER BY created_at DESC'
     );
     res.json({ references: refs });
   } catch (err) {
     console.error('Failed to list reference presentations:', err);
     res.status(500).json({ error: 'Failed to list references' });
+  }
+});
+
+// GET /api/reference-presentations/:id — get single reference with annotations (admin)
+app.get('/api/reference-presentations/:id', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email || !isAdmin(email)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const refs = await query('SELECT * FROM reference_presentations WHERE id = ?', [req.params.id]);
+    if (refs.length === 0) {
+      return res.status(404).json({ error: 'Reference not found' });
+    }
+    res.json({ reference: refs[0] });
+  } catch (err) {
+    console.error('Failed to get reference:', err);
+    res.status(500).json({ error: 'Failed to get reference' });
   }
 });
 
