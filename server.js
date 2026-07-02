@@ -1127,6 +1127,8 @@ Return a JSON object with this exact structure:
       "title": "Slide Title",
       "subtitle": "Optional subtitle",
       "backgroundColor": "#032D60",
+      "backgroundImageUrl": "https://images.unsplash.com/photo-XXXX?w=1920&q=80&auto=format",
+      "backgroundImageOpacity": 0.3,
       "titleColor": "#FFFFFF",
       "bodyColor": "#E0E0E0",
       "titleFontSize": 40,
@@ -1149,6 +1151,8 @@ Return a JSON object with this exact structure:
       "title": "Section Title",
       "subtitle": "Optional section subtitle",
       "backgroundColor": "#0176D3",
+      "backgroundImageUrl": "https://images.unsplash.com/photo-YYYY?w=1920&q=80&auto=format",
+      "backgroundImageOpacity": 0.25,
       "titleColor": "#FFFFFF",
       "bodyColor": "#E0E0E0",
       "titleFontSize": 32,
@@ -1178,6 +1182,17 @@ DESIGN INSTRUCTIONS:
 - Set design.fontFamily to a clean sans-serif Google Font (e.g., Montserrat, Open Sans, Lato, Roboto, Poppins).
 - Set design.accentColor to a complementary brand color for highlights.
 - All color values must be valid 6-digit hex codes starting with #.
+
+BACKGROUND IMAGES — CRITICAL:
+- backgroundImageUrl is OPTIONAL per slide. Use it on TITLE slides, SECTION_HEADER slides, and key content slides to create a rich, highly designed presentation. Not every slide needs one.
+- backgroundImageOpacity (0.0 to 1.0) controls how visible the image is. Use 0.2–0.4 for slides with text on top so text remains readable. Use higher values (0.6–0.9) for visual-only or minimal-text slides.
+- You MUST use real, publicly accessible image URLs. Best sources:
+  1. Unsplash Source (free, high quality): https://images.unsplash.com/photo-{ID}?w=1920&q=80&auto=format — use REAL Unsplash photo IDs relevant to the slide topic (e.g. technology, business, teamwork, data, nature).
+  2. If a brand website URL is provided below, you may reference images you know exist on that domain.
+- DO NOT invent fake URLs. Only use Unsplash URLs with real photo IDs that you know exist.
+- When using background images with text overlay, ensure text colors have strong contrast (white text on dark overlays, dark text on light overlays).
+- The backgroundColor serves as a fallback if the image fails to load, so choose a complementary color.
+${presData.brandWebsiteUrl ? `\nBRAND WEBSITE: ${presData.brandWebsiteUrl}\nYou may reference publicly accessible images from this website if relevant. Otherwise use Unsplash images that match the brand's industry and visual style.\n` : ''}
 
 Available layouts: TITLE (first slide only), TITLE_AND_BODY (main content), SECTION_HEADER (section dividers), TWO_COLUMNS (side-by-side).
 Make the content substantive, detailed, and professional. Each body should have 3-5 meaningful bullet points.
@@ -1395,13 +1410,57 @@ Return ONLY valid JSON, no markdown fences.`;
 
       // ── Batch 3: Apply design styling (backgrounds, text colors, fonts) ──
       const designRequests = [];
+      // Track which slides have background images so we can add overlays
+      const slidesWithBgImages = [];
+
       for (let i = 0; i < generatedSlides.length; i++) {
         const slide = generatedSlides[i];
         const pageSlide = createdPres.data.slides[i];
         if (!pageSlide) continue;
 
-        // Background color
-        if (slide.backgroundColor) {
+        // Background: prefer image if provided, fall back to solid color
+        if (slide.backgroundImageUrl) {
+          try {
+            designRequests.push({
+              updatePageProperties: {
+                objectId: pageSlide.objectId,
+                pageProperties: {
+                  pageBackgroundFill: {
+                    stretchedPictureFill: {
+                      contentUrl: slide.backgroundImageUrl
+                    }
+                  }
+                },
+                fields: 'pageBackgroundFill.stretchedPictureFill.contentUrl'
+              }
+            });
+            // Track for overlay creation
+            slidesWithBgImages.push({
+              slideIndex: i,
+              pageObjectId: pageSlide.objectId,
+              opacity: slide.backgroundImageOpacity || 0.3,
+              backgroundColor: slide.backgroundColor || '#000000'
+            });
+            console.log(`Background image set for slide ${i + 1}: ${slide.backgroundImageUrl}`);
+          } catch (bgImgErr) {
+            console.warn(`Background image failed for slide ${i + 1}, falling back to solid color:`, bgImgErr.message);
+            // Fall back to solid color
+            const bgRgb = hexToRgb(slide.backgroundColor);
+            if (bgRgb) {
+              designRequests.push({
+                updatePageProperties: {
+                  objectId: pageSlide.objectId,
+                  pageProperties: {
+                    pageBackgroundFill: {
+                      solidFill: { color: { rgbColor: bgRgb } }
+                    }
+                  },
+                  fields: 'pageBackgroundFill.solidFill.color'
+                }
+              });
+            }
+          }
+        } else if (slide.backgroundColor) {
           const bgRgb = hexToRgb(slide.backgroundColor);
           if (bgRgb) {
             designRequests.push({
@@ -1483,6 +1542,95 @@ Return ONLY valid JSON, no markdown fences.`;
           console.log(`Applied ${designRequests.length} design updates to presentation ${presentation.id}`);
         } catch (designErr) {
           console.error('Design styling failed (non-fatal):', designErr.message);
+        }
+      }
+
+      // ── Batch 3b: Add semi-transparent overlays on slides with background images ──
+      if (slidesWithBgImages.length > 0) {
+        const overlayRequests = [];
+        for (const bgSlide of slidesWithBgImages) {
+          const overlayId = `overlay_${bgSlide.slideIndex}`;
+          const overlayColor = hexToRgb(bgSlide.backgroundColor) || { red: 0, green: 0, blue: 0 };
+          // Invert opacity: backgroundImageOpacity is how visible the IMAGE is,
+          // so overlay alpha = 1 - backgroundImageOpacity
+          const overlayAlpha = Math.max(0, Math.min(1, 1 - (bgSlide.opacity || 0.3)));
+
+          overlayRequests.push({
+            createShape: {
+              objectId: overlayId,
+              shapeType: 'RECTANGLE',
+              elementProperties: {
+                pageObjectId: bgSlide.pageObjectId,
+                size: {
+                  width: { magnitude: 9144000, unit: 'EMU' },   // Full slide width (10 inches)
+                  height: { magnitude: 6858000, unit: 'EMU' }    // Full slide height (7.5 inches)
+                },
+                transform: {
+                  scaleX: 1, scaleY: 1,
+                  translateX: 0, translateY: 0,
+                  unit: 'EMU'
+                }
+              }
+            }
+          });
+
+          // Style the overlay: fill with brand color + alpha, no outline
+          overlayRequests.push({
+            updateShapeProperties: {
+              objectId: overlayId,
+              shapeProperties: {
+                shapeBackgroundFill: {
+                  solidFill: {
+                    color: { rgbColor: overlayColor },
+                    alpha: overlayAlpha
+                  }
+                },
+                outline: { propertyState: 'NOT_RENDERED' }
+              },
+              fields: 'shapeBackgroundFill.solidFill.color,shapeBackgroundFill.solidFill.alpha,outline.propertyState'
+            }
+          });
+        }
+
+        if (overlayRequests.length > 0) {
+          try {
+            await slidesService.presentations.batchUpdate({
+              presentationId,
+              requestBody: { requests: overlayRequests }
+            });
+            console.log(`Added ${slidesWithBgImages.length} background overlays for presentation ${presentation.id}`);
+
+            // Now re-order: move overlays behind text elements
+            // We need to get the updated presentation to find z-order
+            const updatedPres = await slidesService.presentations.get({ presentationId });
+            const reorderRequests = [];
+            for (const bgSlide of slidesWithBgImages) {
+              const overlayId = `overlay_${bgSlide.slideIndex}`;
+              const pageSlide = updatedPres.data.slides[bgSlide.slideIndex];
+              if (!pageSlide) continue;
+
+              // Find the overlay element and move it to the back (index 0 = behind everything)
+              const overlayElement = pageSlide.pageElements?.find(el => el.objectId === overlayId);
+              if (overlayElement) {
+                reorderRequests.push({
+                  updatePageElementsZOrder: {
+                    pageElementObjectIds: [overlayId],
+                    operation: 'SEND_BACKWARD'
+                  }
+                });
+              }
+            }
+
+            if (reorderRequests.length > 0) {
+              await slidesService.presentations.batchUpdate({
+                presentationId,
+                requestBody: { requests: reorderRequests }
+              });
+              console.log(`Reordered overlays behind text for ${reorderRequests.length} slides`);
+            }
+          } catch (overlayErr) {
+            console.warn('Overlay creation failed (non-fatal):', overlayErr.message);
+          }
         }
       }
 

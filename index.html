@@ -1884,6 +1884,16 @@ async function viewItem(id, skipPush) {
     };
     hideSaveSettingsBar();
 
+    // Auto-poll if presentation is currently generating
+    if (presentation.status === 'generating') {
+      const genBtn = document.getElementById('generate-btn');
+      const progress = document.getElementById('generate-progress');
+      const statusEl = document.getElementById('generate-status');
+      progress.classList.remove('hidden');
+      statusEl.textContent = 'Generating slides...';
+      pollGenerationStatus(presentation.id, document.getElementById('user-email').textContent, genBtn, progress, statusEl);
+    }
+
     if (!skipPush) {
       history.pushState({ page: 'item-detail', itemId: id }, '', `/views/${id}`);
     }
@@ -2052,6 +2062,7 @@ async function selectBrandKit(itemId, btnEl) {
       brandTone: bk.tone?.summary || '',
       brandVisualStyle: bk.visual_style?.summary || '',
       brandLogoUrl: bk.logo_url || '',
+      brandWebsiteUrl: bk.website_url || bk.website || '',
       brandDescription: bk.elevator_pitch || bk.mission || '',
       brandKitId: String(itemId),
       brandKitSource: bk.brand_name || ''
@@ -2151,6 +2162,7 @@ async function createPresentation() {
     presData.brandTone = _selectedBrandKit.brandTone;
     presData.brandVisualStyle = _selectedBrandKit.brandVisualStyle;
     presData.brandLogoUrl = _selectedBrandKit.brandLogoUrl;
+    presData.brandWebsiteUrl = _selectedBrandKit.brandWebsiteUrl;
     presData.brandDescription = _selectedBrandKit.brandDescription;
     presData.brandKitId = _selectedBrandKit.brandKitId;
     presData.brandKitSource = _selectedBrandKit.brandKitSource;
