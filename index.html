@@ -2194,7 +2194,7 @@ async function generatePresentation() {
   const email = document.getElementById('user-email').textContent;
 
   try {
-    statusEl.textContent = 'Generating slide content with AI...';
+    statusEl.textContent = 'Starting generation...';
     const resp = await fetch(`/api/presentations/${currentPresentationId}/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2204,12 +2204,9 @@ async function generatePresentation() {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.error || 'Generation failed');
 
-    statusEl.textContent = 'Done! Slides created.';
-
-    // Refresh the detail view
-    setTimeout(() => {
-      viewItem(currentPresentationId, true);
-    }, 1000);
+    // Generation started in background — poll for completion
+    statusEl.textContent = 'Generating slide content with AI...';
+    pollGenerationStatus(currentPresentationId, email, btn, progress, statusEl);
 
   } catch (err) {
     alert('Generation failed: ' + err.message);
@@ -2217,6 +2214,56 @@ async function generatePresentation() {
     btn.textContent = '🚀 Generate Slides';
     progress.classList.add('hidden');
   }
+}
+
+// Poll for generation completion (background async generation)
+async function pollGenerationStatus(presId, email, btn, progress, statusEl) {
+  const maxAttempts = 60; // 60 × 3s = 3 minutes max
+  let attempt = 0;
+
+  const poll = async () => {
+    attempt++;
+    try {
+      const resp = await fetch(`/api/presentations/${presId}?email=${encodeURIComponent(email)}`);
+      if (!resp.ok) throw new Error('Failed to check status');
+      const result = await resp.json();
+      const pres = result.presentation;
+
+      if (pres.status === 'completed') {
+        statusEl.textContent = 'Done! Slides created.';
+        setTimeout(() => viewItem(presId, true), 1000);
+        return;
+      }
+
+      if (pres.status === 'failed') {
+        statusEl.textContent = 'Generation failed.';
+        btn.disabled = false;
+        btn.textContent = '🚀 Generate Slides';
+        progress.classList.add('hidden');
+        alert('Generation failed. Please try again.');
+        return;
+      }
+
+      // Still generating — update status text with progress indicator
+      const dots = '.'.repeat((attempt % 3) + 1);
+      statusEl.textContent = `Generating slide content with AI${dots}`;
+
+      if (attempt < maxAttempts) {
+        setTimeout(poll, 3000); // Poll every 3 seconds
+      } else {
+        statusEl.textContent = 'Generation is taking longer than expected. Refresh the page to check.';
+        btn.disabled = false;
+        btn.textContent = '🔄 Check Status';
+      }
+    } catch (err) {
+      console.error('Poll error:', err);
+      if (attempt < maxAttempts) {
+        setTimeout(poll, 5000); // Retry with longer interval on error
+      }
+    }
+  };
+
+  setTimeout(poll, 3000); // First poll after 3 seconds
 }
 
 // ═══════════════════════════════════════════════

@@ -1002,6 +1002,24 @@ app.post('/api/presentations/:id/generate', async (req, res) => {
     // Mark as generating
     await query('UPDATE presentations SET status = ? WHERE id = ?', ['generating', presentation.id]);
 
+    // Respond immediately — do heavy work in background to avoid Heroku 30s timeout
+    res.json({ success: true, status: 'generating', message: 'Generation started. Poll for status.' });
+
+    // ── Background generation (runs after response is sent) ──
+    generateInBackground(presentation, presData, authClient).catch(err => {
+      console.error('Background generation failed:', err);
+    });
+
+  } catch (err) {
+    console.error('Generate presentation error:', err);
+    res.status(500).json({ error: 'Failed to start generation' });
+  }
+});
+
+// Background generation function (runs outside request lifecycle)
+async function generateInBackground(presentation, presData, authClient) {
+  try {
+
     // Build the Gemini prompt
     const slides = presData.slides || [];
     const topic = presData.topic || presentation.name;
@@ -1114,12 +1132,13 @@ Return ONLY valid JSON, no markdown fences.`;
     const geminiApiKey = process.env.GEMINI_API_KEY;
     if (!geminiApiKey) {
       await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
-      return res.status(500).json({ error: 'GEMINI_API_KEY not configured' });
+      throw new Error('GEMINI_API_KEY not configured');
     }
 
     const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
 
+    console.log(`Calling Gemini (${model}) for presentation ${presentation.id}...`);
     const geminiResp = await fetch(geminiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1131,11 +1150,13 @@ Return ONLY valid JSON, no markdown fences.`;
 
     if (!geminiResp.ok) {
       const errData = await geminiResp.json().catch(() => ({}));
+      console.error('Gemini API error:', errData.error?.message);
       await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
-      return res.status(500).json({ error: errData.error?.message || 'Gemini API error' });
+      throw new Error(errData.error?.message || 'Gemini API error');
     }
 
     const geminiData = await geminiResp.json();
+    console.log(`Gemini responded for presentation ${presentation.id}`);
 
     // Gemini 2.5 models may return multiple parts (thought + text).
     // Extract all text parts (skip thought parts) and concatenate.
@@ -1148,7 +1169,7 @@ Return ONLY valid JSON, no markdown fences.`;
     if (!content) {
       console.error('No text content from Gemini. Parts:', JSON.stringify(parts.map(p => ({ thought: !!p.thought, hasText: p.text !== undefined, textLen: p.text?.length }))));
       await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
-      return res.status(500).json({ error: 'No content returned from AI' });
+      throw new Error('No content returned from AI');
     }
 
     // Parse JSON from response — try multiple extraction strategies
@@ -1179,7 +1200,7 @@ Return ONLY valid JSON, no markdown fences.`;
       if (!slideData) {
         console.error('Failed to parse Gemini response as JSON. Content preview:', content.substring(0, 500));
         await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
-        return res.status(500).json({ error: 'Failed to parse AI response as JSON' });
+        throw new Error('Failed to parse AI response as JSON');
       }
     }
 
@@ -1296,24 +1317,22 @@ Return ONLY valid JSON, no markdown fences.`;
         ['completed', presentationId, presentationUrl, JSON.stringify(presData), presentation.id]
       );
 
-      res.json({
-        success: true,
-        presentationId,
-        presentationUrl,
-        slideCount: generatedSlides.length
-      });
+      console.log(`✓ Presentation ${presentation.id} generated successfully: ${presentationUrl}`);
 
     } catch (err) {
       console.error('Google Slides creation error:', err);
       await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
-      res.status(500).json({ error: 'Failed to create Google Slides: ' + err.message });
     }
 
   } catch (err) {
-    console.error('Generate presentation error:', err);
-    res.status(500).json({ error: 'Failed to generate presentation' });
+    console.error('Background generate error:', err);
+    try {
+      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
+    } catch (dbErr) {
+      console.error('Failed to mark presentation as failed:', dbErr);
+    }
   }
-});
+}
 
 // ═══════════════════════════════════════════════
 // APP-SPECIFIC — Context Grounding: Reference Presentations
