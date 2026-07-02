@@ -1850,13 +1850,21 @@ async function viewItem(id, skipPush) {
       preview.classList.remove('hidden');
       previewBody.innerHTML = data.generatedSlides.slides.map((slide, i) => `
         <div style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 8px;">
-          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-            <span style="font-size: 11px; font-weight: 700; color: #6B7280; min-width: 20px;">${i+1}</span>
-            <span style="font-size: 11px; padding: 1px 6px; border-radius: 3px; background: #F3F4F6; color: #6B7280;">${esc(slide.layout)}</span>
-            <span style="font-size: 14px; font-weight: 600; color: #111;">${esc(slide.title || '')}</span>
+          <div style="display: flex; gap: 12px; align-items: flex-start;">
+            ${slide.thumbnailBase64
+              ? `<div style="flex-shrink: 0;"><img src="data:image/png;base64,${slide.thumbnailBase64}" alt="Slide ${i+1}" style="width: 180px; height: auto; border-radius: 6px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.1);"></div>`
+              : `<div style="flex-shrink: 0; width: 180px; height: 101px; background: #f3f4f6; border-radius: 6px; border: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: center;"><span style="font-size: 11px; color: #9ca3af;">No preview</span></div>`
+            }
+            <div style="flex: 1; min-width: 0;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span style="font-size: 11px; font-weight: 700; color: #6B7280; min-width: 20px;">${i+1}</span>
+                <span style="font-size: 11px; padding: 1px 6px; border-radius: 3px; background: #F3F4F6; color: #6B7280;">${esc(slide.layout)}</span>
+                <span style="font-size: 14px; font-weight: 600; color: #111;">${esc(slide.title || '')}</span>
+              </div>
+              ${slide.body ? `<p style="font-size: 12px; color: #666; white-space: pre-line; line-height: 1.5;">${esc(slide.body).substring(0, 200)}${slide.body.length > 200 ? '...' : ''}</p>` : ''}
+              ${slide.subtitle ? `<p style="font-size: 12px; color: #888; font-style: italic;">${esc(slide.subtitle)}</p>` : ''}
+            </div>
           </div>
-          ${slide.body ? `<p style="font-size: 12px; color: #666; margin-left: 28px; white-space: pre-line; line-height: 1.5;">${esc(slide.body).substring(0, 200)}${slide.body.length > 200 ? '...' : ''}</p>` : ''}
-          ${slide.subtitle ? `<p style="font-size: 12px; color: #888; margin-left: 28px; font-style: italic;">${esc(slide.subtitle)}</p>` : ''}
         </div>
       `).join('');
     } else {

@@ -1016,6 +1016,24 @@ app.post('/api/presentations/:id/generate', async (req, res) => {
   }
 });
 
+// ─── Helpers for Google Slides color conversion ───
+function hexToRgb(hex) {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!result) return null;
+  return {
+    red: parseInt(result[1], 16) / 255,
+    green: parseInt(result[2], 16) / 255,
+    blue: parseInt(result[3], 16) / 255
+  };
+}
+
+function isLightColor(hex) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return true;
+  const luminance = (0.299 * rgb.red + 0.587 * rgb.green + 0.114 * rgb.blue);
+  return luminance > 0.5;
+}
+
 // Background generation function (runs outside request lifecycle)
 async function generateInBackground(presentation, presData, authClient) {
   try {
@@ -1099,30 +1117,67 @@ Use these brand colors, tone, and visual style throughout the presentation. Ensu
 Return a JSON object with this exact structure:
 {
   "title": "Presentation Title",
+  "design": {
+    "fontFamily": "Montserrat",
+    "accentColor": "#FF6B35"
+  },
   "slides": [
     {
       "layout": "TITLE",
       "title": "Slide Title",
-      "subtitle": "Optional subtitle"
+      "subtitle": "Optional subtitle",
+      "backgroundColor": "#032D60",
+      "titleColor": "#FFFFFF",
+      "bodyColor": "#E0E0E0",
+      "titleFontSize": 40,
+      "bodyFontSize": 16,
+      "titleBold": true
     },
     {
       "layout": "TITLE_AND_BODY",
       "title": "Slide Title",
-      "body": "Slide body content. Use \\n for line breaks. Use bullet points with • character."
+      "body": "Slide body content. Use \\n for line breaks. Use bullet points with • character.",
+      "backgroundColor": "#FFFFFF",
+      "titleColor": "#032D60",
+      "bodyColor": "#444444",
+      "titleFontSize": 28,
+      "bodyFontSize": 14,
+      "titleBold": true
     },
     {
       "layout": "SECTION_HEADER",
       "title": "Section Title",
-      "subtitle": "Optional section subtitle"
+      "subtitle": "Optional section subtitle",
+      "backgroundColor": "#0176D3",
+      "titleColor": "#FFFFFF",
+      "bodyColor": "#E0E0E0",
+      "titleFontSize": 32,
+      "bodyFontSize": 16,
+      "titleBold": true
     },
     {
       "layout": "TWO_COLUMNS",
       "title": "Comparison Title",
       "leftColumn": "Left column content",
-      "rightColumn": "Right column content"
+      "rightColumn": "Right column content",
+      "backgroundColor": "#FFFFFF",
+      "titleColor": "#032D60",
+      "bodyColor": "#444444",
+      "titleFontSize": 28,
+      "bodyFontSize": 14,
+      "titleBold": true
     }
   ]
 }
+
+DESIGN INSTRUCTIONS:
+- For each slide, you MUST specify backgroundColor (hex), titleColor (hex), bodyColor (hex), titleFontSize (number in pt), bodyFontSize (number in pt), and titleBold (boolean).
+- Use the brand primary color for TITLE and SECTION_HEADER backgrounds with white or light text.
+- Use white or light backgrounds for TITLE_AND_BODY and TWO_COLUMNS slides with dark text matching the brand.
+- Alternate accent colors on some slides for visual variety.
+- Set design.fontFamily to a clean sans-serif Google Font (e.g., Montserrat, Open Sans, Lato, Roboto, Poppins).
+- Set design.accentColor to a complementary brand color for highlights.
+- All color values must be valid 6-digit hex codes starting with #.
 
 Available layouts: TITLE (first slide only), TITLE_AND_BODY (main content), SECTION_HEADER (section dividers), TWO_COLUMNS (side-by-side).
 Make the content substantive, detailed, and professional. Each body should have 3-5 meaningful bullet points.
@@ -1144,7 +1199,7 @@ Return ONLY valid JSON, no markdown fences.`;
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: systemPrompt }, ...refImageParts] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 8192 }
+        generationConfig: { temperature: 0.7, maxOutputTokens: 16384 }
       })
     });
 
@@ -1203,6 +1258,34 @@ Return ONLY valid JSON, no markdown fences.`;
         throw new Error('Failed to parse AI response as JSON');
       }
     }
+
+    // Apply design defaults for any fields Gemini may have omitted
+    const defaultDesign = {
+      fontFamily: 'Open Sans',
+      accentColor: presData.brandColorSecondary || '#0176D3'
+    };
+    slideData.design = { ...defaultDesign, ...(slideData.design || {}) };
+
+    for (const slide of (slideData.slides || [])) {
+      if (!slide.backgroundColor) {
+        if (slide.layout === 'TITLE' || slide.layout === 'SECTION_HEADER') {
+          slide.backgroundColor = presData.brandColorPrimary || '#032D60';
+        } else {
+          slide.backgroundColor = '#FFFFFF';
+        }
+      }
+      if (!slide.titleColor) {
+        slide.titleColor = isLightColor(slide.backgroundColor) ? '#1B2559' : '#FFFFFF';
+      }
+      if (!slide.bodyColor) {
+        slide.bodyColor = isLightColor(slide.backgroundColor) ? '#444444' : '#E0E0E0';
+      }
+      if (!slide.titleFontSize) slide.titleFontSize = slide.layout === 'TITLE' ? 40 : 28;
+      if (!slide.bodyFontSize) slide.bodyFontSize = 14;
+      if (slide.titleBold === undefined) slide.titleBold = true;
+    }
+
+    console.log(`Design defaults applied for presentation ${presentation.id}`);
 
     // Create Google Slides presentation
     try {
@@ -1307,6 +1390,173 @@ Return ONLY valid JSON, no markdown fences.`;
         await slidesService.presentations.batchUpdate({
           presentationId,
           requestBody: { requests: textRequests }
+        });
+      }
+
+      // ── Batch 3: Apply design styling (backgrounds, text colors, fonts) ──
+      const designRequests = [];
+      for (let i = 0; i < generatedSlides.length; i++) {
+        const slide = generatedSlides[i];
+        const pageSlide = createdPres.data.slides[i];
+        if (!pageSlide) continue;
+
+        // Background color
+        if (slide.backgroundColor) {
+          const bgRgb = hexToRgb(slide.backgroundColor);
+          if (bgRgb) {
+            designRequests.push({
+              updatePageProperties: {
+                objectId: pageSlide.objectId,
+                pageProperties: {
+                  pageBackgroundFill: {
+                    solidFill: { color: { rgbColor: bgRgb } }
+                  }
+                },
+                fields: 'pageBackgroundFill.solidFill.color'
+              }
+            });
+          }
+        }
+
+        // Text styling per placeholder
+        for (const element of (pageSlide.pageElements || [])) {
+          const placeholder = element.shape?.placeholder;
+          if (!placeholder) continue;
+
+          const isTitle = placeholder.type === 'TITLE' || placeholder.type === 'CENTERED_TITLE';
+          const isSubtitle = placeholder.type === 'SUBTITLE';
+          const isBody = placeholder.type === 'BODY';
+          if (!isTitle && !isSubtitle && !isBody) continue;
+
+          const style = {};
+          const fields = [];
+
+          // Font family
+          if (slideData.design?.fontFamily) {
+            style.fontFamily = slideData.design.fontFamily;
+            fields.push('fontFamily');
+          }
+
+          // Text color
+          const colorHex = isTitle || isSubtitle ? slide.titleColor : slide.bodyColor;
+          if (colorHex) {
+            const rgb = hexToRgb(colorHex);
+            if (rgb) {
+              style.foregroundColor = { opaqueColor: { rgbColor: rgb } };
+              fields.push('foregroundColor');
+            }
+          }
+
+          // Font size
+          const fontSize = isTitle ? slide.titleFontSize : (isSubtitle ? (slide.bodyFontSize || 16) : slide.bodyFontSize);
+          if (fontSize) {
+            style.fontSize = { magnitude: fontSize, unit: 'PT' };
+            fields.push('fontSize');
+          }
+
+          // Bold for titles
+          if (isTitle && slide.titleBold) {
+            style.bold = true;
+            fields.push('bold');
+          }
+
+          if (fields.length > 0) {
+            designRequests.push({
+              updateTextStyle: {
+                objectId: element.objectId,
+                textRange: { type: 'ALL' },
+                style,
+                fields: fields.join(',')
+              }
+            });
+          }
+        }
+      }
+
+      // Execute design batch
+      if (designRequests.length > 0) {
+        try {
+          await slidesService.presentations.batchUpdate({
+            presentationId,
+            requestBody: { requests: designRequests }
+          });
+          console.log(`Applied ${designRequests.length} design updates to presentation ${presentation.id}`);
+        } catch (designErr) {
+          console.error('Design styling failed (non-fatal):', designErr.message);
+        }
+      }
+
+      // ── Batch 4: Logo insertion (isolated to prevent cascading failures) ──
+      if (presData.brandLogoUrl) {
+        try {
+          await slidesService.presentations.batchUpdate({
+            presentationId,
+            requestBody: {
+              requests: [{
+                createImage: {
+                  url: presData.brandLogoUrl,
+                  elementProperties: {
+                    pageObjectId: createdPres.data.slides[0]?.objectId || 'slide_0',
+                    size: {
+                      width: { magnitude: 1200000, unit: 'EMU' },
+                      height: { magnitude: 600000, unit: 'EMU' }
+                    },
+                    transform: {
+                      scaleX: 1, scaleY: 1,
+                      translateX: 7200000, translateY: 300000,
+                      unit: 'EMU'
+                    }
+                  }
+                }
+              }]
+            }
+          });
+          console.log(`Logo inserted on title slide for presentation ${presentation.id}`);
+        } catch (logoErr) {
+          console.warn('Logo insertion failed (non-fatal):', logoErr.message);
+        }
+      }
+
+      // ── Fetch thumbnails of generated slides ──
+      // Brief delay to allow Google Slides to render styling
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      const generatedThumbnails = [];
+      try {
+        const finalPres = await slidesService.presentations.get({ presentationId });
+        const finalSlides = finalPres.data.slides || [];
+
+        const thumbPromises = finalSlides.map(async (pageSlide, idx) => {
+          try {
+            const thumbRes = await slidesService.presentations.pages.getThumbnail({
+              presentationId,
+              pageObjectId: pageSlide.objectId,
+              'thumbnailProperties.mimeType': 'PNG',
+              'thumbnailProperties.thumbnailSize': 'SMALL'
+            });
+            const thumbUrl = thumbRes.data.contentUrl;
+            if (thumbUrl) {
+              const imgResp = await fetch(thumbUrl);
+              if (imgResp.ok) {
+                const imgBuffer = Buffer.from(await imgResp.arrayBuffer());
+                generatedThumbnails[idx] = imgBuffer.toString('base64');
+              }
+            }
+          } catch (thumbErr) {
+            console.warn(`Could not get thumbnail for generated slide ${idx + 1}:`, thumbErr.message);
+          }
+        });
+
+        await Promise.all(thumbPromises);
+        console.log(`Fetched ${generatedThumbnails.filter(Boolean).length}/${finalSlides.length} thumbnails`);
+      } catch (thumbFetchErr) {
+        console.error('Thumbnail fetching failed (non-fatal):', thumbFetchErr.message);
+      }
+
+      // Attach thumbnails to slide data
+      if (generatedThumbnails.length > 0 && slideData.slides) {
+        slideData.slides.forEach((slide, idx) => {
+          slide.thumbnailBase64 = generatedThumbnails[idx] || null;
         });
       }
 
