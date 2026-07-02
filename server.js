@@ -1787,9 +1787,8 @@ Return ONLY valid JSON, no markdown fences.`;
         });
       }
 
-      // ── Batch 3: Apply design styling (backgrounds, text colors, fonts) ──
-      const designRequests = [];
-      // Track which slides have background images so we can add overlays
+      // ── Batch 3a: Apply BACKGROUND styling (images + solid colors) — separate batch ──
+      const bgRequests = [];
       const slidesWithBgImages = [];
 
       for (let i = 0; i < generatedSlides.length; i++) {
@@ -1797,52 +1796,31 @@ Return ONLY valid JSON, no markdown fences.`;
         const pageSlide = createdPres.data.slides[i];
         if (!pageSlide) continue;
 
-        // Background: prefer image if provided, fall back to solid color
         if (slide.backgroundImageUrl) {
-          try {
-            designRequests.push({
-              updatePageProperties: {
-                objectId: pageSlide.objectId,
-                pageProperties: {
-                  pageBackgroundFill: {
-                    stretchedPictureFill: {
-                      contentUrl: slide.backgroundImageUrl
-                    }
+          bgRequests.push({
+            updatePageProperties: {
+              objectId: pageSlide.objectId,
+              pageProperties: {
+                pageBackgroundFill: {
+                  stretchedPictureFill: {
+                    contentUrl: slide.backgroundImageUrl
                   }
-                },
-                fields: 'pageBackgroundFill.stretchedPictureFill.contentUrl'
-              }
-            });
-            // Track for overlay creation
-            slidesWithBgImages.push({
-              slideIndex: i,
-              pageObjectId: pageSlide.objectId,
-              opacity: slide.backgroundImageOpacity || 0.3,
-              backgroundColor: slide.backgroundColor || '#000000'
-            });
-            console.log(`Background image set for slide ${i + 1}: ${slide.backgroundImageUrl}`);
-          } catch (bgImgErr) {
-            console.warn(`Background image failed for slide ${i + 1}, falling back to solid color:`, bgImgErr.message);
-            // Fall back to solid color
-            const bgRgb = hexToRgb(slide.backgroundColor);
-            if (bgRgb) {
-              designRequests.push({
-                updatePageProperties: {
-                  objectId: pageSlide.objectId,
-                  pageProperties: {
-                    pageBackgroundFill: {
-                      solidFill: { color: { rgbColor: bgRgb } }
-                    }
-                  },
-                  fields: 'pageBackgroundFill.solidFill.color'
                 }
-              });
+              },
+              fields: 'pageBackgroundFill.stretchedPictureFill.contentUrl'
             }
-          }
+          });
+          slidesWithBgImages.push({
+            slideIndex: i,
+            pageObjectId: pageSlide.objectId,
+            opacity: slide.backgroundImageOpacity || 0.3,
+            backgroundColor: slide.backgroundColor || '#000000'
+          });
+          console.log(`Background image queued for slide ${i + 1}: ${slide.backgroundImageUrl}`);
         } else if (slide.backgroundColor) {
           const bgRgb = hexToRgb(slide.backgroundColor);
           if (bgRgb) {
-            designRequests.push({
+            bgRequests.push({
               updatePageProperties: {
                 objectId: pageSlide.objectId,
                 pageProperties: {
@@ -1855,8 +1833,29 @@ Return ONLY valid JSON, no markdown fences.`;
             });
           }
         }
+      }
 
-        // Text styling per placeholder
+      // Execute background batch SEPARATELY so text styling errors don't break it
+      if (bgRequests.length > 0) {
+        try {
+          await slidesService.presentations.batchUpdate({
+            presentationId,
+            requestBody: { requests: bgRequests }
+          });
+          console.log(`Applied ${bgRequests.length} background updates to presentation ${presentation.id}`);
+        } catch (bgErr) {
+          console.error('Background styling failed:', bgErr.message);
+        }
+      }
+
+      // ── Batch 3b: Apply TEXT styling (colors, fonts, sizes) — separate batch ──
+      const textStyleRequests = [];
+
+      for (let i = 0; i < generatedSlides.length; i++) {
+        const slide = generatedSlides[i];
+        const pageSlide = createdPres.data.slides[i];
+        if (!pageSlide) continue;
+
         for (const element of (pageSlide.pageElements || [])) {
           const placeholder = element.shape?.placeholder;
           if (!placeholder) continue;
@@ -1865,6 +1864,11 @@ Return ONLY valid JSON, no markdown fences.`;
           const isSubtitle = placeholder.type === 'SUBTITLE';
           const isBody = placeholder.type === 'BODY';
           if (!isTitle && !isSubtitle && !isBody) continue;
+
+          // CRITICAL: Skip elements that have no text content to avoid Google API errors
+          const textElements = element.shape?.text?.textElements || [];
+          const hasText = textElements.some(te => te.textRun?.content?.trim());
+          if (!hasText) continue;
 
           const style = {};
           const fields = [];
@@ -1899,7 +1903,7 @@ Return ONLY valid JSON, no markdown fences.`;
           }
 
           if (fields.length > 0) {
-            designRequests.push({
+            textStyleRequests.push({
               updateTextStyle: {
                 objectId: element.objectId,
                 textRange: { type: 'ALL' },
@@ -1911,16 +1915,16 @@ Return ONLY valid JSON, no markdown fences.`;
         }
       }
 
-      // Execute design batch
-      if (designRequests.length > 0) {
+      // Execute text styling batch separately
+      if (textStyleRequests.length > 0) {
         try {
           await slidesService.presentations.batchUpdate({
             presentationId,
-            requestBody: { requests: designRequests }
+            requestBody: { requests: textStyleRequests }
           });
-          console.log(`Applied ${designRequests.length} design updates to presentation ${presentation.id}`);
-        } catch (designErr) {
-          console.error('Design styling failed (non-fatal):', designErr.message);
+          console.log(`Applied ${textStyleRequests.length} text style updates to presentation ${presentation.id}`);
+        } catch (textErr) {
+          console.error('Text styling failed (non-fatal):', textErr.message);
         }
       }
 
