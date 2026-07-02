@@ -1687,63 +1687,130 @@ Return ONLY valid JSON, no markdown fences.`;
       }
     }
 
-    // Create Google Slides presentation
+    // Create or reuse Google Slides presentation
     try {
       const slidesService = google.slides({ version: 'v1', auth: authClient });
 
-      // Create blank presentation
-      const createResp = await slidesService.presentations.create({
-        requestBody: { title: slideData.title || presentation.name }
-      });
-
-      const presentationId = createResp.data.presentationId;
-      const presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
-
-      // Build batch update requests
-      const requests = [];
+      let presentationId;
+      let presentationUrl;
       const generatedSlides = slideData.slides || [];
 
-      // Delete the default blank slide
-      if (createResp.data.slides && createResp.data.slides.length > 0) {
-        requests.push({
-          deleteObject: { objectId: createResp.data.slides[0].objectId }
-        });
-      }
+      // Check if this presentation already has a Google Slides file (regeneration)
+      if (presentation.google_presentation_id) {
+        // ── REGENERATION: Reuse existing Google Slides presentation ──
+        presentationId = presentation.google_presentation_id;
+        presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
+        console.log(`Regenerating into existing Google Slides: ${presentationId}`);
 
-      // Add each slide
-      for (let i = 0; i < generatedSlides.length; i++) {
-        const slide = generatedSlides[i];
-        const slideId = `slide_${i}`;
-        const titleId = `title_${i}`;
-        const bodyId = `body_${i}`;
-        const subtitleId = `subtitle_${i}`;
-        const leftColId = `leftcol_${i}`;
-        const rightColId = `rightcol_${i}`;
+        // Get existing presentation to find all current slides
+        const existingPres = await slidesService.presentations.get({ presentationId });
+        const existingSlides = existingPres.data.slides || [];
 
-        let predefinedLayout = 'BLANK';
-        if (slide.layout === 'TITLE') predefinedLayout = 'TITLE';
-        else if (slide.layout === 'SECTION_HEADER') predefinedLayout = 'SECTION_HEADER';
-        else if (slide.layout === 'TITLE_AND_BODY') predefinedLayout = 'TITLE_AND_BODY';
-        else if (slide.layout === 'TWO_COLUMNS') predefinedLayout = 'TITLE_AND_TWO_COLUMNS';
+        // Delete all existing slides (except we must keep at least one, so add new slides first)
+        // Strategy: 1) Add all new slides 2) Delete all old slides
+        const addRequests = [];
+        for (let i = 0; i < generatedSlides.length; i++) {
+          const slide = generatedSlides[i];
+          const slideId = `slide_${i}_${Date.now()}`;
 
-        requests.push({
-          createSlide: {
-            objectId: slideId,
-            insertionIndex: i,
-            slideLayoutReference: { predefinedLayout }
+          let predefinedLayout = 'BLANK';
+          if (slide.layout === 'TITLE') predefinedLayout = 'TITLE';
+          else if (slide.layout === 'SECTION_HEADER') predefinedLayout = 'SECTION_HEADER';
+          else if (slide.layout === 'TITLE_AND_BODY') predefinedLayout = 'TITLE_AND_BODY';
+          else if (slide.layout === 'TWO_COLUMNS') predefinedLayout = 'TITLE_AND_TWO_COLUMNS';
+
+          addRequests.push({
+            createSlide: {
+              objectId: slideId,
+              insertionIndex: i,
+              slideLayoutReference: { predefinedLayout }
+            }
+          });
+        }
+
+        // Add new slides first
+        if (addRequests.length > 0) {
+          await slidesService.presentations.batchUpdate({
+            presentationId,
+            requestBody: { requests: addRequests }
+          });
+        }
+
+        // Now delete all old slides (they're now at the end after the newly inserted ones)
+        if (existingSlides.length > 0) {
+          const deleteRequests = existingSlides.map(s => ({
+            deleteObject: { objectId: s.objectId }
+          }));
+          await slidesService.presentations.batchUpdate({
+            presentationId,
+            requestBody: { requests: deleteRequests }
+          });
+          console.log(`Deleted ${existingSlides.length} old slides from presentation ${presentationId}`);
+        }
+
+        // Update the title
+        if (slideData.title || presentation.name) {
+          try {
+            const driveService = google.drive({ version: 'v3', auth: authClient });
+            await driveService.files.update({
+              fileId: presentationId,
+              requestBody: { name: slideData.title || presentation.name }
+            });
+          } catch (titleErr) {
+            console.warn('Failed to update presentation title (non-fatal):', titleErr.message);
           }
+        }
+
+      } else {
+        // ── FIRST GENERATION: Create a new Google Slides presentation ──
+        const createResp = await slidesService.presentations.create({
+          requestBody: { title: slideData.title || presentation.name }
         });
+
+        presentationId = createResp.data.presentationId;
+        presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
+        console.log(`Created new Google Slides: ${presentationId}`);
+
+        // Build batch update requests
+        const requests = [];
+
+        // Delete the default blank slide
+        if (createResp.data.slides && createResp.data.slides.length > 0) {
+          requests.push({
+            deleteObject: { objectId: createResp.data.slides[0].objectId }
+          });
+        }
+
+        // Add each slide
+        for (let i = 0; i < generatedSlides.length; i++) {
+          const slide = generatedSlides[i];
+          const slideId = `slide_${i}`;
+
+          let predefinedLayout = 'BLANK';
+          if (slide.layout === 'TITLE') predefinedLayout = 'TITLE';
+          else if (slide.layout === 'SECTION_HEADER') predefinedLayout = 'SECTION_HEADER';
+          else if (slide.layout === 'TITLE_AND_BODY') predefinedLayout = 'TITLE_AND_BODY';
+          else if (slide.layout === 'TWO_COLUMNS') predefinedLayout = 'TITLE_AND_TWO_COLUMNS';
+
+          requests.push({
+            createSlide: {
+              objectId: slideId,
+              insertionIndex: i,
+              slideLayoutReference: { predefinedLayout }
+            }
+          });
+        }
+
+        // Execute slide creation
+        if (requests.length > 0) {
+          await slidesService.presentations.batchUpdate({
+            presentationId,
+            requestBody: { requests }
+          });
+        }
       }
 
-      // Execute slide creation first
-      if (requests.length > 0) {
-        await slidesService.presentations.batchUpdate({
-          presentationId,
-          requestBody: { requests }
-        });
-      }
-
-      // Get the created presentation to find placeholder IDs
+      // Get the presentation to find placeholder IDs
       const createdPres = await slidesService.presentations.get({ presentationId });
 
       // Now populate text in each slide
@@ -1935,10 +2002,12 @@ Return ONLY valid JSON, no markdown fences.`;
       }
 
       // ── Batch 3b: Add semi-transparent overlays on slides with background images ──
+      const overlayTimestamp = Date.now();
       if (slidesWithBgImages.length > 0) {
         const overlayRequests = [];
         for (const bgSlide of slidesWithBgImages) {
-          const overlayId = `overlay_${bgSlide.slideIndex}`;
+          const overlayId = `overlay_${bgSlide.slideIndex}_${overlayTimestamp}`;
+          bgSlide.overlayId = overlayId; // Store for reorder step
           const overlayColor = hexToRgb(bgSlide.backgroundColor) || { red: 0, green: 0, blue: 0 };
           // Light overlay for text readability — keep it subtle so images stay vibrant
           // backgroundImageOpacity is how visible the IMAGE is (higher = more visible image, less overlay)
@@ -1997,7 +2066,8 @@ Return ONLY valid JSON, no markdown fences.`;
             const updatedPres = await slidesService.presentations.get({ presentationId });
             const reorderRequests = [];
             for (const bgSlide of slidesWithBgImages) {
-              const overlayId = `overlay_${bgSlide.slideIndex}`;
+              const overlayId = bgSlide.overlayId;
+              if (!overlayId) continue;
               const pageSlide = updatedPres.data.slides[bgSlide.slideIndex];
               if (!pageSlide) continue;
 

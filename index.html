@@ -1905,7 +1905,7 @@ async function viewItem(id, skipPush) {
     if (presentation.status === 'completed') {
       genBtn.textContent = '🔄 Regenerate Slides';
       genBtn.disabled = false;
-      genSubtitle.textContent = 'Generate a new version in Google Drive';
+      genSubtitle.textContent = 'Regenerate slides in the same Google Drive file';
     } else if (presentation.status === 'generating') {
       genBtn.textContent = '⏳ Generating...';
       genBtn.disabled = true;
