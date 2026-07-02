@@ -1355,6 +1355,348 @@ async function generateAndUploadSlideImage(slide, brandData, presentationTopic, 
   }
 }
 
+/**
+ * TEMPLATE-COPY APPROACH: Copy the grounding asset's Google Slides file,
+ * then replace text content and background images.
+ * This preserves ALL design elements (shapes, boxes, colors, fonts, positioning).
+ */
+async function generateFromTemplate(presentation, presData, authClient, templateRef) {
+  const topic = presData.topic || presentation.name;
+  const audience = presData.audience || 'general business audience';
+  const style = presData.style || 'professional';
+  const targetBrand = presData.brand || presData.brandName || '';
+
+  const slidesService = google.slides({ version: 'v1', auth: authClient });
+  const driveService = google.drive({ version: 'v3', auth: authClient });
+
+  // 1. Extract the template's Google Slides ID
+  const templateUrl = templateRef.google_slides_url;
+  const templateMatch = templateUrl.match(/\/presentation\/d\/([a-zA-Z0-9_-]+)/);
+  if (!templateMatch) throw new Error('Invalid template Google Slides URL');
+  const templateId = templateMatch[1];
+
+  console.log(`[Template] Using template: "${templateRef.name}" (${templateId})`);
+
+  // 2. Copy the template into the user's Google Drive
+  let presentationId, presentationUrl;
+
+  if (presentation.google_presentation_id) {
+    // REGENERATION: reuse existing file — delete all slides and copy from template
+    presentationId = presentation.google_presentation_id;
+    presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
+    console.log(`[Template] Regenerating into existing file: ${presentationId}`);
+
+    // Get existing slides
+    const existingPres = await slidesService.presentations.get({ presentationId });
+    const existingSlides = existingPres.data.slides || [];
+
+    // Read template to get its slides
+    const serviceAuth = getServiceAccountClient();
+    const templateService = google.slides({ version: 'v1', auth: serviceAuth });
+    const templatePres = await templateService.presentations.get({ presentationId: templateId });
+    const templateSlides = templatePres.data.slides || [];
+
+    // For regeneration with templates: we need to duplicate slides from the template
+    // Unfortunately Google Slides API can't copy slides between presentations via batchUpdate.
+    // So for regeneration, we'll create a fresh copy and update the DB record.
+    const copyResp = await driveService.files.copy({
+      fileId: templateId,
+      requestBody: { name: presData.topic || presentation.name }
+    });
+    // Delete the old file
+    try {
+      await driveService.files.delete({ fileId: presentationId });
+      console.log(`[Template] Deleted old presentation file: ${presentationId}`);
+    } catch (delErr) {
+      console.warn(`[Template] Could not delete old file (non-fatal): ${delErr.message}`);
+    }
+    presentationId = copyResp.data.id;
+    presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
+    console.log(`[Template] Created fresh copy for regeneration: ${presentationId}`);
+
+  } else {
+    // FIRST GENERATION: Copy the template
+    const copyResp = await driveService.files.copy({
+      fileId: templateId,
+      requestBody: { name: presData.topic || presentation.name }
+    });
+    presentationId = copyResp.data.id;
+    presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
+    console.log(`[Template] Copied template to: ${presentationId}`);
+  }
+
+  // 3. Read the copied presentation to understand its slide structure
+  const copiedPres = await slidesService.presentations.get({ presentationId });
+  const templateSlides = copiedPres.data.slides || [];
+
+  // Extract the text content from each slide in the template
+  const slideStructure = templateSlides.map((slide, idx) => {
+    const elements = [];
+    for (const el of (slide.pageElements || [])) {
+      if (el.shape?.text) {
+        const textContent = (el.shape.text.textElements || [])
+          .filter(te => te.textRun?.content)
+          .map(te => te.textRun.content)
+          .join('')
+          .trim();
+        const placeholder = el.shape.placeholder;
+        elements.push({
+          objectId: el.objectId,
+          type: placeholder?.type || 'TEXT_BOX',
+          text: textContent,
+          isTitle: placeholder?.type === 'TITLE' || placeholder?.type === 'CENTERED_TITLE',
+          isSubtitle: placeholder?.type === 'SUBTITLE',
+          isBody: placeholder?.type === 'BODY',
+        });
+      }
+    }
+    return {
+      slideNumber: idx + 1,
+      objectId: slide.objectId,
+      elements,
+      allText: elements.map(e => `[${e.type}]: ${e.text}`).join('\n'),
+    };
+  });
+
+  console.log(`[Template] Template has ${templateSlides.length} slides with structure extracted`);
+
+  // 4. Ask Gemini to generate NEW content matching the template structure
+  const slideStructureText = slideStructure.map(s =>
+    `Slide ${s.slideNumber}:\n${s.allText}`
+  ).join('\n\n');
+
+  const geminiPrompt = `You are rewriting a presentation for a NEW topic while keeping the EXACT SAME slide structure.
+
+ORIGINAL PRESENTATION STRUCTURE (${templateSlides.length} slides):
+${slideStructureText}
+
+NEW PRESENTATION REQUIREMENTS:
+- Topic: "${topic}"
+- Target audience: ${audience}
+- Style: ${style}
+${targetBrand ? `- Target brand: ${targetBrand} — tailor ALL content specifically for this brand` : ''}
+${presData.additionalContext ? `- Additional context: ${presData.additionalContext}` : ''}
+${presData.brandName ? `- Brand: ${presData.brandName}` : ''}
+${presData.brandTone ? `- Tone: ${presData.brandTone}` : ''}
+
+INSTRUCTIONS:
+- Generate NEW content for EACH slide, matching the EXACT same structure.
+- For each slide, provide replacement text for EVERY text element (titles, subtitles, body text).
+- Keep the same number of slides (${templateSlides.length}).
+- Keep a similar amount of text per element — if the original body has 5 bullet points, write 5 bullet points.
+- Use \\n for line breaks. Use • for bullet points.
+- Make content substantive, professional, and tailored to the new topic/brand.
+${targetBrand ? `- Frame everything in terms of value for ${targetBrand}. Use their name throughout.` : ''}
+
+Also for EACH slide, provide a backgroundImageDescription (1-2 sentences) describing a BRIGHT, COLORFUL, 16:9 landscape background image that matches the slide topic and brand.${presData.brandColorPrimary ? ` Use lighter tints of brand color ${presData.brandColorPrimary}.` : ''}
+
+Return a JSON array with this structure:
+[
+  {
+    "slideNumber": 1,
+    "replacements": [
+      { "objectId": "element_object_id", "newText": "New text content" },
+      ...
+    ],
+    "backgroundImageDescription": "Bright, vivid description of a 16:9 landscape background image..."
+  },
+  ...
+]
+
+CRITICAL: Use the EXACT objectId values from the original structure. Return ONLY valid JSON.`;
+
+  // Call Gemini
+  const geminiApiKey = process.env.GEMINI_API_KEY;
+  if (!geminiApiKey) throw new Error('GEMINI_API_KEY not configured');
+
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
+
+  // Include template slide thumbnails for visual context
+  let refImageParts = [];
+  let refThumbnails = [];
+  let annotations = templateRef.slide_annotations;
+  if (typeof annotations === 'string') {
+    try { annotations = JSON.parse(annotations); } catch(e) { annotations = null; }
+  }
+  if (annotations && Array.isArray(annotations)) {
+    for (const ann of annotations) {
+      if (ann.thumbnailBase64) {
+        refImageParts.push({ text: `[Template Slide ${ann.slideNumber}: "${ann.name}"]` });
+        refImageParts.push({ inlineData: { mimeType: 'image/png', data: ann.thumbnailBase64 } });
+        if (refThumbnails.length < 5) refThumbnails.push(ann.thumbnailBase64);
+      }
+    }
+  }
+
+  console.log(`[Template] Calling Gemini for content generation (${refImageParts.length / 2} reference images)...`);
+
+  const geminiResp = await fetch(geminiUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: geminiPrompt }, ...refImageParts] }],
+      generationConfig: { temperature: 0.7, maxOutputTokens: 16384 }
+    })
+  });
+
+  if (!geminiResp.ok) {
+    const errData = await geminiResp.json().catch(() => ({}));
+    throw new Error(errData.error?.message || 'Gemini API error');
+  }
+
+  const geminiData = await geminiResp.json();
+  const parts = geminiData.candidates?.[0]?.content?.parts || [];
+  let content = parts
+    .filter(p => p.text !== undefined && !p.thought)
+    .map(p => p.text)
+    .join('\n')
+    .trim();
+
+  if (!content) throw new Error('No content returned from AI');
+
+  // Parse JSON response
+  let slideReplacements;
+  try {
+    // Strip code fences if present
+    let cleaned = content;
+    if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```$/, '');
+    }
+    const jsonMatch = cleaned.match(/\[[\s\S]*\]/);
+    if (jsonMatch) cleaned = jsonMatch[0];
+    slideReplacements = JSON.parse(cleaned);
+  } catch (parseErr) {
+    console.error('[Template] Failed to parse Gemini response:', parseErr.message);
+    console.error('[Template] Raw response (first 500 chars):', content.substring(0, 500));
+    throw new Error('Failed to parse AI content for template');
+  }
+
+  console.log(`[Template] Got ${slideReplacements.length} slide replacements from Gemini`);
+
+  // 5. Replace text in each slide
+  const textReplaceRequests = [];
+  for (const slideRep of slideReplacements) {
+    for (const rep of (slideRep.replacements || [])) {
+      if (!rep.objectId || !rep.newText) continue;
+
+      // First delete all existing text, then insert new text
+      textReplaceRequests.push({
+        deleteText: {
+          objectId: rep.objectId,
+          textRange: { type: 'ALL' }
+        }
+      });
+      textReplaceRequests.push({
+        insertText: {
+          objectId: rep.objectId,
+          text: rep.newText.replace(/\\n/g, '\n'),
+          insertionIndex: 0
+        }
+      });
+    }
+  }
+
+  if (textReplaceRequests.length > 0) {
+    try {
+      await slidesService.presentations.batchUpdate({
+        presentationId,
+        requestBody: { requests: textReplaceRequests }
+      });
+      console.log(`[Template] Replaced text in ${textReplaceRequests.length / 2} elements`);
+    } catch (textErr) {
+      console.error('[Template] Text replacement failed:', textErr.message);
+      // Try one by one as fallback
+      let successCount = 0;
+      for (let i = 0; i < textReplaceRequests.length; i += 2) {
+        try {
+          await slidesService.presentations.batchUpdate({
+            presentationId,
+            requestBody: { requests: [textReplaceRequests[i], textReplaceRequests[i + 1]] }
+          });
+          successCount++;
+        } catch (e) {
+          console.warn(`[Template] Skipping element: ${e.message}`);
+        }
+      }
+      console.log(`[Template] Replaced text in ${successCount} elements (individual fallback)`);
+    }
+  }
+
+  // 6. Generate and replace background images
+  const r2Available = !!getR2Client();
+  if (r2Available) {
+    console.log(`[Template] Generating ${slideReplacements.length} background images...`);
+    for (let i = 0; i < slideReplacements.length && i < templateSlides.length; i++) {
+      const rep = slideReplacements[i];
+      if (!rep.backgroundImageDescription) continue;
+
+      try {
+        // Build a simple prompt from the description
+        const imgPrompt = `Generate a BRIGHT, COLORFUL, 16:9 widescreen landscape background image. ${rep.backgroundImageDescription}. MUST be landscape orientation (wider than tall). NO text, NO words, NO logos.${presData.brandColorPrimary ? ` Use lighter, vibrant tints of brand color ${presData.brandColorPrimary}.` : ''}`;
+
+        const { imageBase64, mimeType } = await generateSlideImage(imgPrompt, refThumbnails);
+        const ext = mimeType === 'image/jpeg' ? '.jpg' : '.png';
+        const randomId = crypto.randomBytes(8).toString('hex');
+        const key = `slides/${presentation.id}/${i}-${randomId}${ext}`;
+        const buffer = Buffer.from(imageBase64, 'base64');
+        const publicUrl = await uploadToR2(buffer, key, mimeType);
+
+        // Set as slide background
+        const pageSlide = templateSlides[i];
+        if (pageSlide) {
+          await slidesService.presentations.batchUpdate({
+            presentationId,
+            requestBody: {
+              requests: [{
+                updatePageProperties: {
+                  objectId: pageSlide.objectId,
+                  pageProperties: {
+                    pageBackgroundFill: {
+                      stretchedPictureFill: { contentUrl: publicUrl }
+                    }
+                  },
+                  fields: 'pageBackgroundFill.stretchedPictureFill.contentUrl'
+                }
+              }]
+            }
+          });
+          console.log(`[Template] ✓ Background image set for slide ${i + 1}`);
+        }
+      } catch (imgErr) {
+        console.warn(`[Template] Image generation failed for slide ${i + 1} (non-fatal): ${imgErr.message}`);
+      }
+
+      // Rate limiting delay
+      if (i < slideReplacements.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+    }
+  }
+
+  // 7. Update presentation title
+  try {
+    await driveService.files.update({
+      fileId: presentationId,
+      requestBody: { name: topic || presentation.name }
+    });
+  } catch (titleErr) {
+    console.warn('[Template] Failed to update title (non-fatal):', titleErr.message);
+  }
+
+  // 8. Save to database
+  presData.generatedFromTemplate = templateRef.name;
+  presData.templateId = templateRef.id;
+  await query(
+    'UPDATE presentations SET status = ?, google_presentation_id = ?, google_presentation_url = ?, data = ?, updated_at = NOW() WHERE id = ?',
+    ['completed', presentationId, presentationUrl, JSON.stringify(presData), presentation.id]
+  );
+
+  console.log(`[Template] ✓ Presentation ${presentation.id} generated from template: ${presentationUrl}`);
+  return true; // Signal success
+}
+
+
 // Background generation function (runs outside request lifecycle)
 async function generateInBackground(presentation, presData, authClient) {
   try {
@@ -1370,11 +1712,18 @@ async function generateInBackground(presentation, presData, authClient) {
     let refSection = '';
     let refImageParts = []; // Multimodal image parts for Gemini text generation
     let refThumbnails = []; // Raw base64 thumbnails for image style matching
+    let templateRef = null; // Best matching reference with a Google Slides URL
     try {
       const refs = await findMatchingReferences(presData.industryTag, presData.presentationTypeTag);
       if (refs.length > 0) {
         refSection = '\n\n--- REFERENCE PRESENTATIONS FOR STYLE AND STRUCTURE GUIDANCE ---\n';
         refs.forEach((ref, i) => {
+          // Track the first reference that has a Google Slides URL for template-copy approach
+          if (!templateRef && ref.google_slides_url) {
+            templateRef = ref;
+            console.log(`[Template] Found template candidate: "${ref.name}" (${ref.google_slides_url})`);
+          }
+
           refSection += `\n[Reference ${i+1}: "${ref.name}" (${ref.industry_tag || 'general'} / ${ref.presentation_type_tag || 'general'})]\n`;
 
           // If slide annotations exist, use structured per-slide info
@@ -1425,6 +1774,22 @@ You MUST replicate the reference design as closely as possible. The generated pr
       }
     } catch (err) {
       console.error('Context grounding lookup failed:', err.message);
+    }
+
+    // TEMPLATE-COPY APPROACH: If we found a reference with a Google Slides URL,
+    // copy its file and replace content — preserving all design elements.
+    if (templateRef) {
+      try {
+        console.log(`[Template] Using template-copy approach with: "${templateRef.name}"`);
+        const success = await generateFromTemplate(presentation, presData, authClient, templateRef);
+        if (success) {
+          console.log(`[Template] ✓ Template-copy approach succeeded for presentation ${presentation.id}`);
+          return; // Done — skip the create-from-scratch approach below
+        }
+      } catch (templateErr) {
+        console.error(`[Template] Template-copy approach failed, falling back to create-from-scratch:`, templateErr.message);
+        // Fall through to the original create-from-scratch approach
+      }
     }
 
     const targetBrand = presData.brand || presData.brandName || '';
