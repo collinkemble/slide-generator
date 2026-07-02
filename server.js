@@ -1310,7 +1310,7 @@ SLIDE CONTEXT:
   }
 
   prompt += `\n\nMANDATORY REQUIREMENTS:
-- 16:9 aspect ratio (landscape widescreen)
+- MUST be landscape orientation, wider than tall, 16:9 widescreen aspect ratio (e.g. 1920×1080 pixels). NEVER generate a portrait or square image.
 - BRIGHT, VIVID, SATURATED colors — NOT dark, NOT dim, NOT moody
 - NO text, NO words, NO letters, NO numbers, NO logos, NO watermarks
 - NO UI elements, NO icons with text, NO charts
@@ -1411,7 +1411,15 @@ async function generateInBackground(presentation, presData, authClient) {
           }
         });
         refSection += '\n--- END REFERENCE PRESENTATIONS ---\n';
-        refSection += 'Use the above reference presentations as style and structural inspiration. Study the attached slide images carefully to match their visual design, color scheme, layout patterns, and formatting style. Follow the same slide structure, naming patterns, and approach while creating original content for the topic below.\n';
+        refSection += `CRITICAL DESIGN EXTRACTION — Study the reference slide images above and identify:
+1. FONT SIZES: What pt size are titles? What pt size is body text? Use the SAME sizes.
+2. TEXT COLORS: What color are titles? Body text? Headers? Use the SAME colors.
+3. ALIGNMENT: Is text left-aligned, centered, or right? Match it per slide type.
+4. DESIGN ELEMENTS: Are there accent bars, colored stripes, decorative shapes? Where are they positioned? What color? Include them in your accentBar field.
+5. LAYOUT PATTERN: How many slides? What slide types? In what order? Follow the same structure.
+6. VISUAL STYLE: Dark backgrounds with light text? Or light backgrounds with dark text? Match the overall aesthetic.
+7. FONTS: What font style — geometric (Montserrat, Poppins), humanist (Open Sans, Lato), or modern (Inter, DM Sans)? Match it.
+You MUST replicate the reference design as closely as possible. The generated presentation should look like it came from the same design system.\n`;
       }
     } catch (err) {
       console.error('Context grounding lookup failed:', err.message);
@@ -1443,7 +1451,9 @@ Return a JSON object with this exact structure:
   "title": "Presentation Title",
   "design": {
     "fontFamily": "Montserrat",
-    "accentColor": "#FF6B35"
+    "accentColor": "#FF6B35",
+    "titleFontFamily": "Montserrat",
+    "bodyFontFamily": "Open Sans"
   },
   "slides": [
     {
@@ -1455,9 +1465,12 @@ Return a JSON object with this exact structure:
       "backgroundImageOpacity": 0.8,
       "titleColor": "#FFFFFF",
       "bodyColor": "#F0F0F0",
-      "titleFontSize": 40,
-      "bodyFontSize": 16,
-      "titleBold": true
+      "titleFontSize": 44,
+      "bodyFontSize": 18,
+      "titleBold": true,
+      "titleAlignment": "CENTER",
+      "bodyAlignment": "CENTER",
+      "accentBar": { "color": "#FF6B35", "position": "bottom", "height": 8 }
     },
     {
       "layout": "TITLE_AND_BODY",
@@ -1468,9 +1481,12 @@ Return a JSON object with this exact structure:
       "backgroundImageOpacity": 0.6,
       "titleColor": "#FFFFFF",
       "bodyColor": "#F0F0F0",
-      "titleFontSize": 28,
-      "bodyFontSize": 14,
-      "titleBold": true
+      "titleFontSize": 30,
+      "bodyFontSize": 16,
+      "titleBold": true,
+      "titleAlignment": "START",
+      "bodyAlignment": "START",
+      "accentBar": { "color": "#0176D3", "position": "left", "height": 4 }
     },
     {
       "layout": "SECTION_HEADER",
@@ -1481,9 +1497,12 @@ Return a JSON object with this exact structure:
       "backgroundImageOpacity": 0.7,
       "titleColor": "#FFFFFF",
       "bodyColor": "#F0F0F0",
-      "titleFontSize": 32,
-      "bodyFontSize": 16,
-      "titleBold": true
+      "titleFontSize": 36,
+      "bodyFontSize": 18,
+      "titleBold": true,
+      "titleAlignment": "CENTER",
+      "bodyAlignment": "CENTER",
+      "accentBar": { "color": "#FF6B35", "position": "bottom", "height": 6 }
     },
     {
       "layout": "TWO_COLUMNS",
@@ -1495,21 +1514,34 @@ Return a JSON object with this exact structure:
       "backgroundImageOpacity": 0.5,
       "titleColor": "#FFFFFF",
       "bodyColor": "#F0F0F0",
-      "titleFontSize": 28,
-      "bodyFontSize": 14,
-      "titleBold": true
+      "titleFontSize": 30,
+      "bodyFontSize": 16,
+      "titleBold": true,
+      "titleAlignment": "START",
+      "bodyAlignment": "START"
     }
   ]
 }
 
 DESIGN INSTRUCTIONS — REPLICATE THE REFERENCE PRESENTATION STYLE:
-- Study the reference presentation images EXTREMELY carefully. Your generated slides must replicate their visual style as closely as possible: exact color scheme, font sizes, text colors, layout patterns, text placement, slide structure, and formatting approach.
-- Look at the reference slides and identify: What font size are titles? What color are they? What font size is the body text? What color? Are backgrounds dark or light? What's the overall design language?
-- For each slide, you MUST specify backgroundColor (hex), titleColor (hex), bodyColor (hex), titleFontSize (number in pt), bodyFontSize (number in pt), and titleBold (boolean).
-- TEXT COLORS MUST BE WHITE (#FFFFFF) when the background image is dark or colorful. Use light gray (#E8E8E8 or #F0F0F0) for body text on dark backgrounds — NEVER use black or dark text on dark/colorful backgrounds.
-- If the reference presentation uses white text on branded/dark backgrounds, do the same. Most Salesforce presentations use white text on blue/dark backgrounds.
-- Set design.fontFamily to a clean sans-serif Google Font (e.g., Montserrat, Open Sans, Lato, Roboto, Poppins). If the reference uses a specific font style, match it.
-- Set design.accentColor to a complementary brand color for highlights.
+CRITICAL: Before generating ANYTHING, carefully analyze the reference presentation images and answer these questions:
+1. What are the EXACT title font sizes used? (typically 36-48pt for title slides, 28-36pt for content)
+2. What are the body text font sizes? (typically 14-20pt)
+3. What colors are the titles? Body text? Are they white on dark backgrounds or dark on light?
+4. Is there a consistent design pattern — accent bars, colored stripes, decorative shapes?
+5. How is text aligned — left, center, or right? Does it change between slide types?
+6. What is the overall design language — minimal, bold, corporate, playful?
+7. What font family/style does the reference use — serif, sans-serif, geometric, humanist?
+
+NOW APPLY WHAT YOU OBSERVED:
+- Match the EXACT font sizes, colors, and alignment from the reference. Do NOT use generic defaults.
+- For each slide, you MUST specify backgroundColor, titleColor, bodyColor, titleFontSize, bodyFontSize, titleBold, titleAlignment, and bodyAlignment.
+- titleAlignment and bodyAlignment must be one of: "START" (left-aligned), "CENTER", or "END" (right-aligned).
+- TEXT COLORS: Use white (#FFFFFF) text when background is dark/colorful. Use light gray (#F0F0F0) for body text. NEVER use black text on dark backgrounds.
+- If the reference has accent bars or colored stripes, add an "accentBar" object with: color (hex), position ("top", "bottom", "left", or "right"), and height (thickness in pt, 4-10).
+- Set design.fontFamily AND optionally design.titleFontFamily and design.bodyFontFamily if the reference uses different fonts for titles vs body.
+- Use LARGER font sizes than you think — titles should be 30-48pt, body should be 14-20pt. Small text looks unprofessional in presentations.
+- Set design.accentColor to the secondary brand color or a complementary highlight color.
 - All color values must be valid 6-digit hex codes starting with #.
 - FOLLOW THE SAME SLIDE ORDERING PATTERN as the reference: typically Title → Agenda/Overview → Content Sections → Key Insights → Call to Action → Thank You/Contact.
 
@@ -1921,8 +1953,9 @@ Return ONLY valid JSON, no markdown fences.`;
         }
       }
 
-      // ── Batch 3b: Apply TEXT styling (colors, fonts, sizes) — separate batch ──
+      // ── Batch 3b: Apply TEXT styling (colors, fonts, sizes, alignment) — separate batch ──
       const textStyleRequests = [];
+      const paragraphStyleRequests = [];
 
       for (let i = 0; i < generatedSlides.length; i++) {
         const slide = generatedSlides[i];
@@ -1946,9 +1979,12 @@ Return ONLY valid JSON, no markdown fences.`;
           const style = {};
           const fields = [];
 
-          // Font family
-          if (slideData.design?.fontFamily) {
-            style.fontFamily = slideData.design.fontFamily;
+          // Font family — use separate title/body fonts if specified
+          const titleFont = slideData.design?.titleFontFamily || slideData.design?.fontFamily;
+          const bodyFont = slideData.design?.bodyFontFamily || slideData.design?.fontFamily;
+          const font = (isTitle || isSubtitle) ? titleFont : bodyFont;
+          if (font) {
+            style.fontFamily = font;
             fields.push('fontFamily');
           }
 
@@ -1963,14 +1999,14 @@ Return ONLY valid JSON, no markdown fences.`;
           }
 
           // Font size
-          const fontSize = isTitle ? slide.titleFontSize : (isSubtitle ? (slide.bodyFontSize || 16) : slide.bodyFontSize);
+          const fontSize = isTitle ? slide.titleFontSize : (isSubtitle ? (slide.bodyFontSize || 18) : slide.bodyFontSize);
           if (fontSize) {
             style.fontSize = { magnitude: fontSize, unit: 'PT' };
             fields.push('fontSize');
           }
 
           // Bold for titles
-          if (isTitle && slide.titleBold) {
+          if ((isTitle || isSubtitle) && slide.titleBold) {
             style.bold = true;
             fields.push('bold');
           }
@@ -1982,6 +2018,29 @@ Return ONLY valid JSON, no markdown fences.`;
                 textRange: { type: 'ALL' },
                 style,
                 fields: fields.join(',')
+              }
+            });
+          }
+
+          // Paragraph alignment
+          const alignment = (isTitle || isSubtitle) ? slide.titleAlignment : slide.bodyAlignment;
+          if (alignment && ['START', 'CENTER', 'END'].includes(alignment)) {
+            const paraStyle = { alignment };
+            const paraFields = ['alignment'];
+
+            // Add line spacing for body text to improve readability
+            if (isBody) {
+              paraStyle.lineSpacing = 150; // 1.5x line spacing
+              paraStyle.spaceBelow = { magnitude: 8, unit: 'PT' };
+              paraFields.push('lineSpacing', 'spaceBelow');
+            }
+
+            paragraphStyleRequests.push({
+              updateParagraphStyle: {
+                objectId: element.objectId,
+                textRange: { type: 'ALL' },
+                style: paraStyle,
+                fields: paraFields.join(',')
               }
             });
           }
@@ -1998,6 +2057,19 @@ Return ONLY valid JSON, no markdown fences.`;
           console.log(`Applied ${textStyleRequests.length} text style updates to presentation ${presentation.id}`);
         } catch (textErr) {
           console.error('Text styling failed (non-fatal):', textErr.message);
+        }
+      }
+
+      // Execute paragraph styling batch separately
+      if (paragraphStyleRequests.length > 0) {
+        try {
+          await slidesService.presentations.batchUpdate({
+            presentationId,
+            requestBody: { requests: paragraphStyleRequests }
+          });
+          console.log(`Applied ${paragraphStyleRequests.length} paragraph style updates`);
+        } catch (paraErr) {
+          console.error('Paragraph styling failed (non-fatal):', paraErr.message);
         }
       }
 
@@ -2093,6 +2165,71 @@ Return ONLY valid JSON, no markdown fences.`;
           } catch (overlayErr) {
             console.warn('Overlay creation failed (non-fatal):', overlayErr.message);
           }
+        }
+      }
+
+      // ── Batch 3c: Add accent bars/stripes for designed look ──
+      const accentTimestamp = Date.now();
+      const accentRequests = [];
+      for (let i = 0; i < generatedSlides.length; i++) {
+        const slide = generatedSlides[i];
+        const pageSlide = createdPres.data.slides[i];
+        if (!pageSlide || !slide.accentBar) continue;
+
+        const bar = slide.accentBar;
+        const barColor = hexToRgb(bar.color || slideData.design?.accentColor || '#0176D3');
+        if (!barColor) continue;
+
+        const barId = `accent_${i}_${accentTimestamp}`;
+        const thickness = (bar.height || 6) * 12700; // pt to EMU
+        const slideWidth = 9144000; // 10 inches in EMU
+        const slideHeight = 6858000; // 7.5 inches in EMU
+
+        let size, transform;
+        if (bar.position === 'top') {
+          size = { width: { magnitude: slideWidth, unit: 'EMU' }, height: { magnitude: thickness, unit: 'EMU' } };
+          transform = { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, unit: 'EMU' };
+        } else if (bar.position === 'bottom') {
+          size = { width: { magnitude: slideWidth, unit: 'EMU' }, height: { magnitude: thickness, unit: 'EMU' } };
+          transform = { scaleX: 1, scaleY: 1, translateX: 0, translateY: slideHeight - thickness, unit: 'EMU' };
+        } else if (bar.position === 'left') {
+          size = { width: { magnitude: thickness, unit: 'EMU' }, height: { magnitude: slideHeight, unit: 'EMU' } };
+          transform = { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, unit: 'EMU' };
+        } else if (bar.position === 'right') {
+          size = { width: { magnitude: thickness, unit: 'EMU' }, height: { magnitude: slideHeight, unit: 'EMU' } };
+          transform = { scaleX: 1, scaleY: 1, translateX: slideWidth - thickness, translateY: 0, unit: 'EMU' };
+        } else {
+          continue;
+        }
+
+        accentRequests.push({
+          createShape: {
+            objectId: barId,
+            shapeType: 'RECTANGLE',
+            elementProperties: { pageObjectId: pageSlide.objectId, size, transform }
+          }
+        });
+        accentRequests.push({
+          updateShapeProperties: {
+            objectId: barId,
+            shapeProperties: {
+              shapeBackgroundFill: { solidFill: { color: { rgbColor: barColor }, alpha: 1.0 } },
+              outline: { propertyState: 'NOT_RENDERED' }
+            },
+            fields: 'shapeBackgroundFill.solidFill.color,shapeBackgroundFill.solidFill.alpha,outline.propertyState'
+          }
+        });
+      }
+
+      if (accentRequests.length > 0) {
+        try {
+          await slidesService.presentations.batchUpdate({
+            presentationId,
+            requestBody: { requests: accentRequests }
+          });
+          console.log(`Added accent bars to ${accentRequests.length / 2} slides`);
+        } catch (accentErr) {
+          console.warn('Accent bar creation failed (non-fatal):', accentErr.message);
         }
       }
 
