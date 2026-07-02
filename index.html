@@ -1733,7 +1733,7 @@ async function loadItems() {
     grid.innerHTML = items.map((item) => {
       const safeName = esc(item.name).replace(/'/g, "\\'");
       const status = statusColors[item.status] || statusColors.draft;
-      const googleLink = item.google_presentation_url ? `<a href="${esc(item.google_presentation_url)}" target="_blank" onclick="event.stopPropagation();" style="font-size: 12px; color: #0176D3; text-decoration: none; display: flex; align-items: center; gap: 4px; margin-top: 4px;">📎 Open in Google Slides ↗</a>` : '';
+      const googleLink = (item.status === 'completed' && item.google_presentation_url) ? `<a href="${esc(item.google_presentation_url)}" target="_blank" onclick="event.stopPropagation();" style="font-size: 12px; color: #0176D3; text-decoration: none; display: flex; align-items: center; gap: 4px; margin-top: 4px;">📎 Open in Google Slides ↗</a>` : '';
       return `
       <div class="item-card" style="background: white; border-radius: 8px; padding: 20px; cursor: pointer; transition: box-shadow 0.15s ease, transform 0.15s ease; position: relative; box-shadow: 0 1px 3px rgba(0,0,0,0.08); border: 1px solid #e5e7eb;"
         onclick="viewItem(${item.id})"
@@ -1791,12 +1791,13 @@ async function viewItem(id, skipPush) {
     // Populate header
     document.getElementById('detail-breadcrumb').textContent = presentation.name;
 
-    // Google Slides link
+    // Google Slides link — only show when presentation is completed and has a URL
     const googleLink = document.getElementById('detail-google-link');
-    if (presentation.google_presentation_url) {
+    if (presentation.status === 'completed' && presentation.google_presentation_url) {
       googleLink.href = presentation.google_presentation_url;
       googleLink.classList.remove('hidden');
     } else {
+      googleLink.href = '#';
       googleLink.classList.add('hidden');
     }
 

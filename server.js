@@ -1136,23 +1136,51 @@ Return ONLY valid JSON, no markdown fences.`;
     }
 
     const geminiData = await geminiResp.json();
-    let content = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    // Gemini 2.5 models may return multiple parts (thought + text).
+    // Extract all text parts (skip thought parts) and concatenate.
+    const parts = geminiData.candidates?.[0]?.content?.parts || [];
+    let content = parts
+      .filter(p => p.text !== undefined && !p.thought)
+      .map(p => p.text)
+      .join('\n');
+
     if (!content) {
+      console.error('No text content from Gemini. Parts:', JSON.stringify(parts.map(p => ({ thought: !!p.thought, hasText: p.text !== undefined, textLen: p.text?.length }))));
       await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
       return res.status(500).json({ error: 'No content returned from AI' });
     }
 
-    // Parse JSON from response
+    // Parse JSON from response — try multiple extraction strategies
     content = content.trim();
-    const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (jsonMatch) content = jsonMatch[1].trim();
 
     let slideData;
+    // Strategy 1: Try parsing directly
     try {
       slideData = JSON.parse(content);
-    } catch (e) {
-      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
-      return res.status(500).json({ error: 'Failed to parse AI response as JSON' });
+    } catch (e1) {
+      // Strategy 2: Extract from markdown code fences
+      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        try {
+          slideData = JSON.parse(jsonMatch[1].trim());
+        } catch (e2) { /* fall through */ }
+      }
+      // Strategy 3: Find first { to last } (greedy JSON object extraction)
+      if (!slideData) {
+        const firstBrace = content.indexOf('{');
+        const lastBrace = content.lastIndexOf('}');
+        if (firstBrace !== -1 && lastBrace > firstBrace) {
+          try {
+            slideData = JSON.parse(content.substring(firstBrace, lastBrace + 1));
+          } catch (e3) { /* fall through */ }
+        }
+      }
+      if (!slideData) {
+        console.error('Failed to parse Gemini response as JSON. Content preview:', content.substring(0, 500));
+        await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
+        return res.status(500).json({ error: 'Failed to parse AI response as JSON' });
+      }
     }
 
     // Create Google Slides presentation
