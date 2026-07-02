@@ -377,14 +377,18 @@ function createOAuth2Client() {
 }
 
 // Create a service account auth client for reading Google Slides (context grounding)
-function getServiceAccountClient() {
+function getServiceAccountClient(extraScopes = []) {
   const keyJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
   if (!keyJson) return null;
   try {
     const key = JSON.parse(keyJson);
+    const scopes = [
+      'https://www.googleapis.com/auth/presentations.readonly',
+      ...extraScopes
+    ];
     return new google.auth.GoogleAuth({
       credentials: key,
-      scopes: ['https://www.googleapis.com/auth/presentations.readonly']
+      scopes
     });
   } catch (e) {
     console.error('Failed to parse GOOGLE_SERVICE_ACCOUNT_KEY:', e.message);
@@ -1366,7 +1370,24 @@ async function generateFromTemplate(presentation, presData, authClient, template
   const style = presData.style || 'professional';
   const targetBrand = presData.brand || presData.brandName || '';
 
-  const slidesService = google.slides({ version: 'v1', auth: authClient });
+  // We need TWO auth clients:
+  // 1. Service account (with Drive + Slides scope) — to copy the template file (which the user can't access via drive.file scope)
+  // 2. User's OAuth client — to edit the copied file (which will be in the user's Drive after transfer)
+  const serviceAuth = getServiceAccountClient([
+    'https://www.googleapis.com/auth/drive',
+    'https://www.googleapis.com/auth/presentations'
+  ]);
+  if (!serviceAuth) throw new Error('Google service account not configured — required for template copy');
+
+  const saDriveService = google.drive({ version: 'v3', auth: serviceAuth });
+
+  // Look up the user's Google email so we can transfer ownership of the copied file
+  const tokenRows = await query('SELECT google_email FROM google_tokens WHERE user_id = ?', [presentation.user_id]);
+  const userEmail = tokenRows.length > 0 ? tokenRows[0].google_email : null;
+  if (!userEmail) throw new Error('Cannot determine user email for file sharing');
+  console.log(`[Template] User email for sharing: ${userEmail}`);
+
+  // User's OAuth Drive service (for deleting old files during regeneration — user owns those)
   const driveService = google.drive({ version: 'v3', auth: authClient });
 
   // 1. Extract the template's Google Slides ID
@@ -1377,56 +1398,75 @@ async function generateFromTemplate(presentation, presData, authClient, template
 
   console.log(`[Template] Using template: "${templateRef.name}" (${templateId})`);
 
-  // 2. Copy the template into the user's Google Drive
+  // 2. Copy the template using the SERVICE ACCOUNT (which has read access to the template)
+  //    Then transfer ownership to the user so their OAuth can edit it.
   let presentationId, presentationUrl;
 
-  if (presentation.google_presentation_id) {
-    // REGENERATION: reuse existing file — delete all slides and copy from template
-    presentationId = presentation.google_presentation_id;
-    presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
-    console.log(`[Template] Regenerating into existing file: ${presentationId}`);
-
-    // Get existing slides
-    const existingPres = await slidesService.presentations.get({ presentationId });
-    const existingSlides = existingPres.data.slides || [];
-
-    // Read template to get its slides
-    const serviceAuth = getServiceAccountClient();
-    const templateService = google.slides({ version: 'v1', auth: serviceAuth });
-    const templatePres = await templateService.presentations.get({ presentationId: templateId });
-    const templateSlides = templatePres.data.slides || [];
-
-    // For regeneration with templates: we need to duplicate slides from the template
-    // Unfortunately Google Slides API can't copy slides between presentations via batchUpdate.
-    // So for regeneration, we'll create a fresh copy and update the DB record.
-    const copyResp = await driveService.files.copy({
+  // Helper: copy template via service account, then share with user as writer
+  async function copyTemplateForUser(title) {
+    // Service account copies the file (it has drive scope + the template is shared with it)
+    const copyResp = await saDriveService.files.copy({
       fileId: templateId,
-      requestBody: { name: presData.topic || presentation.name }
+      requestBody: { name: title }
     });
-    // Delete the old file
+    const newId = copyResp.data.id;
+    console.log(`[Template] Service account copied template → ${newId}`);
+
+    // Try to transfer ownership to user; fall back to writer if org policy blocks transfer
     try {
-      await driveService.files.delete({ fileId: presentationId });
-      console.log(`[Template] Deleted old presentation file: ${presentationId}`);
+      await saDriveService.permissions.create({
+        fileId: newId,
+        transferOwnership: true,
+        requestBody: {
+          role: 'owner',
+          type: 'user',
+          emailAddress: userEmail
+        }
+      });
+      console.log(`[Template] Transferred ownership to ${userEmail}`);
+    } catch (ownerErr) {
+      console.warn(`[Template] Ownership transfer failed (${ownerErr.message}), granting writer access instead`);
+      await saDriveService.permissions.create({
+        fileId: newId,
+        requestBody: {
+          role: 'writer',
+          type: 'user',
+          emailAddress: userEmail
+        }
+      });
+      console.log(`[Template] Granted writer access to ${userEmail}`);
+    }
+
+    return newId;
+  }
+
+  if (presentation.google_presentation_id) {
+    // REGENERATION: delete the old file, create fresh copy from template
+    const oldId = presentation.google_presentation_id;
+    console.log(`[Template] Regenerating — will replace old file: ${oldId}`);
+
+    presentationId = await copyTemplateForUser(topic || presentation.name);
+    presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
+
+    // Delete the old file using user's auth (they own it)
+    try {
+      await driveService.files.delete({ fileId: oldId });
+      console.log(`[Template] Deleted old presentation file: ${oldId}`);
     } catch (delErr) {
       console.warn(`[Template] Could not delete old file (non-fatal): ${delErr.message}`);
     }
-    presentationId = copyResp.data.id;
-    presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
-    console.log(`[Template] Created fresh copy for regeneration: ${presentationId}`);
 
   } else {
     // FIRST GENERATION: Copy the template
-    const copyResp = await driveService.files.copy({
-      fileId: templateId,
-      requestBody: { name: presData.topic || presentation.name }
-    });
-    presentationId = copyResp.data.id;
+    presentationId = await copyTemplateForUser(topic || presentation.name);
     presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
     console.log(`[Template] Copied template to: ${presentationId}`);
   }
 
   // 3. Read the copied presentation to understand its slide structure
-  const copiedPres = await slidesService.presentations.get({ presentationId });
+  // Use service account Slides service since the service account owns/copied the file
+  const saSlidesService = google.slides({ version: 'v1', auth: serviceAuth });
+  const copiedPres = await saSlidesService.presentations.get({ presentationId });
   const templateSlides = copiedPres.data.slides || [];
 
   // Extract the text content from each slide in the template
@@ -1599,7 +1639,7 @@ CRITICAL: Use the EXACT objectId values from the original structure. Return ONLY
 
   if (textReplaceRequests.length > 0) {
     try {
-      await slidesService.presentations.batchUpdate({
+      await saSlidesService.presentations.batchUpdate({
         presentationId,
         requestBody: { requests: textReplaceRequests }
       });
@@ -1610,7 +1650,7 @@ CRITICAL: Use the EXACT objectId values from the original structure. Return ONLY
       let successCount = 0;
       for (let i = 0; i < textReplaceRequests.length; i += 2) {
         try {
-          await slidesService.presentations.batchUpdate({
+          await saSlidesService.presentations.batchUpdate({
             presentationId,
             requestBody: { requests: [textReplaceRequests[i], textReplaceRequests[i + 1]] }
           });
@@ -1645,7 +1685,7 @@ CRITICAL: Use the EXACT objectId values from the original structure. Return ONLY
         // Set as slide background
         const pageSlide = templateSlides[i];
         if (pageSlide) {
-          await slidesService.presentations.batchUpdate({
+          await saSlidesService.presentations.batchUpdate({
             presentationId,
             requestBody: {
               requests: [{
@@ -1674,9 +1714,9 @@ CRITICAL: Use the EXACT objectId values from the original structure. Return ONLY
     }
   }
 
-  // 7. Update presentation title
+  // 7. Update presentation title (use service account since it owns/has access to the file)
   try {
-    await driveService.files.update({
+    await saDriveService.files.update({
       fileId: presentationId,
       requestBody: { name: topic || presentation.name }
     });
@@ -1713,8 +1753,13 @@ async function generateInBackground(presentation, presData, authClient) {
     let refImageParts = []; // Multimodal image parts for Gemini text generation
     let refThumbnails = []; // Raw base64 thumbnails for image style matching
     let templateRef = null; // Best matching reference with a Google Slides URL
+    console.log(`[Generate] Starting for presentation ${presentation.id} — industryTag="${presData.industryTag || 'none'}", presentationTypeTag="${presData.presentationTypeTag || 'none'}"`);
     try {
       const refs = await findMatchingReferences(presData.industryTag, presData.presentationTypeTag);
+      console.log(`[Generate] Found ${refs.length} matching references`);
+      refs.forEach((ref, i) => {
+        console.log(`[Generate]   ref[${i}]: "${ref.name}" — google_slides_url=${ref.google_slides_url ? 'YES' : 'NO'} — industry=${ref.industry_tag} — type=${ref.presentation_type_tag}`);
+      });
       if (refs.length > 0) {
         refSection = '\n\n--- REFERENCE PRESENTATIONS FOR STYLE AND STRUCTURE GUIDANCE ---\n';
         refs.forEach((ref, i) => {
@@ -1778,6 +1823,7 @@ You MUST replicate the reference design as closely as possible. The generated pr
 
     // TEMPLATE-COPY APPROACH: If we found a reference with a Google Slides URL,
     // copy its file and replace content — preserving all design elements.
+    console.log(`[Generate] Template ref decision: ${templateRef ? `YES — "${templateRef.name}" (${templateRef.google_slides_url})` : 'NO — falling through to create-from-scratch'}`);
     if (templateRef) {
       try {
         console.log(`[Template] Using template-copy approach with: "${templateRef.name}"`);
