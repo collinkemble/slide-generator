@@ -1272,13 +1272,15 @@ function buildImagePrompt(slide, brandData, presentationTopic) {
   const brandIndustry = brandData.brandDescription || '';
   const brandWebsite = brandData.brandWebsiteUrl || '';
 
-  let prompt = `Generate a stunning, brand-specific background image for a presentation slide. This image must look like it was custom-designed for ${brandName || 'this brand'}'s official marketing materials.
+  let prompt = `Generate a BRIGHT, VIBRANT, COLORFUL background image for a presentation slide. This image must be visually striking with rich, saturated colors — NOT dark, NOT moody, NOT dim. It should look like a premium marketing asset custom-designed for ${brandName || 'this brand'}.
+
+CRITICAL STYLE REQUIREMENT: The image must be BRIGHT and LUMINOUS. Use vivid colors, good lighting, and energetic composition. White text will be placed over this image, so ensure there is enough color depth for contrast but keep the overall tone bright and professional — similar to images you'd see on Apple, Salesforce, or Nike marketing materials.
 
 SLIDE CONTEXT:
 - Slide title: "${slide.title || ''}"
 - Presentation topic: "${presentationTopic || ''}"
 - Slide type: ${slide.layout || 'content'}
-- Background color hint: ${slide.backgroundColor || '#032D60'}`;
+- Color palette hint: ${slide.backgroundColor || '#032D60'}`;
 
   if (brandName) {
     prompt += `\n\nBRAND IDENTITY — THIS IS CRITICAL:
@@ -1304,15 +1306,16 @@ SLIDE CONTEXT:
   } else if (slide.layout === 'SECTION_HEADER') {
     prompt += `\n\nThis is a SECTION DIVIDER slide — create a visually distinct transition image. Bold colors with some depth/dimension.`;
   } else if (slide.layout === 'TITLE_AND_BODY' || slide.layout === 'TWO_COLUMNS') {
-    prompt += `\n\nThis is a CONTENT slide with text — the image should be SUBTLE enough for text readability. Use softer tones, gentle gradients, or out-of-focus photography. Keep visual weight toward edges, leaving the center area clean for text.`;
+    prompt += `\n\nThis is a CONTENT slide with text — keep the image vibrant and colorful but with areas of solid/smooth color that work well behind white text. Use rich brand-colored gradients, smooth bokeh effects, or softly blurred photography. The image should still be visually interesting, not just a flat color.`;
   }
 
   prompt += `\n\nMANDATORY REQUIREMENTS:
 - 16:9 aspect ratio (landscape widescreen)
+- BRIGHT, VIVID, SATURATED colors — NOT dark, NOT dim, NOT moody
 - NO text, NO words, NO letters, NO numbers, NO logos, NO watermarks
 - NO UI elements, NO icons with text, NO charts
-- Professional quality — looks like it was shot/designed by a top creative agency
-- The image should reinforce the brand identity of ${brandName || 'the brand'} through color, mood, and subject matter`;
+- Professional quality — looks like premium marketing material from a Fortune 500 company
+- The image should reinforce the brand identity of ${brandName || 'the brand'} through vibrant color, energy, and subject matter`;
 
   return prompt;
 }
@@ -1449,9 +1452,9 @@ Return a JSON object with this exact structure:
       "subtitle": "Optional subtitle",
       "backgroundColor": "#032D60",
       "backgroundImageDescription": "A sweeping abstract gradient in deep navy and electric blue, with soft bokeh light particles suggesting innovation and forward momentum",
-      "backgroundImageOpacity": 0.3,
+      "backgroundImageOpacity": 0.8,
       "titleColor": "#FFFFFF",
-      "bodyColor": "#E0E0E0",
+      "bodyColor": "#F0F0F0",
       "titleFontSize": 40,
       "bodyFontSize": 16,
       "titleBold": true
@@ -1461,10 +1464,10 @@ Return a JSON object with this exact structure:
       "title": "Slide Title",
       "body": "Slide body content. Use \\n for line breaks. Use bullet points with • character.",
       "backgroundColor": "#F5F5F5",
-      "backgroundImageDescription": "A soft, light-toned lifestyle photograph showing a customer happily engaging with the brand's products in a modern retail environment, with warm natural lighting and shallow depth of field, using the brand's warm palette as color grading",
-      "backgroundImageOpacity": 0.2,
-      "titleColor": "#032D60",
-      "bodyColor": "#444444",
+      "backgroundImageDescription": "A vibrant, colorful lifestyle photograph showing a customer happily engaging with the brand's products in a modern retail environment, with warm natural lighting and rich brand colors throughout, professional marketing quality",
+      "backgroundImageOpacity": 0.6,
+      "titleColor": "#FFFFFF",
+      "bodyColor": "#F0F0F0",
       "titleFontSize": 28,
       "bodyFontSize": 14,
       "titleBold": true
@@ -1474,10 +1477,10 @@ Return a JSON object with this exact structure:
       "title": "Section Title",
       "subtitle": "Optional section subtitle",
       "backgroundColor": "#0176D3",
-      "backgroundImageDescription": "Abstract geometric shapes with smooth gradients transitioning from the brand's primary blue to teal, evoking data flow and digital transformation, with crystalline light refractions creating depth and movement",
-      "backgroundImageOpacity": 0.4,
+      "backgroundImageDescription": "Bold, vibrant abstract geometric shapes with bright gradients transitioning from the brand's primary blue to teal, evoking data flow and digital transformation, with crystalline light refractions creating depth and luminous energy",
+      "backgroundImageOpacity": 0.7,
       "titleColor": "#FFFFFF",
-      "bodyColor": "#E0E0E0",
+      "bodyColor": "#F0F0F0",
       "titleFontSize": 32,
       "bodyFontSize": 16,
       "titleBold": true
@@ -1488,10 +1491,10 @@ Return a JSON object with this exact structure:
       "leftColumn": "Left column content",
       "rightColumn": "Right column content",
       "backgroundColor": "#FAFAFA",
-      "backgroundImageDescription": "A subtle watercolor-wash texture blending the brand's primary and secondary colors in soft gradients, creating an elegant paper-like background with delicate organic patterns along the edges",
-      "backgroundImageOpacity": 0.15,
-      "titleColor": "#032D60",
-      "bodyColor": "#444444",
+      "backgroundImageDescription": "A vibrant watercolor-wash texture blending the brand's primary and secondary colors in rich gradients, creating an elegant colorful background with luminous organic patterns and professional depth",
+      "backgroundImageOpacity": 0.5,
+      "titleColor": "#FFFFFF",
+      "bodyColor": "#F0F0F0",
       "titleFontSize": 28,
       "bodyFontSize": 14,
       "titleBold": true
@@ -1499,12 +1502,12 @@ Return a JSON object with this exact structure:
   ]
 }
 
-DESIGN INSTRUCTIONS — MATCH THE REFERENCE PRESENTATION STYLE CLOSELY:
-- Study the reference presentation images carefully. Your generated slides should closely match their visual design: color scheme, layout patterns, text placement, slide structure, and formatting approach.
+DESIGN INSTRUCTIONS — REPLICATE THE REFERENCE PRESENTATION STYLE:
+- Study the reference presentation images EXTREMELY carefully. Your generated slides must replicate their visual style as closely as possible: exact color scheme, font sizes, text colors, layout patterns, text placement, slide structure, and formatting approach.
+- Look at the reference slides and identify: What font size are titles? What color are they? What font size is the body text? What color? Are backgrounds dark or light? What's the overall design language?
 - For each slide, you MUST specify backgroundColor (hex), titleColor (hex), bodyColor (hex), titleFontSize (number in pt), bodyFontSize (number in pt), and titleBold (boolean).
-- Use the brand primary color for TITLE and SECTION_HEADER backgrounds with white or light text.
-- Use white or light backgrounds for TITLE_AND_BODY and TWO_COLUMNS slides with dark text matching the brand.
-- Alternate accent colors on some slides for visual variety — use colors from the brand palette.
+- TEXT COLORS MUST BE WHITE (#FFFFFF) when the background image is dark or colorful. Use light gray (#E8E8E8 or #F0F0F0) for body text on dark backgrounds — NEVER use black or dark text on dark/colorful backgrounds.
+- If the reference presentation uses white text on branded/dark backgrounds, do the same. Most Salesforce presentations use white text on blue/dark backgrounds.
 - Set design.fontFamily to a clean sans-serif Google Font (e.g., Montserrat, Open Sans, Lato, Roboto, Poppins). If the reference uses a specific font style, match it.
 - Set design.accentColor to a complementary brand color for highlights.
 - All color values must be valid 6-digit hex codes starting with #.
@@ -1512,21 +1515,22 @@ DESIGN INSTRUCTIONS — MATCH THE REFERENCE PRESENTATION STYLE CLOSELY:
 
 BACKGROUND IMAGES — MANDATORY FOR EVERY SLIDE:
 - backgroundImageDescription is REQUIRED on EVERY slide. An AI image generator will create a custom background image from your description. Every single slide must have a unique, on-brand background image.
-- backgroundImageOpacity (0.0 to 1.0) controls how visible the image is behind the text overlay:
-  * TITLE slides: 0.5–0.8 (bold, visual impact)
-  * SECTION_HEADER slides: 0.4–0.6 (strong but readable)
-  * TITLE_AND_BODY slides with lots of text: 0.15–0.3 (subtle, text-friendly)
-  * TWO_COLUMNS slides: 0.1–0.25 (very subtle so columns are readable)
-- Write DETAILED, VIVID, BRAND-SPECIFIC descriptions. Each description must:
+- backgroundImageOpacity (0.0 to 1.0) controls how visible the background image is. HIGHER = MORE VISIBLE image:
+  * TITLE slides: 0.7–0.9 (bold, visual impact — the image is the star)
+  * SECTION_HEADER slides: 0.6–0.8 (strong visual with text overlay)
+  * TITLE_AND_BODY slides: 0.5–0.7 (vibrant background, text has enough contrast)
+  * TWO_COLUMNS slides: 0.4–0.6 (visible but not overwhelming)
+- IMPORTANT: Keep opacity HIGH (0.5+) so images are vibrant and visible. The system adds a subtle text-readability overlay automatically — you don't need to compensate with low opacity values.
+- Write DETAILED, VIVID, BRAND-SPECIFIC descriptions for BRIGHT, VIBRANT images. Each description must:
   * Reference the SPECIFIC BRAND by name and industry (e.g. "a Nike-inspired athletic scene" not "a sports scene")
   * Incorporate brand colors explicitly (e.g. "using ${presData.brandColorPrimary || 'the brand primary color'} as the dominant tone")
   * Match the slide's topic — if the slide is about "customer loyalty", show imagery related to that specific business concept
-  * Describe visual style: photography style, gradients, textures, patterns, abstract vs realistic
+  * Describe BRIGHT, COLORFUL, VIBRANT visuals — NOT dark or moody. Think professional marketing materials with rich color.
   * Set mood/atmosphere matching the brand's personality
   * Be at least 2–3 sentences long with rich visual detail
 - DO NOT describe text, logos, UI elements, or words — the image will be a pure background
-- When using background images, ensure text colors have STRONG contrast (white/light text on dark images, dark text on light images)
-- The backgroundColor serves as a fallback color
+- Since images will be vibrant and colorful, ALWAYS use white (#FFFFFF) or very light text colors for titles and body text. This ensures maximum readability.
+- The backgroundColor serves as a fallback color and tints the subtle readability overlay.
 - IMPORTANT: Vary the imagery across slides — each slide should have a DIFFERENT visual concept, not just color variations of the same abstract pattern. Use a mix of: product-related photography scenes, industry-specific imagery, abstract brand-colored compositions, and atmospheric textures.
 
 Available layouts: TITLE (first slide only), TITLE_AND_BODY (main content), SECTION_HEADER (section dividers), TWO_COLUMNS (side-by-side).
@@ -1625,10 +1629,12 @@ Return ONLY valid JSON, no markdown fences.`;
         }
       }
       if (!slide.titleColor) {
-        slide.titleColor = isLightColor(slide.backgroundColor) ? '#1B2559' : '#FFFFFF';
+        // Default to white text since all slides have vibrant background images
+        slide.titleColor = '#FFFFFF';
       }
       if (!slide.bodyColor) {
-        slide.bodyColor = isLightColor(slide.backgroundColor) ? '#444444' : '#E0E0E0';
+        // Default to light text for readability on colorful backgrounds
+        slide.bodyColor = '#F0F0F0';
       }
       if (!slide.titleFontSize) slide.titleFontSize = slide.layout === 'TITLE' ? 40 : 28;
       if (!slide.bodyFontSize) slide.bodyFontSize = 14;
@@ -1657,7 +1663,7 @@ Return ONLY valid JSON, no markdown fences.`;
           } else {
             slide.backgroundImageDescription = `Subtle, elegant background texture incorporating ${brandColor} tones, with soft gradients and gentle visual interest that supports text readability for content about "${slide.title || topic}"`;
           }
-          slide.backgroundImageOpacity = slide.layout === 'TITLE' ? 0.6 : (slide.layout === 'SECTION_HEADER' ? 0.4 : 0.2);
+          slide.backgroundImageOpacity = slide.layout === 'TITLE' ? 0.85 : (slide.layout === 'SECTION_HEADER' ? 0.7 : 0.6);
           console.log(`[Image Gen] Auto-generated description for slide ${i + 1} (${slide.layout})`);
         } else {
           console.log(`[Image Gen] Slide ${i + 1} has backgroundImageDescription: "${slide.backgroundImageDescription.substring(0, 80)}..."`);
@@ -1934,9 +1940,12 @@ Return ONLY valid JSON, no markdown fences.`;
         for (const bgSlide of slidesWithBgImages) {
           const overlayId = `overlay_${bgSlide.slideIndex}`;
           const overlayColor = hexToRgb(bgSlide.backgroundColor) || { red: 0, green: 0, blue: 0 };
-          // Invert opacity: backgroundImageOpacity is how visible the IMAGE is,
-          // so overlay alpha = 1 - backgroundImageOpacity
-          const overlayAlpha = Math.max(0, Math.min(1, 1 - (bgSlide.opacity || 0.3)));
+          // Light overlay for text readability — keep it subtle so images stay vibrant
+          // backgroundImageOpacity is how visible the IMAGE is (higher = more visible image, less overlay)
+          // For title slides with high image opacity (0.6+), use very light overlay (0.15)
+          // For content slides with lower image opacity, use moderate overlay (0.25-0.35)
+          const imageOpacity = bgSlide.opacity || 0.5;
+          const overlayAlpha = imageOpacity >= 0.5 ? 0.15 : Math.min(0.35, 0.5 - imageOpacity);
 
           overlayRequests.push({
             createShape: {
