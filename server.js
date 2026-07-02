@@ -1272,9 +1272,11 @@ function buildImagePrompt(slide, brandData, presentationTopic) {
   const brandIndustry = brandData.brandDescription || '';
   const brandWebsite = brandData.brandWebsiteUrl || '';
 
-  let prompt = `Generate a BRIGHT, VIBRANT, COLORFUL background image for a presentation slide. This image must be visually striking with rich, saturated colors — NOT dark, NOT moody, NOT dim. It should look like a premium marketing asset custom-designed for ${brandName || 'this brand'}.
+  let prompt = `Generate a COLORFUL, VIVID background image for a presentation slide. The image must use RICH, SATURATED brand colors prominently — even if the brand uses dark colors like navy or dark green, make the image vibrant by using lighter/brighter tints and gradients of those colors, mixed with whites, light blues, or warm highlights to keep the overall image feeling BRIGHT and energetic.
 
-CRITICAL STYLE REQUIREMENT: The image must be BRIGHT and LUMINOUS. Use vivid colors, good lighting, and energetic composition. White text will be placed over this image, so ensure there is enough color depth for contrast but keep the overall tone bright and professional — similar to images you'd see on Apple, Salesforce, or Nike marketing materials.
+CRITICAL: Even if the brand colors are dark (e.g. navy #032D60, dark green, maroon), create the image with LIGHTER TINTS of those colors — use the 40-60% lighter versions mixed with highlights. The image should feel like a bright, professional marketing hero image, not a dark or moody background.
+
+ASPECT RATIO: The image MUST be exactly 16:9 landscape widescreen. It should be WIDE (much wider than tall), like a TV screen or cinema display. Width should be approximately 1.78× the height. NEVER generate a square or portrait image.
 
 SLIDE CONTEXT:
 - Slide title: "${slide.title || ''}"
@@ -1292,7 +1294,7 @@ SLIDE CONTEXT:
     prompt += `\nThe image MUST feel like it belongs on ${brandName}'s website or in their annual report. Think about what ${brandName} represents — their products, customers, values — and create imagery that reflects THEIR world, not generic corporate stock.`;
   }
   if (brandColors.length > 0) {
-    prompt += `\n- Brand color palette: ${brandColors.join(', ')} — these colors MUST be prominently featured in the image as the dominant color scheme. Do NOT use random colors.`;
+    prompt += `\n- Brand color palette: ${brandColors.join(', ')} — use these colors as the color scheme, but use BRIGHTER TINTS (lighter versions) of dark colors. For example, if the brand color is #032D60 (dark navy), use lighter blues like #4A90D9, #6DB3F8, etc. alongside the original. The image should feel COLORFUL and bright, not dark.`;
   }
 
   // Use slide's own description if AI provided one
@@ -1546,24 +1548,29 @@ NOW APPLY WHAT YOU OBSERVED:
 - FOLLOW THE SAME SLIDE ORDERING PATTERN as the reference: typically Title → Agenda/Overview → Content Sections → Key Insights → Call to Action → Thank You/Contact.
 
 BACKGROUND IMAGES — MANDATORY FOR EVERY SLIDE:
-- backgroundImageDescription is REQUIRED on EVERY slide. An AI image generator will create a custom background image from your description. Every single slide must have a unique, on-brand background image.
-- backgroundImageOpacity (0.0 to 1.0) controls how visible the background image is. HIGHER = MORE VISIBLE image:
-  * TITLE slides: 0.7–0.9 (bold, visual impact — the image is the star)
-  * SECTION_HEADER slides: 0.6–0.8 (strong visual with text overlay)
-  * TITLE_AND_BODY slides: 0.5–0.7 (vibrant background, text has enough contrast)
-  * TWO_COLUMNS slides: 0.4–0.6 (visible but not overwhelming)
-- IMPORTANT: Keep opacity HIGH (0.5+) so images are vibrant and visible. The system adds a subtle text-readability overlay automatically — you don't need to compensate with low opacity values.
-- Write DETAILED, VIVID, BRAND-SPECIFIC descriptions for BRIGHT, VIBRANT images. Each description must:
-  * Reference the SPECIFIC BRAND by name and industry (e.g. "a Nike-inspired athletic scene" not "a sports scene")
-  * Incorporate brand colors explicitly (e.g. "using ${presData.brandColorPrimary || 'the brand primary color'} as the dominant tone")
-  * Match the slide's topic — if the slide is about "customer loyalty", show imagery related to that specific business concept
-  * Describe BRIGHT, COLORFUL, VIBRANT visuals — NOT dark or moody. Think professional marketing materials with rich color.
-  * Set mood/atmosphere matching the brand's personality
-  * Be at least 2–3 sentences long with rich visual detail
-- DO NOT describe text, logos, UI elements, or words — the image will be a pure background
-- Since images will be vibrant and colorful, ALWAYS use white (#FFFFFF) or very light text colors for titles and body text. This ensures maximum readability.
-- The backgroundColor serves as a fallback color and tints the subtle readability overlay.
-- IMPORTANT: Vary the imagery across slides — each slide should have a DIFFERENT visual concept, not just color variations of the same abstract pattern. Use a mix of: product-related photography scenes, industry-specific imagery, abstract brand-colored compositions, and atmospheric textures.
+- backgroundImageDescription is REQUIRED on EVERY slide. An AI image generator will create a custom background image from your description.
+- backgroundImageOpacity: always set to 0.85 (the system handles readability with content boxes).
+- IMPORTANT: The system will automatically add COLORED CONTENT BOXES on top of the background image for text readability:
+  * TITLE/SECTION_HEADER slides get a centered rounded box (75% width) in the brand primary color
+  * CONTENT slides get a bottom-anchored box (full width, 55% height) with a thin accent strip above it
+  * These boxes make text readable without darkening the background image
+  * This means the background image should be BRIGHT and COLORFUL — the content box handles contrast
+- Write DETAILED, VIVID, BRAND-SPECIFIC descriptions for BRIGHT, COLORFUL images. Each description must:
+  * Reference the SPECIFIC BRAND by name and industry
+  * Use BRIGHT TINTS of the brand colors (not dark/moody). Even if brand uses navy/dark green, describe lighter vivid versions.
+  * Match the slide's topic visually
+  * Be at least 2–3 sentences with rich detail
+- DO NOT describe text, logos, UI elements, or words — just the visual background
+- TEXT COLORS: ALWAYS use white (#FFFFFF) for titles and light (#F0F0F0) for body — text sits on colored content boxes.
+- backgroundColor is used for the content box color. Use the brand's PRIMARY dark color for this.
+- IMPORTANT: Vary imagery across slides — different visual concepts per slide.
+
+DESIGN LANGUAGE — MAKE IT LOOK PROFESSIONAL:
+- The system creates content boxes, accent strips, and accent bars automatically based on your data.
+- backgroundColor determines the content box color — use the brand primary color so boxes look branded.
+- accentBar adds a colored stripe along one edge — use the brand's secondary/accent color.
+- Together these create a DESIGNED look: vibrant bg image + branded content box + accent strip + accent bar.
+- Think about how premium Salesforce or Apple presentations look — background imagery visible at top, branded content area at bottom.
 
 Available layouts: TITLE (first slide only), TITLE_AND_BODY (main content), SECTION_HEADER (section dividers), TWO_COLUMNS (side-by-side).
 Make the content substantive, detailed, and professional. Each body should have 3-5 meaningful bullet points.
@@ -1689,13 +1696,13 @@ Return ONLY valid JSON, no markdown fences.`;
           const brandName = presData.brand || presData.brandName || '';
           const brandColor = presData.brandColorPrimary || '#032D60';
           if (slide.layout === 'TITLE') {
-            slide.backgroundImageDescription = `A dramatic, cinematic wide shot related to ${brandName || topic} with rich ${brandColor} tones, professional lighting, and a sense of innovation and possibility`;
+            slide.backgroundImageDescription = `A bright, vibrant, wide-angle landscape image related to ${brandName || topic} with vivid, lighter tints of ${brandColor}, bright lighting, high energy, and a sense of innovation. Use rich saturated colors — not dark or moody. 16:9 widescreen.`;
           } else if (slide.layout === 'SECTION_HEADER') {
-            slide.backgroundImageDescription = `Bold abstract composition using ${brandColor} gradients with geometric depth, suggesting a new chapter or transition in the ${brandName || topic} story`;
+            slide.backgroundImageDescription = `Colorful abstract composition using bright, lighter gradients inspired by ${brandColor} with geometric shapes and luminous energy, suggesting a new chapter in the ${brandName || topic} story. Wide landscape 16:9.`;
           } else {
-            slide.backgroundImageDescription = `Subtle, elegant background texture incorporating ${brandColor} tones, with soft gradients and gentle visual interest that supports text readability for content about "${slide.title || topic}"`;
+            slide.backgroundImageDescription = `Bright, colorful professional background using vivid tints of ${brandColor}, with smooth gradients, bokeh effects, and energetic visual interest related to "${slide.title || topic}". Must be 16:9 landscape, NOT dark.`;
           }
-          slide.backgroundImageOpacity = slide.layout === 'TITLE' ? 0.85 : (slide.layout === 'SECTION_HEADER' ? 0.7 : 0.6);
+          slide.backgroundImageOpacity = 0.85;
           console.log(`[Image Gen] Auto-generated description for slide ${i + 1} (${slide.layout})`);
         } else {
           console.log(`[Image Gen] Slide ${i + 1} has backgroundImageDescription: "${slide.backgroundImageDescription.substring(0, 80)}..."`);
@@ -2073,98 +2080,145 @@ Return ONLY valid JSON, no markdown fences.`;
         }
       }
 
-      // ── Batch 3b: Add semi-transparent overlays on slides with background images ──
-      const overlayTimestamp = Date.now();
-      if (slidesWithBgImages.length > 0) {
-        const overlayRequests = [];
-        for (const bgSlide of slidesWithBgImages) {
-          const overlayId = `overlay_${bgSlide.slideIndex}_${overlayTimestamp}`;
-          bgSlide.overlayId = overlayId; // Store for reorder step
-          const overlayColor = hexToRgb(bgSlide.backgroundColor) || { red: 0, green: 0, blue: 0 };
-          // Light overlay for text readability — keep it subtle so images stay vibrant
-          // backgroundImageOpacity is how visible the IMAGE is (higher = more visible image, less overlay)
-          // For title slides with high image opacity (0.6+), use very light overlay (0.15)
-          // For content slides with lower image opacity, use moderate overlay (0.25-0.35)
-          const imageOpacity = bgSlide.opacity || 0.5;
-          const overlayAlpha = imageOpacity >= 0.5 ? 0.15 : Math.min(0.35, 0.5 - imageOpacity);
+      // ── Batch 3b: Add content boxes behind text areas for designed look ──
+      // Instead of darkening the entire slide, add semi-transparent colored boxes
+      // behind the text areas — like the grounding asset uses.
+      const boxTimestamp = Date.now();
+      const contentBoxRequests = [];
+      const contentBoxIds = []; // Track IDs for z-ordering
 
-          overlayRequests.push({
+      // Refresh slide data after backgrounds were applied
+      const presAfterBg = await slidesService.presentations.get({ presentationId });
+
+      for (let i = 0; i < generatedSlides.length; i++) {
+        const slide = generatedSlides[i];
+        const pageSlide = presAfterBg.data.slides[i];
+        if (!pageSlide) continue;
+        if (!slide.backgroundImageUrl) continue; // Only add boxes on slides with bg images
+
+        const brandPrimary = hexToRgb(presData.brandColorPrimary || slide.backgroundColor || '#032D60') || { red: 0.012, green: 0.176, blue: 0.376 };
+        const slideWidth = 9144000; // 10 inches EMU
+        const slideHeight = 6858000; // 7.5 inches EMU
+
+        if (slide.layout === 'TITLE' || slide.layout === 'SECTION_HEADER') {
+          // TITLE/SECTION: Large centered content box (70% width, 50% height, centered)
+          const boxId = `cbox_${i}_${boxTimestamp}`;
+          const boxWidth = Math.round(slideWidth * 0.75);
+          const boxHeight = Math.round(slideHeight * 0.45);
+          const boxX = Math.round((slideWidth - boxWidth) / 2);
+          const boxY = Math.round((slideHeight - boxHeight) / 2);
+
+          contentBoxRequests.push({
             createShape: {
-              objectId: overlayId,
-              shapeType: 'RECTANGLE',
+              objectId: boxId, shapeType: 'ROUND_RECTANGLE',
               elementProperties: {
-                pageObjectId: bgSlide.pageObjectId,
-                size: {
-                  width: { magnitude: 9144000, unit: 'EMU' },   // Full slide width (10 inches)
-                  height: { magnitude: 6858000, unit: 'EMU' }    // Full slide height (7.5 inches)
-                },
-                transform: {
-                  scaleX: 1, scaleY: 1,
-                  translateX: 0, translateY: 0,
-                  unit: 'EMU'
-                }
+                pageObjectId: pageSlide.objectId,
+                size: { width: { magnitude: boxWidth, unit: 'EMU' }, height: { magnitude: boxHeight, unit: 'EMU' } },
+                transform: { scaleX: 1, scaleY: 1, translateX: boxX, translateY: boxY, unit: 'EMU' }
               }
             }
           });
-
-          // Style the overlay: fill with brand color + alpha, no outline
-          overlayRequests.push({
+          contentBoxRequests.push({
             updateShapeProperties: {
-              objectId: overlayId,
+              objectId: boxId,
               shapeProperties: {
-                shapeBackgroundFill: {
-                  solidFill: {
-                    color: { rgbColor: overlayColor },
-                    alpha: overlayAlpha
-                  }
-                },
+                shapeBackgroundFill: { solidFill: { color: { rgbColor: brandPrimary }, alpha: 0.75 } },
+                outline: { propertyState: 'NOT_RENDERED' }
+              },
+              fields: 'shapeBackgroundFill.solidFill.color,shapeBackgroundFill.solidFill.alpha,outline.propertyState'
+            }
+          });
+          contentBoxIds.push({ id: boxId, slideIndex: i });
+
+        } else {
+          // CONTENT slides: Bottom content box (full width, 55% height at bottom)
+          const boxId = `cbox_${i}_${boxTimestamp}`;
+          const boxHeight = Math.round(slideHeight * 0.55);
+          const boxY = slideHeight - boxHeight;
+
+          contentBoxRequests.push({
+            createShape: {
+              objectId: boxId, shapeType: 'RECTANGLE',
+              elementProperties: {
+                pageObjectId: pageSlide.objectId,
+                size: { width: { magnitude: slideWidth, unit: 'EMU' }, height: { magnitude: boxHeight, unit: 'EMU' } },
+                transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: boxY, unit: 'EMU' }
+              }
+            }
+          });
+          contentBoxRequests.push({
+            updateShapeProperties: {
+              objectId: boxId,
+              shapeProperties: {
+                shapeBackgroundFill: { solidFill: { color: { rgbColor: brandPrimary }, alpha: 0.80 } },
+                outline: { propertyState: 'NOT_RENDERED' }
+              },
+              fields: 'shapeBackgroundFill.solidFill.color,shapeBackgroundFill.solidFill.alpha,outline.propertyState'
+            }
+          });
+          contentBoxIds.push({ id: boxId, slideIndex: i });
+
+          // Also add a thin accent strip at the top edge of the content box
+          const stripId = `cstrip_${i}_${boxTimestamp}`;
+          const accentColor = hexToRgb(slideData.design?.accentColor || presData.brandColorSecondary || '#FF6B35') || { red: 1, green: 0.42, blue: 0.21 };
+          const stripHeight = 50800; // ~4pt
+
+          contentBoxRequests.push({
+            createShape: {
+              objectId: stripId, shapeType: 'RECTANGLE',
+              elementProperties: {
+                pageObjectId: pageSlide.objectId,
+                size: { width: { magnitude: slideWidth, unit: 'EMU' }, height: { magnitude: stripHeight, unit: 'EMU' } },
+                transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: boxY - stripHeight, unit: 'EMU' }
+              }
+            }
+          });
+          contentBoxRequests.push({
+            updateShapeProperties: {
+              objectId: stripId,
+              shapeProperties: {
+                shapeBackgroundFill: { solidFill: { color: { rgbColor: accentColor }, alpha: 1.0 } },
                 outline: { propertyState: 'NOT_RENDERED' }
               },
               fields: 'shapeBackgroundFill.solidFill.color,shapeBackgroundFill.solidFill.alpha,outline.propertyState'
             }
           });
         }
+      }
 
-        if (overlayRequests.length > 0) {
-          try {
+      if (contentBoxRequests.length > 0) {
+        try {
+          await slidesService.presentations.batchUpdate({
+            presentationId,
+            requestBody: { requests: contentBoxRequests }
+          });
+          console.log(`Added ${contentBoxIds.length} content boxes for presentation ${presentation.id}`);
+
+          // Re-order: move content boxes behind text placeholders but in front of background
+          const presForReorder = await slidesService.presentations.get({ presentationId });
+          const reorderRequests = [];
+          for (const box of contentBoxIds) {
+            const pageSlide = presForReorder.data.slides[box.slideIndex];
+            if (!pageSlide) continue;
+            const boxEl = pageSlide.pageElements?.find(el => el.objectId === box.id);
+            if (boxEl) {
+              reorderRequests.push({
+                updatePageElementsZOrder: {
+                  pageElementObjectIds: [box.id],
+                  operation: 'SEND_BACKWARD'
+                }
+              });
+            }
+          }
+          if (reorderRequests.length > 0) {
             await slidesService.presentations.batchUpdate({
               presentationId,
-              requestBody: { requests: overlayRequests }
+              requestBody: { requests: reorderRequests }
             });
-            console.log(`Added ${slidesWithBgImages.length} background overlays for presentation ${presentation.id}`);
-
-            // Now re-order: move overlays behind text elements
-            // We need to get the updated presentation to find z-order
-            const updatedPres = await slidesService.presentations.get({ presentationId });
-            const reorderRequests = [];
-            for (const bgSlide of slidesWithBgImages) {
-              const overlayId = bgSlide.overlayId;
-              if (!overlayId) continue;
-              const pageSlide = updatedPres.data.slides[bgSlide.slideIndex];
-              if (!pageSlide) continue;
-
-              // Find the overlay element and move it to the back (index 0 = behind everything)
-              const overlayElement = pageSlide.pageElements?.find(el => el.objectId === overlayId);
-              if (overlayElement) {
-                reorderRequests.push({
-                  updatePageElementsZOrder: {
-                    pageElementObjectIds: [overlayId],
-                    operation: 'SEND_BACKWARD'
-                  }
-                });
-              }
-            }
-
-            if (reorderRequests.length > 0) {
-              await slidesService.presentations.batchUpdate({
-                presentationId,
-                requestBody: { requests: reorderRequests }
-              });
-              console.log(`Reordered overlays behind text for ${reorderRequests.length} slides`);
-            }
-          } catch (overlayErr) {
-            console.warn('Overlay creation failed (non-fatal):', overlayErr.message);
+            console.log(`Reordered ${reorderRequests.length} content boxes behind text`);
           }
+        } catch (boxErr) {
+          console.warn('Content box creation failed (non-fatal):', boxErr.message);
         }
       }
 
