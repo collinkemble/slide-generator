@@ -7,6 +7,8 @@ const crypto = require('crypto');
 const { query } = require('./src/db/connection');
 const { migrate } = require('./src/db/migrate');
 const { google } = require('googleapis');
+const { GoogleGenAI } = require('@google/genai');
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -1016,6 +1018,135 @@ app.post('/api/presentations/:id/generate', async (req, res) => {
   }
 });
 
+// POST /api/presentations/:id/slides/:slideIndex/regenerate-image
+// Regenerate a single slide's background image with optional custom prompt
+app.post('/api/presentations/:id/slides/:slideIndex/regenerate-image', async (req, res) => {
+  try {
+    const { email, prompt } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const slideIndex = parseInt(req.params.slideIndex, 10);
+    if (isNaN(slideIndex) || slideIndex < 0) {
+      return res.status(400).json({ error: 'Invalid slide index' });
+    }
+
+    // Verify R2 is configured
+    if (!getR2Client()) {
+      return res.status(503).json({ error: 'Image storage not configured' });
+    }
+
+    const user = await getOrCreateUser(email);
+
+    // Get presentation
+    const rows = await query('SELECT * FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    const presentation = rows[0];
+    let presData = presentation.data;
+    if (typeof presData === 'string') {
+      try { presData = JSON.parse(presData); } catch(e) { presData = {}; }
+    }
+    presData = presData || {};
+
+    const slideData = presData.generatedSlides;
+    if (!slideData?.slides?.[slideIndex]) {
+      return res.status(400).json({ error: 'Slide not found at that index' });
+    }
+
+    const slide = slideData.slides[slideIndex];
+    const topic = presData.topic || presentation.name;
+
+    // If user provided a custom prompt, use it as the backgroundImageDescription
+    if (prompt && prompt.trim()) {
+      slide.backgroundImageDescription = prompt.trim();
+    }
+
+    // Generate new image
+    const publicUrl = await generateAndUploadSlideImage(slide, presData, topic, presentation.id, slideIndex);
+    if (!publicUrl) {
+      return res.status(500).json({ error: 'Image generation failed. Try rephrasing your prompt.' });
+    }
+
+    // Update the Google Slide background if presentation has a Google Slides ID
+    let newThumbnailBase64 = null;
+    if (presentation.google_presentation_id) {
+      try {
+        const authClient = await getAuthenticatedClient(user.id);
+        if (authClient) {
+          const slidesService = google.slides({ version: 'v1', auth: authClient });
+          const presentationId = presentation.google_presentation_id;
+
+          // Get the page object ID for this slide
+          const pres = await slidesService.presentations.get({ presentationId });
+          const pageSlide = pres.data.slides?.[slideIndex];
+          if (pageSlide) {
+            // Update background with new image
+            await slidesService.presentations.batchUpdate({
+              presentationId,
+              requestBody: {
+                requests: [{
+                  updatePageProperties: {
+                    objectId: pageSlide.objectId,
+                    pageProperties: {
+                      pageBackgroundFill: {
+                        stretchedPictureFill: { contentUrl: publicUrl }
+                      }
+                    },
+                    fields: 'pageBackgroundFill.stretchedPictureFill.contentUrl'
+                  }
+                }]
+              }
+            });
+            console.log(`Updated Google Slide ${slideIndex + 1} background for presentation ${presentation.id}`);
+
+            // Wait for rendering, then fetch updated thumbnail
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            try {
+              const thumbRes = await slidesService.presentations.pages.getThumbnail({
+                presentationId,
+                pageObjectId: pageSlide.objectId,
+                'thumbnailProperties.mimeType': 'PNG',
+                'thumbnailProperties.thumbnailSize': 'SMALL'
+              });
+              const thumbUrl = thumbRes.data.contentUrl;
+              if (thumbUrl) {
+                const imgResp = await fetch(thumbUrl);
+                if (imgResp.ok) {
+                  const imgBuffer = Buffer.from(await imgResp.arrayBuffer());
+                  newThumbnailBase64 = imgBuffer.toString('base64');
+                  slide.thumbnailBase64 = newThumbnailBase64;
+                }
+              }
+            } catch (thumbErr) {
+              console.warn('Thumbnail refresh failed (non-fatal):', thumbErr.message);
+            }
+          }
+        }
+      } catch (slidesErr) {
+        console.warn('Google Slides update failed (non-fatal):', slidesErr.message);
+      }
+    }
+
+    // Save updated data to DB
+    presData.generatedSlides = slideData;
+    await query(
+      'UPDATE presentations SET data = ?, updated_at = NOW() WHERE id = ?',
+      [JSON.stringify(presData), presentation.id]
+    );
+
+    res.json({
+      success: true,
+      backgroundImageUrl: publicUrl,
+      thumbnailBase64: newThumbnailBase64,
+      aiImagePrompt: slide.aiImagePrompt || '',
+    });
+
+  } catch (err) {
+    console.error('Regenerate image error:', err);
+    res.status(500).json({ error: 'Failed to regenerate image: ' + err.message });
+  }
+});
+
 // ─── Helpers for Google Slides color conversion ───
 function hexToRgb(hex) {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -1032,6 +1163,158 @@ function isLightColor(hex) {
   if (!rgb) return true;
   const luminance = (0.299 * rgb.red + 0.587 * rgb.green + 0.114 * rgb.blue);
   return luminance > 0.5;
+}
+
+// ═══════════════════════════════════════════════
+// R2 Storage + AI Image Generation
+// ═══════════════════════════════════════════════
+
+let r2Client = null;
+let genAIClient = null;
+
+function getR2Client() {
+  if (r2Client) return r2Client;
+  const { R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY } = process.env;
+  if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) return null;
+  r2Client = new S3Client({
+    region: 'auto',
+    endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    credentials: { accessKeyId: R2_ACCESS_KEY_ID, secretAccessKey: R2_SECRET_ACCESS_KEY },
+  });
+  return r2Client;
+}
+
+function getGenAIClient() {
+  if (genAIClient) return genAIClient;
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY not configured');
+  genAIClient = new GoogleGenAI({ apiKey });
+  return genAIClient;
+}
+
+/**
+ * Upload a buffer to Cloudflare R2 and return a public URL.
+ */
+async function uploadToR2(buffer, key, contentType) {
+  const client = getR2Client();
+  if (!client) throw new Error('R2 storage not configured');
+  const bucket = process.env.R2_BUCKET || 'slide-generator';
+  await client.send(new PutObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    Body: buffer,
+    ContentType: contentType,
+    CacheControl: 'public, max-age=31536000, immutable',
+  }));
+  const publicUrl = process.env.R2_PUBLIC_URL || '';
+  return `${publicUrl.replace(/\/$/, '')}/${key}`;
+}
+
+/**
+ * Generate an image using Gemini's image generation model.
+ * Returns { imageBase64, mimeType }.
+ */
+async function generateSlideImage(prompt) {
+  const ai = getGenAIClient();
+  const imageModel = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.0-flash-preview-image-generation';
+
+  const response = await ai.models.generateContent({
+    model: imageModel,
+    contents: [{ text: prompt }],
+    config: {
+      responseModalities: ['TEXT', 'IMAGE'],
+    },
+  });
+
+  // Extract image from response parts
+  for (const part of response.candidates?.[0]?.content?.parts || []) {
+    if (part.inlineData) {
+      return {
+        imageBase64: part.inlineData.data,
+        mimeType: part.inlineData.mimeType || 'image/png',
+      };
+    }
+  }
+
+  throw new Error('AI did not return an image. Try rephrasing the prompt.');
+}
+
+/**
+ * Build a descriptive image prompt from slide data + brand info.
+ */
+function buildImagePrompt(slide, brandData, presentationTopic) {
+  const brandName = brandData.brand || brandData.brandName || '';
+  const brandColors = [];
+  if (brandData.brandColorPrimary) brandColors.push(brandData.brandColorPrimary);
+  if (brandData.brandColorSecondary) brandColors.push(brandData.brandColorSecondary);
+  const brandStyle = brandData.brandVisualStyle || '';
+  const brandIndustry = brandData.brandDescription || '';
+
+  let prompt = `Create a professional, high-quality background image for a presentation slide. The image should be suitable as a BACKGROUND — no text, no logos, no UI elements. It must be visually striking but not overpowering, allowing text to be overlaid on top.
+
+SLIDE CONTEXT:
+- Slide title: "${slide.title || ''}"
+- Presentation topic: "${presentationTopic || ''}"
+- Slide type: ${slide.layout || 'content'}`;
+
+  if (brandName) {
+    prompt += `\n\nBRAND CONTEXT:
+- Brand: ${brandName}
+- Industry/Description: ${brandIndustry}`;
+  }
+  if (brandColors.length > 0) {
+    prompt += `\n- Brand colors: ${brandColors.join(', ')} — subtly incorporate these colors into the image`;
+  }
+  if (brandStyle) {
+    prompt += `\n- Visual style: ${brandStyle}`;
+  }
+
+  // Use slide's own description if AI provided one
+  if (slide.backgroundImageDescription) {
+    prompt += `\n\nIMAGE DESCRIPTION FROM CREATIVE DIRECTOR:\n${slide.backgroundImageDescription}`;
+  }
+
+  prompt += `\n\nSTYLE REQUIREMENTS:
+- Professional, modern, corporate-quality
+- Subtle gradients, abstract shapes, or thematic imagery
+- Good contrast areas for white or dark text overlay
+- 16:9 aspect ratio (landscape orientation)
+- NO text, NO words, NO logos, NO icons with text
+- NO stock-photo-watermarks`;
+
+  return prompt;
+}
+
+/**
+ * Generate an image for a slide and upload to R2.
+ * Returns the public URL or null on failure.
+ */
+async function generateAndUploadSlideImage(slide, brandData, presentationTopic, presentationId, slideIndex) {
+  try {
+    const prompt = buildImagePrompt(slide, brandData, presentationTopic);
+    console.log(`Generating image for slide ${slideIndex + 1} of presentation ${presentationId}...`);
+
+    const { imageBase64, mimeType } = await generateSlideImage(prompt);
+    const ext = mimeType === 'image/jpeg' ? '.jpg' : '.png';
+    const randomId = crypto.randomBytes(8).toString('hex');
+    const key = `slides/${presentationId}/${slideIndex}-${randomId}${ext}`;
+
+    const buffer = Buffer.from(imageBase64, 'base64');
+    const publicUrl = await uploadToR2(buffer, key, mimeType);
+
+    console.log(`✓ Image generated and uploaded for slide ${slideIndex + 1}: ${publicUrl}`);
+
+    // Store the prompt for regeneration
+    slide.aiImagePrompt = prompt;
+    slide.backgroundImageUrl = publicUrl;
+
+    return publicUrl;
+  } catch (err) {
+    console.warn(`Image generation failed for slide ${slideIndex + 1} (non-fatal):`, err.message);
+    // Remove the backgroundImageUrl/description so it falls back to solid color
+    delete slide.backgroundImageUrl;
+    return null;
+  }
 }
 
 // Background generation function (runs outside request lifecycle)
@@ -1127,7 +1410,7 @@ Return a JSON object with this exact structure:
       "title": "Slide Title",
       "subtitle": "Optional subtitle",
       "backgroundColor": "#032D60",
-      "backgroundImageUrl": "https://images.unsplash.com/photo-XXXX?w=1920&q=80&auto=format",
+      "backgroundImageDescription": "A sweeping abstract gradient in deep navy and electric blue, with soft bokeh light particles suggesting innovation and forward momentum",
       "backgroundImageOpacity": 0.3,
       "titleColor": "#FFFFFF",
       "bodyColor": "#E0E0E0",
@@ -1151,7 +1434,7 @@ Return a JSON object with this exact structure:
       "title": "Section Title",
       "subtitle": "Optional section subtitle",
       "backgroundColor": "#0176D3",
-      "backgroundImageUrl": "https://images.unsplash.com/photo-YYYY?w=1920&q=80&auto=format",
+      "backgroundImageDescription": "Abstract geometric shapes with smooth gradients transitioning from blue to teal, evoking data flow and digital transformation",
       "backgroundImageOpacity": 0.25,
       "titleColor": "#FFFFFF",
       "bodyColor": "#E0E0E0",
@@ -1184,15 +1467,16 @@ DESIGN INSTRUCTIONS:
 - All color values must be valid 6-digit hex codes starting with #.
 
 BACKGROUND IMAGES — CRITICAL:
-- backgroundImageUrl is OPTIONAL per slide. Use it on TITLE slides, SECTION_HEADER slides, and key content slides to create a rich, highly designed presentation. Not every slide needs one.
-- backgroundImageOpacity (0.0 to 1.0) controls how visible the image is. Use 0.2–0.4 for slides with text on top so text remains readable. Use higher values (0.6–0.9) for visual-only or minimal-text slides.
-- You MUST use real, publicly accessible image URLs. Best sources:
-  1. Unsplash Source (free, high quality): https://images.unsplash.com/photo-{ID}?w=1920&q=80&auto=format — use REAL Unsplash photo IDs relevant to the slide topic (e.g. technology, business, teamwork, data, nature).
-  2. If a brand website URL is provided below, you may reference images you know exist on that domain.
-- DO NOT invent fake URLs. Only use Unsplash URLs with real photo IDs that you know exist.
-- When using background images with text overlay, ensure text colors have strong contrast (white text on dark overlays, dark text on light overlays).
-- The backgroundColor serves as a fallback if the image fails to load, so choose a complementary color.
-${presData.brandWebsiteUrl ? `\nBRAND WEBSITE: ${presData.brandWebsiteUrl}\nYou may reference publicly accessible images from this website if relevant. Otherwise use Unsplash images that match the brand's industry and visual style.\n` : ''}
+- backgroundImageDescription is OPTIONAL per slide. When provided, an AI will GENERATE a custom background image from your description. Use it on TITLE slides, SECTION_HEADER slides, and key content slides to create a rich, highly designed presentation. Not every slide needs a background image — use them strategically for visual impact.
+- backgroundImageOpacity (0.0 to 1.0) controls how visible the image is behind the text overlay. Use 0.2–0.4 for slides with lots of text. Use higher values (0.6–0.9) for visual-impact slides with minimal text.
+- Write DETAILED, VIVID descriptions of the ideal background image. Describe:
+  * Visual elements (gradients, abstract shapes, photography style, patterns)
+  * Color palette (incorporate brand colors naturally)
+  * Mood/atmosphere (professional, energetic, serene, innovative)
+  * Subject matter relevant to the slide topic
+- DO NOT describe text, logos, or UI elements — the image will be a pure background.
+- When using background images, ensure text colors have strong contrast (white text on dark images, dark text on light images).
+- The backgroundColor serves as a fallback color, so choose a complementary color.
 
 Available layouts: TITLE (first slide only), TITLE_AND_BODY (main content), SECTION_HEADER (section dividers), TWO_COLUMNS (side-by-side).
 Make the content substantive, detailed, and professional. Each body should have 3-5 meaningful bullet points.
@@ -1301,6 +1585,36 @@ Return ONLY valid JSON, no markdown fences.`;
     }
 
     console.log(`Design defaults applied for presentation ${presentation.id}`);
+
+    // ── AI Image Generation: generate background images for slides that need them ──
+    const r2Available = !!getR2Client();
+    if (r2Available) {
+      const slidesNeedingImages = generatedSlides.filter(
+        s => s.backgroundImageDescription || s.backgroundImageUrl
+      );
+      if (slidesNeedingImages.length > 0) {
+        console.log(`Generating ${slidesNeedingImages.length} AI background images for presentation ${presentation.id}...`);
+        for (let i = 0; i < generatedSlides.length; i++) {
+          const slide = generatedSlides[i];
+          if (slide.backgroundImageDescription || slide.backgroundImageUrl) {
+            // Generate image sequentially to respect rate limits
+            await generateAndUploadSlideImage(slide, presData, topic, presentation.id, i);
+            // Small delay between images to avoid rate limiting
+            if (i < generatedSlides.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+          }
+        }
+        console.log(`Image generation complete for presentation ${presentation.id}`);
+      }
+    } else {
+      console.log('R2 storage not configured — skipping AI image generation');
+      // Clear any backgroundImageUrl/description since we can't generate
+      for (const slide of generatedSlides) {
+        delete slide.backgroundImageUrl;
+        delete slide.backgroundImageDescription;
+      }
+    }
 
     // Create Google Slides presentation
     try {

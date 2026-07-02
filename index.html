@@ -1849,12 +1849,15 @@ async function viewItem(id, skipPush) {
     if (data.generatedSlides && data.generatedSlides.slides) {
       preview.classList.remove('hidden');
       previewBody.innerHTML = data.generatedSlides.slides.map((slide, i) => `
-        <div style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 8px;">
+        <div id="slide-card-${i}" style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 8px;">
           <div style="display: flex; gap: 12px; align-items: flex-start;">
-            ${slide.thumbnailBase64
-              ? `<div style="flex-shrink: 0;"><img src="data:image/png;base64,${slide.thumbnailBase64}" alt="Slide ${i+1}" style="width: 180px; height: auto; border-radius: 6px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.1);"></div>`
-              : `<div style="flex-shrink: 0; width: 180px; height: 101px; background: #f3f4f6; border-radius: 6px; border: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: center;"><span style="font-size: 11px; color: #9ca3af;">No preview</span></div>`
-            }
+            <div style="flex-shrink: 0;">
+              ${slide.thumbnailBase64
+                ? `<img id="slide-thumb-${i}" src="data:image/png;base64,${slide.thumbnailBase64}" alt="Slide ${i+1}" style="width: 180px; height: auto; border-radius: 6px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">`
+                : `<div id="slide-thumb-${i}" style="width: 180px; height: 101px; background: #f3f4f6; border-radius: 6px; border: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: center;"><span style="font-size: 11px; color: #9ca3af;">No preview</span></div>`
+              }
+              <button onclick="toggleImagePrompt(${i})" style="margin-top: 6px; width: 180px; padding: 4px 8px; font-size: 11px; font-weight: 600; color: #0176D3; background: #EBF5FF; border: 1px solid #B4D6F5; border-radius: 5px; cursor: pointer; transition: all 0.15s;" onmouseover="this.style.background='#D1E9FF'" onmouseout="this.style.background='#EBF5FF'">🎨 Regenerate Image</button>
+            </div>
             <div style="flex: 1; min-width: 0;">
               <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
                 <span style="font-size: 11px; font-weight: 700; color: #6B7280; min-width: 20px;">${i+1}</span>
@@ -1863,6 +1866,17 @@ async function viewItem(id, skipPush) {
               </div>
               ${slide.body ? `<p style="font-size: 12px; color: #666; white-space: pre-line; line-height: 1.5;">${esc(slide.body).substring(0, 200)}${slide.body.length > 200 ? '...' : ''}</p>` : ''}
               ${slide.subtitle ? `<p style="font-size: 12px; color: #888; font-style: italic;">${esc(slide.subtitle)}</p>` : ''}
+              ${slide.backgroundImageUrl ? `<p style="font-size: 11px; color: #0176D3; margin-top: 4px;">✓ Has AI background image</p>` : ''}
+            </div>
+          </div>
+          <!-- Regenerate Image Prompt (hidden by default) -->
+          <div id="regen-prompt-${i}" style="display: none; margin-top: 10px; padding: 10px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px;">
+            <label style="font-size: 11px; font-weight: 600; color: #475569; display: block; margin-bottom: 4px;">Describe the background image you want:</label>
+            <textarea id="regen-text-${i}" rows="2" placeholder="e.g. Abstract blue gradient with subtle geometric shapes suggesting technology and innovation..." style="width: 100%; padding: 8px; font-size: 12px; border: 1px solid #CBD5E1; border-radius: 5px; resize: vertical; font-family: inherit;">${esc(slide.backgroundImageDescription || slide.aiImagePrompt || '')}</textarea>
+            <div style="display: flex; gap: 8px; margin-top: 6px; align-items: center;">
+              <button onclick="regenerateSlideImage(${i})" id="regen-btn-${i}" style="padding: 5px 14px; font-size: 12px; font-weight: 600; color: white; background: #0176D3; border: none; border-radius: 5px; cursor: pointer;">Generate</button>
+              <button onclick="toggleImagePrompt(${i})" style="padding: 5px 14px; font-size: 12px; color: #64748B; background: none; border: 1px solid #CBD5E1; border-radius: 5px; cursor: pointer;">Cancel</button>
+              <span id="regen-status-${i}" style="font-size: 11px; color: #64748B;"></span>
             </div>
           </div>
         </div>
@@ -2189,6 +2203,78 @@ async function createPresentation() {
   } finally {
     btn.disabled = false;
     btn.textContent = 'Create & Generate';
+  }
+}
+
+// ═══════════════════════════════════════════════
+// APP: Slide Image Regeneration
+// ═══════════════════════════════════════════════
+
+function toggleImagePrompt(slideIndex) {
+  const el = document.getElementById(`regen-prompt-${slideIndex}`);
+  if (!el) return;
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+async function regenerateSlideImage(slideIndex) {
+  if (!currentPresentationId) return;
+  const email = document.getElementById('user-email').textContent;
+  const promptText = document.getElementById(`regen-text-${slideIndex}`)?.value?.trim() || '';
+  const btn = document.getElementById(`regen-btn-${slideIndex}`);
+  const statusEl = document.getElementById(`regen-status-${slideIndex}`);
+
+  btn.disabled = true;
+  btn.textContent = 'Generating...';
+  statusEl.textContent = '⏳ Generating image (10-20s)...';
+  statusEl.style.color = '#0176D3';
+
+  try {
+    const resp = await fetch(`/api/presentations/${currentPresentationId}/slides/${slideIndex}/regenerate-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, prompt: promptText })
+    });
+
+    const result = await resp.json();
+    if (!resp.ok) throw new Error(result.error || 'Failed to regenerate image');
+
+    // Update thumbnail in-place
+    const thumbEl = document.getElementById(`slide-thumb-${slideIndex}`);
+    if (thumbEl && result.thumbnailBase64) {
+      if (thumbEl.tagName === 'IMG') {
+        thumbEl.src = `data:image/png;base64,${result.thumbnailBase64}`;
+      } else {
+        // Replace placeholder div with actual image
+        const img = document.createElement('img');
+        img.id = `slide-thumb-${slideIndex}`;
+        img.src = `data:image/png;base64,${result.thumbnailBase64}`;
+        img.alt = `Slide ${slideIndex + 1}`;
+        img.style.cssText = 'width: 180px; height: auto; border-radius: 6px; border: 1px solid #e5e7eb; box-shadow: 0 1px 3px rgba(0,0,0,0.1);';
+        thumbEl.replaceWith(img);
+      }
+    }
+
+    // Update local data
+    if (currentPresentationData?.generatedSlides?.slides?.[slideIndex]) {
+      const slide = currentPresentationData.generatedSlides.slides[slideIndex];
+      slide.backgroundImageUrl = result.backgroundImageUrl;
+      slide.aiImagePrompt = result.aiImagePrompt;
+      if (result.thumbnailBase64) slide.thumbnailBase64 = result.thumbnailBase64;
+    }
+
+    statusEl.textContent = '✓ Image generated successfully!';
+    statusEl.style.color = '#16A34A';
+
+    // Hide prompt after success
+    setTimeout(() => { toggleImagePrompt(slideIndex); }, 2000);
+
+  } catch (err) {
+    console.error('Regenerate image error:', err);
+    statusEl.textContent = '✗ ' + err.message;
+    statusEl.style.color = '#DC2626';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Generate';
   }
 }
 
