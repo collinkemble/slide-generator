@@ -1587,20 +1587,21 @@ Return ONLY valid JSON, no markdown fences.`;
     console.log(`Design defaults applied for presentation ${presentation.id}`);
 
     // ── AI Image Generation: generate background images for slides that need them ──
+    const aiSlides = slideData.slides || [];
     const r2Available = !!getR2Client();
     if (r2Available) {
-      const slidesNeedingImages = generatedSlides.filter(
+      const slidesNeedingImages = aiSlides.filter(
         s => s.backgroundImageDescription || s.backgroundImageUrl
       );
       if (slidesNeedingImages.length > 0) {
         console.log(`Generating ${slidesNeedingImages.length} AI background images for presentation ${presentation.id}...`);
-        for (let i = 0; i < generatedSlides.length; i++) {
-          const slide = generatedSlides[i];
+        for (let i = 0; i < aiSlides.length; i++) {
+          const slide = aiSlides[i];
           if (slide.backgroundImageDescription || slide.backgroundImageUrl) {
             // Generate image sequentially to respect rate limits
             await generateAndUploadSlideImage(slide, presData, topic, presentation.id, i);
             // Small delay between images to avoid rate limiting
-            if (i < generatedSlides.length - 1) {
+            if (i < aiSlides.length - 1) {
               await new Promise(resolve => setTimeout(resolve, 1000));
             }
           }
@@ -1610,7 +1611,7 @@ Return ONLY valid JSON, no markdown fences.`;
     } else {
       console.log('R2 storage not configured — skipping AI image generation');
       // Clear any backgroundImageUrl/description since we can't generate
-      for (const slide of generatedSlides) {
+      for (const slide of aiSlides) {
         delete slide.backgroundImageUrl;
         delete slide.backgroundImageDescription;
       }
@@ -2033,13 +2034,21 @@ Return ONLY valid JSON, no markdown fences.`;
 
     } catch (err) {
       console.error('Google Slides creation error:', err);
-      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
+      const errMsg = err.message || 'Google Slides creation failed';
+      const isAuthError = errMsg.toLowerCase().includes('invalid_grant') || errMsg.toLowerCase().includes('token') || errMsg.toLowerCase().includes('unauthorized') || errMsg.toLowerCase().includes('auth') || (err.code === 401);
+      presData.lastError = errMsg;
+      presData.lastErrorType = isAuthError ? 'auth' : 'google';
+      await query('UPDATE presentations SET status = ?, data = ? WHERE id = ?', ['failed', JSON.stringify(presData), presentation.id]);
     }
 
   } catch (err) {
     console.error('Background generate error:', err);
     try {
-      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
+      const errMsg = err.message || 'Generation failed';
+      const errorData = typeof presentation.data === 'string' ? JSON.parse(presentation.data || '{}') : (presentation.data || {});
+      errorData.lastError = errMsg;
+      errorData.lastErrorType = errMsg.toLowerCase().includes('auth') || errMsg.toLowerCase().includes('token') || errMsg.toLowerCase().includes('invalid_grant') ? 'auth' : 'generation';
+      await query('UPDATE presentations SET status = ?, data = ? WHERE id = ?', ['failed', JSON.stringify(errorData), presentation.id]);
     } catch (dbErr) {
       console.error('Failed to mark presentation as failed:', dbErr);
     }
