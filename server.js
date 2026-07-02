@@ -1214,15 +1214,29 @@ async function uploadToR2(buffer, key, contentType) {
  * Generate an image using Gemini's image generation model.
  * Returns { imageBase64, mimeType }.
  */
-async function generateSlideImage(prompt) {
+async function generateSlideImage(prompt, refImages) {
   const ai = getGenAIClient();
   const imageModel = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image';
 
-  console.log(`[Image Gen] Using model: ${imageModel}, prompt length: ${prompt.length} chars`);
+  // Build content parts: optional reference images first, then prompt
+  const contentParts = [];
+
+  // Add reference images for style matching (up to 3 to avoid token limits)
+  if (refImages && refImages.length > 0) {
+    contentParts.push({ text: 'Here are reference slides from an existing presentation. Match their visual style, color scheme, and design aesthetic when generating the new background image:' });
+    for (const ref of refImages.slice(0, 3)) {
+      contentParts.push({ inlineData: { mimeType: 'image/png', data: ref } });
+    }
+    contentParts.push({ text: 'Now generate a NEW background image in a similar visual style for this slide:' });
+  }
+
+  contentParts.push({ text: prompt });
+
+  console.log(`[Image Gen] Using model: ${imageModel}, prompt length: ${prompt.length} chars, ref images: ${refImages?.length || 0}`);
 
   const response = await ai.models.generateContent({
     model: imageModel,
-    contents: prompt,
+    contents: contentParts,
     config: {
       responseModalities: ['TEXT', 'IMAGE'],
     },
@@ -1254,53 +1268,66 @@ function buildImagePrompt(slide, brandData, presentationTopic) {
   if (brandData.brandColorPrimary) brandColors.push(brandData.brandColorPrimary);
   if (brandData.brandColorSecondary) brandColors.push(brandData.brandColorSecondary);
   const brandStyle = brandData.brandVisualStyle || '';
+  const brandTone = brandData.brandTone || '';
   const brandIndustry = brandData.brandDescription || '';
+  const brandWebsite = brandData.brandWebsiteUrl || '';
 
-  let prompt = `Create a professional, high-quality background image for a presentation slide. The image should be suitable as a BACKGROUND — no text, no logos, no UI elements. It must be visually striking but not overpowering, allowing text to be overlaid on top.
+  let prompt = `Generate a stunning, brand-specific background image for a presentation slide. This image must look like it was custom-designed for ${brandName || 'this brand'}'s official marketing materials.
 
 SLIDE CONTEXT:
 - Slide title: "${slide.title || ''}"
 - Presentation topic: "${presentationTopic || ''}"
-- Slide type: ${slide.layout || 'content'}`;
+- Slide type: ${slide.layout || 'content'}
+- Background color hint: ${slide.backgroundColor || '#032D60'}`;
 
   if (brandName) {
-    prompt += `\n\nBRAND CONTEXT:
+    prompt += `\n\nBRAND IDENTITY — THIS IS CRITICAL:
 - Brand: ${brandName}
-- Industry/Description: ${brandIndustry}`;
+- Industry: ${brandIndustry || 'technology/business'}`;
+    if (brandWebsite) prompt += `\n- Website: ${brandWebsite}`;
+    if (brandTone) prompt += `\n- Brand personality: ${brandTone}`;
+    if (brandStyle) prompt += `\n- Visual style: ${brandStyle}`;
+    prompt += `\nThe image MUST feel like it belongs on ${brandName}'s website or in their annual report. Think about what ${brandName} represents — their products, customers, values — and create imagery that reflects THEIR world, not generic corporate stock.`;
   }
   if (brandColors.length > 0) {
-    prompt += `\n- Brand colors: ${brandColors.join(', ')} — subtly incorporate these colors into the image`;
-  }
-  if (brandStyle) {
-    prompt += `\n- Visual style: ${brandStyle}`;
+    prompt += `\n- Brand color palette: ${brandColors.join(', ')} — these colors MUST be prominently featured in the image as the dominant color scheme. Do NOT use random colors.`;
   }
 
   // Use slide's own description if AI provided one
   if (slide.backgroundImageDescription) {
-    prompt += `\n\nIMAGE DESCRIPTION FROM CREATIVE DIRECTOR:\n${slide.backgroundImageDescription}`;
+    prompt += `\n\nCREATIVE DIRECTION FOR THIS SPECIFIC SLIDE:\n${slide.backgroundImageDescription}`;
   }
 
-  prompt += `\n\nSTYLE REQUIREMENTS:
-- Professional, modern, corporate-quality
-- Subtle gradients, abstract shapes, or thematic imagery
-- Good contrast areas for white or dark text overlay
-- 16:9 aspect ratio (landscape orientation)
-- NO text, NO words, NO logos, NO icons with text
-- NO stock-photo-watermarks`;
+  // Layout-specific guidance
+  if (slide.layout === 'TITLE') {
+    prompt += `\n\nThis is the TITLE/COVER slide — make it bold, cinematic, and impressive. Use dramatic lighting, rich colors, and strong visual impact. This is the first impression.`;
+  } else if (slide.layout === 'SECTION_HEADER') {
+    prompt += `\n\nThis is a SECTION DIVIDER slide — create a visually distinct transition image. Bold colors with some depth/dimension.`;
+  } else if (slide.layout === 'TITLE_AND_BODY' || slide.layout === 'TWO_COLUMNS') {
+    prompt += `\n\nThis is a CONTENT slide with text — the image should be SUBTLE enough for text readability. Use softer tones, gentle gradients, or out-of-focus photography. Keep visual weight toward edges, leaving the center area clean for text.`;
+  }
+
+  prompt += `\n\nMANDATORY REQUIREMENTS:
+- 16:9 aspect ratio (landscape widescreen)
+- NO text, NO words, NO letters, NO numbers, NO logos, NO watermarks
+- NO UI elements, NO icons with text, NO charts
+- Professional quality — looks like it was shot/designed by a top creative agency
+- The image should reinforce the brand identity of ${brandName || 'the brand'} through color, mood, and subject matter`;
 
   return prompt;
 }
 
 /**
  * Generate an image for a slide and upload to R2.
+ * Optionally includes reference images for style matching.
  * Returns the public URL or null on failure.
  */
-async function generateAndUploadSlideImage(slide, brandData, presentationTopic, presentationId, slideIndex) {
+async function generateAndUploadSlideImage(slide, brandData, presentationTopic, presentationId, slideIndex, refImages) {
   try {
     const prompt = buildImagePrompt(slide, brandData, presentationTopic);
     console.log(`Generating image for slide ${slideIndex + 1} of presentation ${presentationId}...`);
 
-    const { imageBase64, mimeType } = await generateSlideImage(prompt);
+    const { imageBase64, mimeType } = await generateSlideImage(prompt, refImages);
     const ext = mimeType === 'image/jpeg' ? '.jpg' : '.png';
     const randomId = crypto.randomBytes(8).toString('hex');
     const key = `slides/${presentationId}/${slideIndex}-${randomId}${ext}`;
@@ -1336,7 +1363,8 @@ async function generateInBackground(presentation, presData, authClient) {
 
     // Context Grounding: Find matching reference presentations
     let refSection = '';
-    let refImageParts = []; // Multimodal image parts for Gemini
+    let refImageParts = []; // Multimodal image parts for Gemini text generation
+    let refThumbnails = []; // Raw base64 thumbnails for image style matching
     try {
       const refs = await findMatchingReferences(presData.industryTag, presData.presentationTypeTag);
       if (refs.length > 0) {
@@ -1367,6 +1395,10 @@ async function generateInBackground(presentation, presData, authClient) {
               if (slide.thumbnailBase64) {
                 refImageParts.push({ text: `[Visual of Reference ${i+1}, Slide ${slide.slideNumber}: "${slide.name}"]` });
                 refImageParts.push({ inlineData: { mimeType: 'image/png', data: slide.thumbnailBase64 } });
+                // Also collect raw base64 for image generation style matching
+                if (refThumbnails.length < 5) {
+                  refThumbnails.push(slide.thumbnailBase64);
+                }
               }
             });
           } else {
@@ -1428,7 +1460,9 @@ Return a JSON object with this exact structure:
       "layout": "TITLE_AND_BODY",
       "title": "Slide Title",
       "body": "Slide body content. Use \\n for line breaks. Use bullet points with • character.",
-      "backgroundColor": "#FFFFFF",
+      "backgroundColor": "#F5F5F5",
+      "backgroundImageDescription": "A soft, light-toned lifestyle photograph showing a customer happily engaging with the brand's products in a modern retail environment, with warm natural lighting and shallow depth of field, using the brand's warm palette as color grading",
+      "backgroundImageOpacity": 0.2,
       "titleColor": "#032D60",
       "bodyColor": "#444444",
       "titleFontSize": 28,
@@ -1440,8 +1474,8 @@ Return a JSON object with this exact structure:
       "title": "Section Title",
       "subtitle": "Optional section subtitle",
       "backgroundColor": "#0176D3",
-      "backgroundImageDescription": "Abstract geometric shapes with smooth gradients transitioning from blue to teal, evoking data flow and digital transformation",
-      "backgroundImageOpacity": 0.25,
+      "backgroundImageDescription": "Abstract geometric shapes with smooth gradients transitioning from the brand's primary blue to teal, evoking data flow and digital transformation, with crystalline light refractions creating depth and movement",
+      "backgroundImageOpacity": 0.4,
       "titleColor": "#FFFFFF",
       "bodyColor": "#E0E0E0",
       "titleFontSize": 32,
@@ -1453,7 +1487,9 @@ Return a JSON object with this exact structure:
       "title": "Comparison Title",
       "leftColumn": "Left column content",
       "rightColumn": "Right column content",
-      "backgroundColor": "#FFFFFF",
+      "backgroundColor": "#FAFAFA",
+      "backgroundImageDescription": "A subtle watercolor-wash texture blending the brand's primary and secondary colors in soft gradients, creating an elegant paper-like background with delicate organic patterns along the edges",
+      "backgroundImageOpacity": 0.15,
       "titleColor": "#032D60",
       "bodyColor": "#444444",
       "titleFontSize": 28,
@@ -1463,26 +1499,35 @@ Return a JSON object with this exact structure:
   ]
 }
 
-DESIGN INSTRUCTIONS:
+DESIGN INSTRUCTIONS — MATCH THE REFERENCE PRESENTATION STYLE CLOSELY:
+- Study the reference presentation images carefully. Your generated slides should closely match their visual design: color scheme, layout patterns, text placement, slide structure, and formatting approach.
 - For each slide, you MUST specify backgroundColor (hex), titleColor (hex), bodyColor (hex), titleFontSize (number in pt), bodyFontSize (number in pt), and titleBold (boolean).
 - Use the brand primary color for TITLE and SECTION_HEADER backgrounds with white or light text.
 - Use white or light backgrounds for TITLE_AND_BODY and TWO_COLUMNS slides with dark text matching the brand.
-- Alternate accent colors on some slides for visual variety.
-- Set design.fontFamily to a clean sans-serif Google Font (e.g., Montserrat, Open Sans, Lato, Roboto, Poppins).
+- Alternate accent colors on some slides for visual variety — use colors from the brand palette.
+- Set design.fontFamily to a clean sans-serif Google Font (e.g., Montserrat, Open Sans, Lato, Roboto, Poppins). If the reference uses a specific font style, match it.
 - Set design.accentColor to a complementary brand color for highlights.
 - All color values must be valid 6-digit hex codes starting with #.
+- FOLLOW THE SAME SLIDE ORDERING PATTERN as the reference: typically Title → Agenda/Overview → Content Sections → Key Insights → Call to Action → Thank You/Contact.
 
-BACKGROUND IMAGES — CRITICAL:
-- backgroundImageDescription is OPTIONAL per slide. When provided, an AI will GENERATE a custom background image from your description. Use it on TITLE slides, SECTION_HEADER slides, and key content slides to create a rich, highly designed presentation. Not every slide needs a background image — use them strategically for visual impact.
-- backgroundImageOpacity (0.0 to 1.0) controls how visible the image is behind the text overlay. Use 0.2–0.4 for slides with lots of text. Use higher values (0.6–0.9) for visual-impact slides with minimal text.
-- Write DETAILED, VIVID descriptions of the ideal background image. Describe:
-  * Visual elements (gradients, abstract shapes, photography style, patterns)
-  * Color palette (incorporate brand colors naturally)
-  * Mood/atmosphere (professional, energetic, serene, innovative)
-  * Subject matter relevant to the slide topic
-- DO NOT describe text, logos, or UI elements — the image will be a pure background.
-- When using background images, ensure text colors have strong contrast (white text on dark images, dark text on light images).
-- The backgroundColor serves as a fallback color, so choose a complementary color.
+BACKGROUND IMAGES — MANDATORY FOR EVERY SLIDE:
+- backgroundImageDescription is REQUIRED on EVERY slide. An AI image generator will create a custom background image from your description. Every single slide must have a unique, on-brand background image.
+- backgroundImageOpacity (0.0 to 1.0) controls how visible the image is behind the text overlay:
+  * TITLE slides: 0.5–0.8 (bold, visual impact)
+  * SECTION_HEADER slides: 0.4–0.6 (strong but readable)
+  * TITLE_AND_BODY slides with lots of text: 0.15–0.3 (subtle, text-friendly)
+  * TWO_COLUMNS slides: 0.1–0.25 (very subtle so columns are readable)
+- Write DETAILED, VIVID, BRAND-SPECIFIC descriptions. Each description must:
+  * Reference the SPECIFIC BRAND by name and industry (e.g. "a Nike-inspired athletic scene" not "a sports scene")
+  * Incorporate brand colors explicitly (e.g. "using ${presData.brandColorPrimary || 'the brand primary color'} as the dominant tone")
+  * Match the slide's topic — if the slide is about "customer loyalty", show imagery related to that specific business concept
+  * Describe visual style: photography style, gradients, textures, patterns, abstract vs realistic
+  * Set mood/atmosphere matching the brand's personality
+  * Be at least 2–3 sentences long with rich visual detail
+- DO NOT describe text, logos, UI elements, or words — the image will be a pure background
+- When using background images, ensure text colors have STRONG contrast (white/light text on dark images, dark text on light images)
+- The backgroundColor serves as a fallback color
+- IMPORTANT: Vary the imagery across slides — each slide should have a DIFFERENT visual concept, not just color variations of the same abstract pattern. Use a mix of: product-related photography scenes, industry-specific imagery, abstract brand-colored compositions, and atmospheric textures.
 
 Available layouts: TITLE (first slide only), TITLE_AND_BODY (main content), SECTION_HEADER (section dividers), TWO_COLUMNS (side-by-side).
 Make the content substantive, detailed, and professional. Each body should have 3-5 meaningful bullet points.
@@ -1592,36 +1637,44 @@ Return ONLY valid JSON, no markdown fences.`;
 
     console.log(`Design defaults applied for presentation ${presentation.id}`);
 
-    // ── AI Image Generation: generate background images for slides that need them ──
+    // ── AI Image Generation: generate background images for ALL slides ──
     const aiSlides = slideData.slides || [];
     const r2Available = !!getR2Client();
     console.log(`[Image Gen] R2 available: ${r2Available}, total slides: ${aiSlides.length}`);
-    // Log which slides have image descriptions
-    aiSlides.forEach((s, idx) => {
-      if (s.backgroundImageDescription) console.log(`[Image Gen] Slide ${idx + 1} has backgroundImageDescription: "${s.backgroundImageDescription.substring(0, 80)}..."`);
-    });
+
     if (r2Available) {
-      const slidesNeedingImages = aiSlides.filter(
-        s => s.backgroundImageDescription || s.backgroundImageUrl
-      );
-      if (slidesNeedingImages.length > 0) {
-        console.log(`Generating ${slidesNeedingImages.length} AI background images for presentation ${presentation.id}...`);
-        for (let i = 0; i < aiSlides.length; i++) {
-          const slide = aiSlides[i];
-          if (slide.backgroundImageDescription || slide.backgroundImageUrl) {
-            // Generate image sequentially to respect rate limits
-            await generateAndUploadSlideImage(slide, presData, topic, presentation.id, i);
-            // Small delay between images to avoid rate limiting
-            if (i < aiSlides.length - 1) {
-              await new Promise(resolve => setTimeout(resolve, 1000));
-            }
+      // Ensure every slide has a backgroundImageDescription (auto-generate for any Gemini missed)
+      for (let i = 0; i < aiSlides.length; i++) {
+        const slide = aiSlides[i];
+        if (!slide.backgroundImageDescription) {
+          // Auto-generate a brand-aware description based on slide content
+          const brandName = presData.brand || presData.brandName || '';
+          const brandColor = presData.brandColorPrimary || '#032D60';
+          if (slide.layout === 'TITLE') {
+            slide.backgroundImageDescription = `A dramatic, cinematic wide shot related to ${brandName || topic} with rich ${brandColor} tones, professional lighting, and a sense of innovation and possibility`;
+          } else if (slide.layout === 'SECTION_HEADER') {
+            slide.backgroundImageDescription = `Bold abstract composition using ${brandColor} gradients with geometric depth, suggesting a new chapter or transition in the ${brandName || topic} story`;
+          } else {
+            slide.backgroundImageDescription = `Subtle, elegant background texture incorporating ${brandColor} tones, with soft gradients and gentle visual interest that supports text readability for content about "${slide.title || topic}"`;
           }
+          slide.backgroundImageOpacity = slide.layout === 'TITLE' ? 0.6 : (slide.layout === 'SECTION_HEADER' ? 0.4 : 0.2);
+          console.log(`[Image Gen] Auto-generated description for slide ${i + 1} (${slide.layout})`);
+        } else {
+          console.log(`[Image Gen] Slide ${i + 1} has backgroundImageDescription: "${slide.backgroundImageDescription.substring(0, 80)}..."`);
         }
-        console.log(`Image generation complete for presentation ${presentation.id}`);
       }
+
+      console.log(`Generating AI background images for ALL ${aiSlides.length} slides of presentation ${presentation.id}... (${refThumbnails.length} reference images for style matching)`);
+      for (let i = 0; i < aiSlides.length; i++) {
+        await generateAndUploadSlideImage(aiSlides[i], presData, topic, presentation.id, i, refThumbnails);
+        // Delay between images to avoid rate limiting
+        if (i < aiSlides.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+        }
+      }
+      console.log(`Image generation complete for presentation ${presentation.id}`);
     } else {
       console.log('R2 storage not configured — skipping AI image generation');
-      // Clear any backgroundImageUrl/description since we can't generate
       for (const slide of aiSlides) {
         delete slide.backgroundImageUrl;
         delete slide.backgroundImageDescription;
