@@ -1216,19 +1216,25 @@ async function uploadToR2(buffer, key, contentType) {
  */
 async function generateSlideImage(prompt) {
   const ai = getGenAIClient();
-  const imageModel = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.0-flash-preview-image-generation';
+  const imageModel = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image';
+
+  console.log(`[Image Gen] Using model: ${imageModel}, prompt length: ${prompt.length} chars`);
 
   const response = await ai.models.generateContent({
     model: imageModel,
-    contents: [{ text: prompt }],
+    contents: prompt,
     config: {
       responseModalities: ['TEXT', 'IMAGE'],
     },
   });
 
   // Extract image from response parts
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
+  const parts = response.candidates?.[0]?.content?.parts || [];
+  console.log(`[Image Gen] Response has ${parts.length} parts: ${parts.map(p => p.inlineData ? 'IMAGE' : 'TEXT').join(', ')}`);
+
+  for (const part of parts) {
     if (part.inlineData) {
+      console.log(`[Image Gen] ✓ Got image: ${part.inlineData.mimeType}, ${Math.round((part.inlineData.data?.length || 0) / 1024)}KB base64`);
       return {
         imageBase64: part.inlineData.data,
         mimeType: part.inlineData.mimeType || 'image/png',
@@ -1589,6 +1595,11 @@ Return ONLY valid JSON, no markdown fences.`;
     // ── AI Image Generation: generate background images for slides that need them ──
     const aiSlides = slideData.slides || [];
     const r2Available = !!getR2Client();
+    console.log(`[Image Gen] R2 available: ${r2Available}, total slides: ${aiSlides.length}`);
+    // Log which slides have image descriptions
+    aiSlides.forEach((s, idx) => {
+      if (s.backgroundImageDescription) console.log(`[Image Gen] Slide ${idx + 1} has backgroundImageDescription: "${s.backgroundImageDescription.substring(0, 80)}..."`);
+    });
     if (r2Available) {
       const slidesNeedingImages = aiSlides.filter(
         s => s.backgroundImageDescription || s.backgroundImageUrl
