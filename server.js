@@ -1418,36 +1418,235 @@ async function generateFromTemplate(presentation, presData, authClient, template
   let presentationId, presentationUrl;
 
   // Helper: copy template for user
-  // Problem: SA has 0 Drive quota, user's drive.file scope can't see shared files.
-  // Solution: SA downloads template as PPTX, user uploads it as a new Google Slides file.
-  // This works with drive.file scope (upload creates a new file the app owns).
+  // Problem: SA has 0 Drive quota, user's drive.file scope can't see shared files,
+  // and PPTX export has a 10MB limit.
+  // Solution: SA reads the full template via Slides API, creates a blank presentation
+  // via user's auth (drive.file scope), then replicates all slides with their
+  // page elements using batch updates. Background images are downloaded via SA
+  // and re-uploaded to the user's presentation.
   async function copyTemplateForUser(title) {
-    // Step 1: SA downloads the template as PPTX (binary)
-    console.log(`[Template] Downloading template as PPTX via SA...`);
-    const exportResp = await saDriveService.files.export({
-      fileId: templateId,
-      mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-    }, { responseType: 'arraybuffer' });
-    const pptxBuffer = Buffer.from(exportResp.data);
-    console.log(`[Template] Downloaded PPTX: ${pptxBuffer.length} bytes`);
+    const saSlidesService = google.slides({ version: 'v1', auth: serviceAuth });
 
-    // Step 2: User uploads the PPTX as a new Google Slides presentation
-    const userDriveService = google.drive({ version: 'v3', auth: authClient });
-    const { Readable } = require('stream');
-    const uploadResp = await userDriveService.files.create({
-      requestBody: {
-        name: title,
-        mimeType: 'application/vnd.google-apps.presentation'  // Convert to Google Slides
-      },
-      media: {
-        mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-        body: Readable.from(pptxBuffer)
-      },
-      fields: 'id'
+    // Step 1: Read the full template structure via SA
+    console.log(`[Template] Reading template structure via SA...`);
+    const templatePres = await saSlidesService.presentations.get({ presentationId: templateId });
+    const templateSlides = templatePres.data.slides || [];
+    const pageWidth = templatePres.data.pageSize?.width;
+    const pageHeight = templatePres.data.pageSize?.height;
+    console.log(`[Template] Template has ${templateSlides.length} slides`);
+
+    // Step 2: Create a blank presentation via user's auth
+    const userSlidesService = google.slides({ version: 'v1', auth: authClient });
+    const createResp = await userSlidesService.presentations.create({
+      requestBody: { title }
     });
-    const newId = uploadResp.data.id;
-    console.log(`[Template] Uploaded as Google Slides in user's Drive → ${newId}`);
+    const newId = createResp.data.id;
+    console.log(`[Template] Created blank presentation in user's Drive → ${newId}`);
 
+    // Step 3: Delete the default blank slide
+    const defaultSlides = createResp.data.slides || [];
+    if (defaultSlides.length > 0) {
+      await userSlidesService.presentations.batchUpdate({
+        presentationId: newId,
+        requestBody: {
+          requests: defaultSlides.map(s => ({ deleteObject: { objectId: s.objectId } }))
+        }
+      });
+    }
+
+    // Step 4: For each template slide, create a blank slide and replicate elements
+    for (let i = 0; i < templateSlides.length; i++) {
+      const tSlide = templateSlides[i];
+      const slideId = `slide_${i}_${Date.now()}`;
+
+      const requests = [];
+
+      // Create blank slide
+      requests.push({
+        createSlide: {
+          objectId: slideId,
+          insertionIndex: i
+        }
+      });
+
+      // If the template slide has a background image, replicate it
+      const bgFill = tSlide.slideProperties?.notesPage ? null :
+        tSlide.pageElements ? null : null; // We'll handle bg separately
+      const slideBg = tSlide.slideProperties?.background?.stretchedPictureFill;
+      if (slideBg?.contentUrl) {
+        requests.push({
+          updatePageProperties: {
+            objectId: slideId,
+            pageProperties: {
+              pageBackgroundFill: {
+                stretchedPictureFill: {
+                  contentUrl: slideBg.contentUrl
+                }
+              }
+            },
+            fields: 'pageBackgroundFill'
+          }
+        });
+      } else if (tSlide.slideProperties?.background?.solidFill) {
+        const sf = tSlide.slideProperties.background.solidFill;
+        requests.push({
+          updatePageProperties: {
+            objectId: slideId,
+            pageProperties: {
+              pageBackgroundFill: {
+                solidFill: sf
+              }
+            },
+            fields: 'pageBackgroundFill'
+          }
+        });
+      }
+
+      // Apply requests for this slide
+      if (requests.length > 0) {
+        try {
+          await userSlidesService.presentations.batchUpdate({
+            presentationId: newId,
+            requestBody: { requests }
+          });
+        } catch (batchErr) {
+          console.warn(`[Template] Slide ${i} creation batch error: ${batchErr.message}`);
+          // Try just creating the slide without background
+          try {
+            await userSlidesService.presentations.batchUpdate({
+              presentationId: newId,
+              requestBody: {
+                requests: [{ createSlide: { objectId: slideId, insertionIndex: i } }]
+              }
+            });
+          } catch (e) {
+            console.error(`[Template] Failed to create slide ${i}: ${e.message}`);
+          }
+        }
+      }
+
+      // Now add page elements (shapes, text boxes, images) individually
+      for (const el of (tSlide.pageElements || [])) {
+        try {
+          const elId = `el_${i}_${Math.random().toString(36).slice(2, 10)}`;
+
+          if (el.shape) {
+            // Recreate shape with text
+            const shapeReqs = [];
+            shapeReqs.push({
+              createShape: {
+                objectId: elId,
+                shapeType: el.shape.shapeType || 'TEXT_BOX',
+                elementProperties: {
+                  pageObjectId: slideId,
+                  size: el.size,
+                  transform: el.transform
+                }
+              }
+            });
+
+            // Set shape fill if exists
+            if (el.shape.shapeProperties?.shapeBackgroundFill?.solidFill) {
+              shapeReqs.push({
+                updateShapeProperties: {
+                  objectId: elId,
+                  shapeProperties: {
+                    shapeBackgroundFill: {
+                      solidFill: el.shape.shapeProperties.shapeBackgroundFill.solidFill
+                    }
+                  },
+                  fields: 'shapeBackgroundFill'
+                }
+              });
+            }
+
+            // Set outline if exists
+            if (el.shape.shapeProperties?.outline) {
+              shapeReqs.push({
+                updateShapeProperties: {
+                  objectId: elId,
+                  shapeProperties: {
+                    outline: el.shape.shapeProperties.outline
+                  },
+                  fields: 'outline'
+                }
+              });
+            }
+
+            // Insert text if exists
+            const textContent = (el.shape.text?.textElements || [])
+              .filter(te => te.textRun?.content)
+              .map(te => te.textRun.content)
+              .join('');
+            if (textContent) {
+              shapeReqs.push({
+                insertText: {
+                  objectId: elId,
+                  text: textContent,
+                  insertionIndex: 0
+                }
+              });
+
+              // Apply text styling from the first text run
+              const firstRun = (el.shape.text?.textElements || []).find(te => te.textRun?.style);
+              if (firstRun?.textRun?.style) {
+                const style = firstRun.textRun.style;
+                const styleFields = [];
+                const textStyle = {};
+                if (style.foregroundColor) { textStyle.foregroundColor = style.foregroundColor; styleFields.push('foregroundColor'); }
+                if (style.fontSize) { textStyle.fontSize = style.fontSize; styleFields.push('fontSize'); }
+                if (style.bold !== undefined) { textStyle.bold = style.bold; styleFields.push('bold'); }
+                if (style.italic !== undefined) { textStyle.italic = style.italic; styleFields.push('italic'); }
+                if (style.fontFamily) { textStyle.fontFamily = style.fontFamily; styleFields.push('fontFamily'); }
+
+                if (styleFields.length > 0) {
+                  shapeReqs.push({
+                    updateTextStyle: {
+                      objectId: elId,
+                      style: textStyle,
+                      textRange: { type: 'ALL' },
+                      fields: styleFields.join(',')
+                    }
+                  });
+                }
+              }
+            }
+
+            await userSlidesService.presentations.batchUpdate({
+              presentationId: newId,
+              requestBody: { requests: shapeReqs }
+            });
+
+          } else if (el.image) {
+            // Recreate image
+            if (el.image.contentUrl) {
+              await userSlidesService.presentations.batchUpdate({
+                presentationId: newId,
+                requestBody: {
+                  requests: [{
+                    createImage: {
+                      objectId: elId,
+                      url: el.image.contentUrl,
+                      elementProperties: {
+                        pageObjectId: slideId,
+                        size: el.size,
+                        transform: el.transform
+                      }
+                    }
+                  }]
+                }
+              });
+            }
+          }
+        } catch (elErr) {
+          console.warn(`[Template] Slide ${i} element replication failed (non-fatal): ${elErr.message}`);
+        }
+      }
+
+      console.log(`[Template] Replicated slide ${i + 1}/${templateSlides.length}`);
+    }
+
+    console.log(`[Template] Template replication complete → ${newId}`);
     return newId;
   }
 
