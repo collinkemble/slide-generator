@@ -1433,16 +1433,19 @@ app.get('/api/present/:shareToken/data', async (req, res) => {
     const presentation = rows[0];
 
     // Check access based on sharing mode
+    const viewerEmail = (req.query.email || '').trim().toLowerCase();
     if (presentation.sharing_mode === 'private') {
-      // Only the owner can view — require email match
-      const viewerEmail = req.query.email;
-      if (!viewerEmail || viewerEmail.toLowerCase() !== presentation.owner_email.toLowerCase()) {
+      // Only the owner (or admins) can view
+      const isOwner = viewerEmail && viewerEmail === presentation.owner_email.toLowerCase();
+      const viewerIsAdmin = viewerEmail && isAdmin(viewerEmail);
+      if (!isOwner && !viewerIsAdmin) {
         return res.status(403).json({ error: 'This presentation is private', requiresAuth: true, authType: 'owner' });
       }
     } else if (presentation.sharing_mode === 'salesforce') {
-      // Require @salesforce.com email via Magic Link
-      const viewerEmail = req.query.email;
-      if (!viewerEmail || !viewerEmail.toLowerCase().endsWith('@salesforce.com')) {
+      // Any logged-in Salesforce employee (or admin) can view
+      const isSalesforce = viewerEmail && viewerEmail.endsWith('@salesforce.com');
+      const viewerIsAdmin = viewerEmail && isAdmin(viewerEmail);
+      if (!isSalesforce && !viewerIsAdmin) {
         return res.status(403).json({ error: 'This presentation requires a Salesforce login', requiresAuth: true, authType: 'salesforce' });
       }
     }
@@ -1553,13 +1556,13 @@ async function generateSlideImage(prompt, refImages) {
   // Build content parts: optional reference images first, then prompt
   const contentParts = [];
 
-  // Add reference images for style matching (up to 3 to avoid token limits)
+  // Add reference images for style/layout matching (up to 3 to avoid token limits)
   if (refImages && refImages.length > 0) {
-    contentParts.push({ text: 'Here are reference slides from an existing presentation. Match their visual style, color scheme, and design aesthetic when generating the new slide image:' });
+    contentParts.push({ text: 'Here are reference slides from an existing presentation. COPY their exact layout structure, text positioning, design patterns, and visual style. Match the same slide design language — same placement of titles, headings, body text, and decorative elements. The ONLY things that should differ are: background imagery (use new images appropriate for the target brand), logo branding (use the target brand logo, NOT the reference brand logo), and brand name. Everything else — text layout, design elements, color usage patterns, whitespace — should be a near-identical match:' });
     for (const ref of refImages.slice(0, 3)) {
       contentParts.push({ inlineData: { mimeType: 'image/png', data: ref } });
     }
-    contentParts.push({ text: 'Now generate a NEW complete slide image in a similar visual style:' });
+    contentParts.push({ text: 'Now generate the slide image that COPIES the exact layout and design pattern from the references above, but with the target brand identity described below:' });
   }
 
   contentParts.push({ text: prompt });
@@ -1603,13 +1606,14 @@ function buildImagePrompt(slide, brandData, presentationTopic) {
   const brandStyle = brandData.brandVisualStyle || '';
   const brandTone = brandData.brandTone || '';
   const brandIndustry = brandData.brandDescription || '';
+  const brandLogoUrl = brandData.brandLogoUrl || '';
 
   const slideTitle = slide.title || '';
   const slideHeading = slide.heading || '';
   const slideBody = slide.body || '';
   const layoutType = slide.layoutType || slide.layout || 'CONTENT';
 
-  let prompt = `Generate a COMPLETE, FINISHED presentation slide image at exactly 1920x1080 pixels (16:9 widescreen landscape).
+  let prompt = `Generate a COMPLETE, FINISHED presentation slide image. The image MUST be EXACTLY 1920 pixels wide by 1080 pixels tall — a perfect 16:9 widescreen landscape rectangle. This is a HARD REQUIREMENT — do not generate any other dimensions.
 
 This is NOT a background image — this is the ENTIRE SLIDE with ALL text content rendered directly into the image, as if screenshotted from a professional presentation tool like PowerPoint or Keynote.
 
@@ -1620,6 +1624,14 @@ SLIDE CONTENT TO RENDER:`;
   if (slideBody) prompt += `\nBody text: "${slideBody}"`;
   prompt += `\nSlide type: ${layoutType}`;
   prompt += `\nPresentation topic: "${presentationTopic || ''}"`;
+
+  // Logo treatment — brand logo + Salesforce logo in upper right on EVERY slide
+  prompt += `\n\nLOGO TREATMENT (MANDATORY — EVERY SLIDE):
+- In the upper right corner of the slide, render a logo lockup: "${brandName || 'Brand'}" + "Salesforce"
+- The logo lockup should show the brand name "${brandName || 'Brand'}" on the left and "Salesforce" (with the Salesforce cloud logo) on the right, separated by a thin vertical divider line
+- The logo lockup must be clean, small (approximately 200-250px wide total), and positioned in the top-right corner with ~40px margin from the edges
+- Use white text/logo on dark backgrounds, or the brand primary color on light backgrounds
+- This EXACT SAME logo treatment must appear on EVERY slide — consistent placement, consistent size`;
 
   prompt += `\n\nTEXT LAYOUT RULES:`;
   if (layoutType === 'TITLE') {
@@ -1670,16 +1682,18 @@ SLIDE CONTENT TO RENDER:`;
   }
 
   prompt += `\n\nMANDATORY DESIGN REQUIREMENTS:
-- MUST be exactly 1920x1080 pixels, landscape orientation, 16:9 aspect ratio
+- MUST be EXACTLY 1920x1080 pixels — 16:9 widescreen landscape. NO other aspect ratio. NO square. NO portrait. EXACTLY 1920 wide by 1080 tall.
 - ALL text content listed above MUST appear in the image, correctly spelled and complete
 - Professional typography with proper kerning, leading, and hierarchy
 - Clean, modern presentation design with proper use of whitespace
 - High contrast between text and background for readability
 - Use design elements like colored shapes, boxes, gradients, or subtle patterns to create visual interest
+- HIGH RESOLUTION — text must be crisp and razor-sharp, suitable for display on a 1080p or higher screen
 - NO watermarks, NO AI artifacts, NO "generated by" text
 - NO placeholder text — use ONLY the exact text content provided above
 - The slide should look like it was designed by a professional graphic designer
-- Text must be sharp and legible at presentation resolution`;
+- Text must be sharp and legible at full HD presentation resolution
+- DO NOT include any branding from the reference slides — only use "${brandName || 'the target brand'}" branding`;
 
   return prompt;
 }
@@ -1727,7 +1741,8 @@ async function generateInBackground(presentation, presData) {
     // Context Grounding: Find matching reference presentations
     let refSection = '';
     let refImageParts = []; // Multimodal image parts for Gemini text generation
-    let refThumbnails = []; // Raw base64 thumbnails for image style matching
+    let refThumbnails = []; // Raw base64 thumbnails for image style matching (indexed by slide number)
+    let allRefThumbnails = []; // ALL thumbnails in order for per-slide matching when cloning
     console.log(`[Generate] Starting for presentation ${presentation.id} — industryTag="${presData.industryTag || 'none'}", presentationTypeTag="${presData.presentationTypeTag || 'none'}"`);
     try {
       const refs = await findMatchingReferences(presData.industryTag, presData.presentationTypeTag);
@@ -1753,17 +1768,19 @@ async function generateInBackground(presentation, presData) {
               if (slide.description) refSection += ` — ${slide.description}`;
               refSection += '\n';
               if (slide.textContent && slide.textContent !== '(no text content)') {
-                const preview = slide.textContent.substring(0, 300);
-                refSection += `    Content: ${preview}${slide.textContent.length > 300 ? '...' : ''}\n`;
+                // Include FULL text content for verbatim copying — no truncation
+                refSection += `    Content: ${slide.textContent}\n`;
               }
               if (slide.speakerNotes) {
-                refSection += `    Notes: ${slide.speakerNotes.substring(0, 200)}\n`;
+                refSection += `    Notes: ${slide.speakerNotes}\n`;
               }
               // Collect slide thumbnail for multimodal grounding
               if (slide.thumbnailBase64) {
                 refImageParts.push({ text: `[Visual of Reference ${i+1}, Slide ${slide.slideNumber}: "${slide.name}"]` });
                 refImageParts.push({ inlineData: { mimeType: 'image/png', data: slide.thumbnailBase64 } });
-                // Also collect raw base64 for image generation style matching
+                // Collect ALL thumbnails in slide order for per-slide matching when cloning
+                allRefThumbnails.push(slide.thumbnailBase64);
+                // Also keep first few for general style matching
                 if (refThumbnails.length < 5) {
                   refThumbnails.push(slide.thumbnailBase64);
                 }
@@ -1776,15 +1793,74 @@ async function generateInBackground(presentation, presData) {
           }
         });
         refSection += '\n--- END REFERENCE PRESENTATIONS ---\n';
-        refSection += `Study the reference slide images above and replicate their design language, visual style, and layout patterns.\n`;
+        refSection += `COPY the reference presentation above EXACTLY. Replicate every slide — same text, same structure, same layout types. The ONLY changes should be: brand name, brand logo, and background imagery.\n`;
       }
     } catch (err) {
       console.error('Context grounding lookup failed:', err.message);
     }
 
     const targetBrand = presData.brand || presData.brandName || '';
-    const systemPrompt = `You are an expert presentation designer. Generate a presentation as structured JSON — an array of slides with text content and design direction.
+
+    // Determine if we have a reference to copy verbatim
+    // When a reference exists, we copy its exact structure and text, only changing brand name + background images
+    const hasRefToClone = refSection.length > 0;
+
+    let systemPrompt;
+    if (hasRefToClone) {
+      systemPrompt = `You are an expert presentation designer. Your job is to CLONE an existing reference presentation EXACTLY — same number of slides, same text, same layout types, same structure.
+
 ${refSection}
+
+CRITICAL INSTRUCTIONS — VERBATIM COPY:
+You MUST replicate the reference presentation above EXACTLY. Do NOT create new content. Do NOT add or remove slides. Do NOT rephrase or summarize. Copy every slide VERBATIM with these specific replacements:
+
+1. BRAND NAME: Replace the reference brand name (e.g. "Skechers") with "${targetBrand || 'the target brand'}" everywhere it appears in titles, headings, and body text.
+2. COMPANY REFERENCES: Replace any company-specific references with equivalent "${targetBrand || 'the target brand'}" references.
+3. EVERYTHING ELSE: Keep the exact same text, bullet points, statistics, slide titles, headings, body content, and structure.
+
+${(presData.brandName || presData.brandColorPrimary || presData.brandTone) ? `
+TARGET BRAND KIT:
+${presData.brandName ? `Brand Name: ${presData.brandName}` : ''}
+${presData.brandColorPrimary ? `Primary Color: ${presData.brandColorPrimary}` : ''}
+${presData.brandColorSecondary ? `Secondary Color: ${presData.brandColorSecondary}` : ''}
+${presData.brandTone ? `Tone & Voice: ${presData.brandTone}` : ''}
+${presData.brandVisualStyle ? `Visual Style: ${presData.brandVisualStyle}` : ''}
+${presData.brandDescription ? `Brand Description: ${presData.brandDescription}` : ''}
+` : ''}
+
+Return a JSON object with this EXACT structure:
+{
+  "title": "Presentation Title",
+  "slides": [
+    {
+      "title": "The exact title text from the reference slide (with brand name swapped)",
+      "heading": "The exact heading text from the reference slide (with brand name swapped)",
+      "body": "The exact body text from the reference slide (with brand name swapped). Use \\n for line breaks. Use • for bullet points.",
+      "speakerNotes": "Notes for the presenter",
+      "layoutType": "TITLE",
+      "backgroundImageDescription": "2-3 sentence description of what the background image should look like — using the target brand's visual identity and colors instead of the reference brand's"
+    }
+  ]
+}
+
+LAYOUT TYPES:
+- TITLE: First slide, cover page.
+- CONTENT: Main content slides with title, heading, and body text.
+- SECTION: Section divider slides.
+- CLOSING: Last slide (Thank You, Q&A, contact info).
+
+CRITICAL RULES:
+- You MUST output the EXACT SAME NUMBER of slides as the reference presentation.
+- You MUST copy the EXACT same text from each reference slide, only replacing the brand name.
+- The "backgroundImageDescription" should describe visuals appropriate for "${targetBrand || 'the target brand'}" — NOT the reference brand's imagery.
+- Do NOT summarize, paraphrase, or rewrite any content. Copy it VERBATIM with only brand name changes.
+- The layout types MUST match the reference exactly.
+
+Return ONLY valid JSON, no markdown fences.`;
+    } else {
+      // No reference — original creative generation mode
+      systemPrompt = `You are an expert presentation designer. Generate a presentation as structured JSON — an array of slides with text content and design direction.
+
 ${targetBrand ? `
 TARGET BRAND: ${targetBrand}
 This presentation is being created for "${targetBrand}". Tailor all content to this brand — use their name, speak to their needs, and frame value propositions for "${targetBrand}".
@@ -1835,6 +1911,7 @@ CONTENT RULES:
 - Make content substantive, detailed, and professional.
 
 Return ONLY valid JSON, no markdown fences.`;
+    }
 
     // Call Gemini for text generation
     const geminiApiKey = process.env.GEMINI_API_KEY;
@@ -1852,7 +1929,7 @@ Return ONLY valid JSON, no markdown fences.`;
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: systemPrompt }, ...refImageParts] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 16384 }
+        generationConfig: { temperature: hasRefToClone ? 0.1 : 0.7, maxOutputTokens: 16384 }
       })
     });
 
@@ -1927,7 +2004,18 @@ Return ONLY valid JSON, no markdown fences.`;
         }
 
         try {
-          const publicUrl = await generateAndUploadSlideImage(slide, presData, topic, presentation.id, i, refThumbnails);
+          // When cloning a reference, pass the MATCHING reference thumbnail for this slide index
+          // so the image generator can replicate the exact layout/design of that specific slide.
+          // If no matching thumbnail exists for this index, fall back to general style thumbnails.
+          let slideRefImages = refThumbnails;
+          if (allRefThumbnails.length > 0 && i < allRefThumbnails.length) {
+            // Pass the exact matching slide's thumbnail plus one general style reference
+            slideRefImages = [allRefThumbnails[i]];
+            if (refThumbnails.length > 0 && refThumbnails[0] !== allRefThumbnails[i]) {
+              slideRefImages.push(refThumbnails[0]); // Add one more for general style context
+            }
+          }
+          const publicUrl = await generateAndUploadSlideImage(slide, presData, topic, presentation.id, i, slideRefImages);
 
           // Save to presentation_slides table
           if (publicUrl) {

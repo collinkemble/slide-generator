@@ -8,27 +8,6 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
 
-    /* ─── Auth Screen ─── */
-    #auth-screen {
-      display: none;
-      position: fixed; inset: 0; z-index: 100;
-      background: #111; color: #fff;
-      flex-direction: column; align-items: center; justify-content: center; gap: 20px;
-    }
-    #auth-screen h2 { font-size: 22px; font-weight: 600; }
-    #auth-screen p { font-size: 14px; color: #999; max-width: 400px; text-align: center; }
-    #auth-screen input {
-      padding: 12px 20px; border-radius: 10px; border: 1px solid #333; background: #1a1a1a;
-      color: #fff; font-size: 15px; width: 320px; outline: none;
-    }
-    #auth-screen input:focus { border-color: #0176D3; }
-    #auth-screen button {
-      padding: 12px 28px; border-radius: 10px; border: none; background: #0176D3;
-      color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
-    }
-    #auth-screen button:hover { background: #015bb0; }
-    #auth-error { color: #ef4444; font-size: 13px; display: none; }
-
     /* ─── Loading Screen ─── */
     #loading-screen {
       position: fixed; inset: 0; z-index: 90;
@@ -104,20 +83,12 @@
       flex-direction: column; align-items: center; justify-content: center; gap: 12px;
     }
     #error-screen h2 { font-size: 20px; }
-    #error-screen p { color: #999; font-size: 14px; }
+    #error-screen p { color: #999; font-size: 14px; max-width: 400px; text-align: center; }
+    #error-screen a { color: #0176D3; text-decoration: none; font-size: 14px; }
+    #error-screen a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
-  <!-- Auth Screen (for Salesforce-only presentations) -->
-  <div id="auth-screen">
-    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#0176D3" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-    <h2 id="auth-title">Login Required</h2>
-    <p id="auth-message">This presentation requires authentication.</p>
-    <input type="email" id="auth-email" placeholder="Enter your email" autocomplete="email">
-    <button onclick="handleViewerAuth()">Continue</button>
-    <p id="auth-error"></p>
-  </div>
-
   <!-- Loading Screen -->
   <div id="loading-screen">
     <div class="spinner"></div>
@@ -141,8 +112,9 @@
 
   <!-- Error Screen -->
   <div id="error-screen">
-    <h2>Unable to load presentation</h2>
+    <h2 id="error-title">Unable to load presentation</h2>
     <p id="error-message">Something went wrong.</p>
+    <a id="error-link" href="/" style="display:none">Go to Slide Builder →</a>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/magic-sdk/dist/magic.js"></script>
@@ -150,24 +122,75 @@
     let slides = [];
     let currentSlide = 0;
     let cursorTimeout = null;
-    let magic = null;
-    let viewerEmail = null;
 
     const shareToken = window.location.pathname.split('/present/')[1]?.split('?')[0]?.split('/')[0];
 
-    // ─── Init ───
+    // ─── Cookie helpers (same as main app) ───
+    function getCookie(name) {
+      const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+      return match ? decodeURIComponent(match[2]) : null;
+    }
+
+    // ─── Init: use existing Magic Link session ───
     async function init() {
       if (!shareToken) return showError('Invalid presentation link');
 
-      // Try loading without auth first
-      const result = await loadPresentation();
-      if (result === 'ok') return;
-      if (result === 'salesforce') {
-        showAuthScreen('Salesforce Login Required', 'This presentation is restricted to Salesforce employees. Please log in with your @salesforce.com email.');
-      } else if (result === 'owner') {
-        showAuthScreen('Private Presentation', 'This presentation is private. Please log in with the owner\'s email.');
+      // Step 1: Try loading without auth (public presentations work immediately)
+      const publicResult = await loadPresentation();
+      if (publicResult === 'ok') return;
+
+      // Step 2: If auth is required, check existing Magic Link session
+      // (same SSO session used by the main Slide Builder app)
+      let userEmail = null;
+      try {
+        const configResp = await fetch('/api/auth/config');
+        const config = await configResp.json();
+        const magicKey = config.magicPublishableKey;
+
+        if (magicKey) {
+          const magic = new Magic(magicKey);
+          const isLoggedIn = await magic.user.isLoggedIn();
+          if (isLoggedIn) {
+            const info = await magic.user.getInfo();
+            userEmail = info.email;
+          }
+        }
+      } catch (err) {
+        console.log('Magic session check:', err.message);
+      }
+
+      if (userEmail) {
+        // User is already logged in — try loading with their email
+        const authResult = await loadPresentation(userEmail);
+        if (authResult === 'ok') return;
+
+        // Auth failed even with email — show appropriate error
+        if (authResult === 'salesforce') {
+          showError(
+            'This presentation is restricted to Salesforce employees.',
+            'You are signed in as ' + userEmail + ' but this presentation requires a @salesforce.com email.',
+            true
+          );
+        } else if (authResult === 'owner') {
+          showError(
+            'Private Presentation',
+            'This presentation is private and can only be viewed by its owner.',
+            true
+          );
+        } else {
+          showError('Unable to load presentation', authResult);
+        }
       } else {
-        showError(result);
+        // Not logged in — redirect to main app login
+        if (publicResult === 'salesforce' || publicResult === 'owner') {
+          showError(
+            'Sign in required',
+            'Please sign in to Slide Builder to view this presentation.',
+            true
+          );
+        } else {
+          showError('Unable to load presentation', publicResult);
+        }
       }
     }
 
@@ -197,7 +220,6 @@
 
         // Show viewer
         document.getElementById('loading-screen').style.display = 'none';
-        document.getElementById('auth-screen').style.display = 'none';
         document.getElementById('viewer').style.display = 'block';
         showSlide(0);
         return 'ok';
@@ -265,7 +287,6 @@
 
     // ─── Click Navigation ───
     document.getElementById('slide-container').addEventListener('click', (e) => {
-      // Don't navigate if clicking controls
       if (e.target.closest('#controls')) return;
       const rect = e.currentTarget.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -302,65 +323,17 @@
       }
     }
 
-    // ─── Auth Screen ───
-    function showAuthScreen(title, message) {
-      document.getElementById('loading-screen').style.display = 'none';
-      document.getElementById('auth-screen').style.display = 'flex';
-      document.getElementById('auth-title').textContent = title;
-      document.getElementById('auth-message').textContent = message;
-    }
-
-    async function handleViewerAuth() {
-      const email = document.getElementById('auth-email').value.trim();
-      if (!email) return;
-
-      const errEl = document.getElementById('auth-error');
-      errEl.style.display = 'none';
-
-      // Initialize Magic Link if not done
-      if (!magic) {
-        try {
-          const configResp = await fetch('/api/auth/config');
-          const config = await configResp.json();
-          magic = new Magic(config.magicPublishableKey);
-        } catch (e) {
-          errEl.textContent = 'Failed to initialize authentication';
-          errEl.style.display = 'block';
-          return;
-        }
-      }
-
-      try {
-        // Magic Link OTP login
-        await magic.auth.loginWithEmailOTP({ email, showUI: true });
-        viewerEmail = email;
-
-        // Try loading again with authenticated email
-        document.getElementById('auth-screen').style.display = 'none';
-        document.getElementById('loading-screen').style.display = 'flex';
-
-        const result = await loadPresentation(email);
-        if (result !== 'ok') {
-          showError(result === 'salesforce' ? 'This presentation requires a @salesforce.com email' : result);
-        }
-      } catch (e) {
-        if (e.message?.includes('cancel')) return;
-        errEl.textContent = e.message || 'Authentication failed';
-        errEl.style.display = 'block';
-      }
-    }
-
-    // Enter on email input
-    document.getElementById('auth-email').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') handleViewerAuth();
-    });
-
     // ─── Error ───
-    function showError(msg) {
+    function showError(title, msg, showLoginLink) {
       document.getElementById('loading-screen').style.display = 'none';
-      document.getElementById('auth-screen').style.display = 'none';
       document.getElementById('error-screen').style.display = 'flex';
-      document.getElementById('error-message').textContent = msg;
+      document.getElementById('error-title').textContent = title || 'Unable to load presentation';
+      document.getElementById('error-message').textContent = msg || 'Something went wrong.';
+      if (showLoginLink) {
+        const link = document.getElementById('error-link');
+        link.style.display = 'inline';
+        link.href = '/';
+      }
     }
 
     // ─── Start ───
