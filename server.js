@@ -1404,6 +1404,32 @@ async function generateFromTemplate(presentation, presData, authClient, template
 
   // Helper: copy template via service account, then share with user as writer
   async function copyTemplateForUser(title) {
+    // First, clean up old files in the service account's Drive to free quota
+    try {
+      const oldFiles = await saDriveService.files.list({
+        q: "mimeType='application/vnd.google-apps.presentation' and trashed=false",
+        fields: 'files(id, name, createdTime)',
+        orderBy: 'createdTime',
+        pageSize: 100
+      });
+      const files = oldFiles.data.files || [];
+      // Keep the most recent 5, delete the rest
+      if (files.length > 5) {
+        const toDelete = files.slice(0, files.length - 5);
+        console.log(`[Template] Cleaning up ${toDelete.length} old SA Drive files to free quota`);
+        for (const f of toDelete) {
+          try {
+            await saDriveService.files.delete({ fileId: f.id });
+            console.log(`[Template] Deleted old SA file: ${f.name} (${f.id})`);
+          } catch (e) {
+            console.warn(`[Template] Could not delete SA file ${f.id}: ${e.message}`);
+          }
+        }
+      }
+    } catch (cleanupErr) {
+      console.warn(`[Template] SA Drive cleanup failed (non-fatal): ${cleanupErr.message}`);
+    }
+
     // Service account copies the file (it has drive scope + the template is shared with it)
     const copyResp = await saDriveService.files.copy({
       fileId: templateId,
