@@ -1418,72 +1418,33 @@ async function generateFromTemplate(presentation, presData, authClient, template
   let presentationId, presentationUrl;
 
   // Helper: copy template for user
-  // Strategy: SA copies the template (it has read access), then shares the copy with the user.
-  // The copy lives on the SA's Drive briefly — SA then transfers ownership or grants writer.
+  // SA has 0 storage quota (consumer SA), so it can't copy files into its own Drive.
+  // Strategy: SA makes the template "anyone with link = reader", then the USER's OAuth copies it.
+  // The copy lands in the user's Drive using their quota.
   async function copyTemplateForUser(title) {
-    // Step 1: Clean up SA Drive completely to free quota
+    // Step 1: Make the template accessible to anyone with the link (so user's OAuth can see it)
     try {
-      await saDriveService.files.emptyTrash();
-      console.log(`[Template] Emptied SA trash`);
-    } catch (e) { console.log(`[Template] Trash empty: ${e.message}`); }
-
-    // Delete ALL non-template files on SA Drive
-    try {
-      const allFiles = await saDriveService.files.list({
-        q: "trashed=false",
-        fields: 'files(id, name, mimeType, size)',
-        pageSize: 1000
+      await saDriveService.permissions.create({
+        fileId: templateId,
+        requestBody: {
+          role: 'reader',
+          type: 'anyone'
+        }
       });
-      const files = allFiles.data.files || [];
-      console.log(`[Template] SA Drive has ${files.length} files`);
-      for (const f of files) {
-        if (f.id === templateId) continue;
-        try {
-          await saDriveService.files.delete({ fileId: f.id });
-          console.log(`[Template] Deleted SA file: ${f.name} (${f.size || '?'} bytes)`);
-        } catch (e) { console.log(`[Template] Could not delete ${f.id}: ${e.message}`); }
-      }
-    } catch (e) { console.log(`[Template] Cleanup error: ${e.message}`); }
+      console.log(`[Template] Made template link-accessible`);
+    } catch (permErr) {
+      // Might already be set, or SA might not own the file
+      console.log(`[Template] Link-access permission result: ${permErr.message || 'ok'}`);
+    }
 
-    // Step 2: Check SA storage quota
-    try {
-      const about = await saDriveService.about.get({ fields: 'storageQuota' });
-      const q = about.data.storageQuota;
-      console.log(`[Template] SA quota: limit=${q.limit}, usage=${q.usage}, usageInDrive=${q.usageInDrive}, usageInDriveTrash=${q.usageInDriveTrash}`);
-    } catch (e) { console.log(`[Template] Quota check: ${e.message}`); }
-
-    // Step 3: SA copies the template
-    const copyResp = await saDriveService.files.copy({
+    // Step 2: User's OAuth copies the template (lands in their Drive)
+    const userDriveService = google.drive({ version: 'v3', auth: authClient });
+    const copyResp = await userDriveService.files.copy({
       fileId: templateId,
       requestBody: { name: title }
     });
     const newId = copyResp.data.id;
-    console.log(`[Template] SA copied template → ${newId}`);
-
-    // Step 4: Share the copy with the user as writer
-    try {
-      await saDriveService.permissions.create({
-        fileId: newId,
-        transferOwnership: true,
-        requestBody: {
-          role: 'owner',
-          type: 'user',
-          emailAddress: userEmail
-        }
-      });
-      console.log(`[Template] Transferred ownership to ${userEmail}`);
-    } catch (ownerErr) {
-      console.log(`[Template] Ownership transfer failed: ${ownerErr.message}, trying writer`);
-      await saDriveService.permissions.create({
-        fileId: newId,
-        requestBody: {
-          role: 'writer',
-          type: 'user',
-          emailAddress: userEmail
-        }
-      });
-      console.log(`[Template] Granted writer access to ${userEmail}`);
-    }
+    console.log(`[Template] User copied template to their Drive → ${newId}`);
 
     return newId;
   }
@@ -1762,9 +1723,9 @@ CRITICAL: Use the EXACT objectId values from the original structure. Return ONLY
     }
   }
 
-  // 7. Update presentation title (use service account since it owns/has access to the file)
+  // 7. Update presentation title (user owns the copy)
   try {
-    await saDriveService.files.update({
+    await driveService.files.update({
       fileId: presentationId,
       requestBody: { name: topic || presentation.name }
     });
