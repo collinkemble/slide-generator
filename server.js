@@ -1404,23 +1404,38 @@ async function generateFromTemplate(presentation, presData, authClient, template
 
   // Helper: copy template via service account, then share with user as writer
   async function copyTemplateForUser(title) {
-    // First, clean up old files in the service account's Drive to free quota
+    // First, aggressively clean up the service account's Drive to free quota
     try {
+      // Step 1: Empty the trash (trashed files still count against quota)
+      try {
+        await saDriveService.files.emptyTrash();
+        console.log(`[Template] Emptied SA Drive trash`);
+      } catch (trashErr) {
+        console.warn(`[Template] Could not empty trash: ${trashErr.message}`);
+      }
+
+      // Step 2: Delete ALL files in the SA's Drive (except the original template)
       const oldFiles = await saDriveService.files.list({
-        q: "mimeType='application/vnd.google-apps.presentation' and trashed=false",
-        fields: 'files(id, name, createdTime)',
+        q: "trashed=false",
+        fields: 'files(id, name, createdTime, mimeType)',
         orderBy: 'createdTime',
-        pageSize: 100
+        pageSize: 200
       });
       const files = oldFiles.data.files || [];
-      // Keep the most recent 5, delete the rest
-      if (files.length > 5) {
-        const toDelete = files.slice(0, files.length - 5);
-        console.log(`[Template] Cleaning up ${toDelete.length} old SA Drive files to free quota`);
-        for (const f of toDelete) {
+      console.log(`[Template] SA Drive has ${files.length} files`);
+
+      // Delete everything except keep 0 — we don't need old copies
+      if (files.length > 0) {
+        console.log(`[Template] Cleaning up ${files.length} SA Drive files to free quota`);
+        for (const f of files) {
+          // Don't delete the original template
+          if (f.id === templateId) {
+            console.log(`[Template] Skipping template file: ${f.name}`);
+            continue;
+          }
           try {
             await saDriveService.files.delete({ fileId: f.id });
-            console.log(`[Template] Deleted old SA file: ${f.name} (${f.id})`);
+            console.log(`[Template] Deleted SA file: ${f.name} (${f.id})`);
           } catch (e) {
             console.warn(`[Template] Could not delete SA file ${f.id}: ${e.message}`);
           }
