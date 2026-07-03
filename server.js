@@ -1402,81 +1402,36 @@ async function generateFromTemplate(presentation, presData, authClient, template
   //    Then transfer ownership to the user so their OAuth can edit it.
   let presentationId, presentationUrl;
 
-  // Helper: copy template via service account, then share with user as writer
+  // Helper: copy template for user
+  // Strategy: share the template with the user, then let the USER's auth do the copy
+  // (avoids SA Drive quota issues entirely — copy lands in user's Drive)
   async function copyTemplateForUser(title) {
-    // First, aggressively clean up the service account's Drive to free quota
+    // Step 1: Ensure the user has at least 'reader' access to the template
+    // (so their OAuth can call files.copy on it)
     try {
-      // Step 1: Empty the trash (trashed files still count against quota)
-      try {
-        await saDriveService.files.emptyTrash();
-        console.log(`[Template] Emptied SA Drive trash`);
-      } catch (trashErr) {
-        console.warn(`[Template] Could not empty trash: ${trashErr.message}`);
-      }
-
-      // Step 2: Delete ALL files in the SA's Drive (except the original template)
-      const oldFiles = await saDriveService.files.list({
-        q: "trashed=false",
-        fields: 'files(id, name, createdTime, mimeType)',
-        orderBy: 'createdTime',
-        pageSize: 200
+      await saDriveService.permissions.create({
+        fileId: templateId,
+        requestBody: {
+          role: 'reader',
+          type: 'user',
+          emailAddress: userEmail
+        },
+        sendNotificationEmail: false
       });
-      const files = oldFiles.data.files || [];
-      console.log(`[Template] SA Drive has ${files.length} files`);
-
-      // Delete everything except keep 0 — we don't need old copies
-      if (files.length > 0) {
-        console.log(`[Template] Cleaning up ${files.length} SA Drive files to free quota`);
-        for (const f of files) {
-          // Don't delete the original template
-          if (f.id === templateId) {
-            console.log(`[Template] Skipping template file: ${f.name}`);
-            continue;
-          }
-          try {
-            await saDriveService.files.delete({ fileId: f.id });
-            console.log(`[Template] Deleted SA file: ${f.name} (${f.id})`);
-          } catch (e) {
-            console.warn(`[Template] Could not delete SA file ${f.id}: ${e.message}`);
-          }
-        }
-      }
-    } catch (cleanupErr) {
-      console.warn(`[Template] SA Drive cleanup failed (non-fatal): ${cleanupErr.message}`);
+      console.log(`[Template] Shared template with user as reader`);
+    } catch (shareErr) {
+      // If permission already exists, that's fine
+      console.log(`[Template] Template share result: ${shareErr.message || 'ok'}`);
     }
 
-    // Service account copies the file (it has drive scope + the template is shared with it)
-    const copyResp = await saDriveService.files.copy({
+    // Step 2: Use the USER's auth to copy the file (lands in their Drive, uses their quota)
+    const userDriveService = google.drive({ version: 'v3', auth: authClient });
+    const copyResp = await userDriveService.files.copy({
       fileId: templateId,
       requestBody: { name: title }
     });
     const newId = copyResp.data.id;
-    console.log(`[Template] Service account copied template → ${newId}`);
-
-    // Try to transfer ownership to user; fall back to writer if org policy blocks transfer
-    try {
-      await saDriveService.permissions.create({
-        fileId: newId,
-        transferOwnership: true,
-        requestBody: {
-          role: 'owner',
-          type: 'user',
-          emailAddress: userEmail
-        }
-      });
-      console.log(`[Template] Transferred ownership to ${userEmail}`);
-    } catch (ownerErr) {
-      console.warn(`[Template] Ownership transfer failed (${ownerErr.message}), granting writer access instead`);
-      await saDriveService.permissions.create({
-        fileId: newId,
-        requestBody: {
-          role: 'writer',
-          type: 'user',
-          emailAddress: userEmail
-        }
-      });
-      console.log(`[Template] Granted writer access to ${userEmail}`);
-    }
+    console.log(`[Template] User copied template to their Drive → ${newId}`);
 
     return newId;
   }
@@ -1505,9 +1460,9 @@ async function generateFromTemplate(presentation, presData, authClient, template
   }
 
   // 3. Read the copied presentation to understand its slide structure
-  // Use service account Slides service since the service account owns/copied the file
-  const saSlidesService = google.slides({ version: 'v1', auth: serviceAuth });
-  const copiedPres = await saSlidesService.presentations.get({ presentationId });
+  // Use user's auth since the copy is now in the user's Drive
+  const slidesService = google.slides({ version: 'v1', auth: authClient });
+  const copiedPres = await slidesService.presentations.get({ presentationId });
   const templateSlides = copiedPres.data.slides || [];
 
   // Extract the text content from each slide in the template
@@ -1680,7 +1635,7 @@ CRITICAL: Use the EXACT objectId values from the original structure. Return ONLY
 
   if (textReplaceRequests.length > 0) {
     try {
-      await saSlidesService.presentations.batchUpdate({
+      await slidesService.presentations.batchUpdate({
         presentationId,
         requestBody: { requests: textReplaceRequests }
       });
@@ -1691,7 +1646,7 @@ CRITICAL: Use the EXACT objectId values from the original structure. Return ONLY
       let successCount = 0;
       for (let i = 0; i < textReplaceRequests.length; i += 2) {
         try {
-          await saSlidesService.presentations.batchUpdate({
+          await slidesService.presentations.batchUpdate({
             presentationId,
             requestBody: { requests: [textReplaceRequests[i], textReplaceRequests[i + 1]] }
           });
@@ -1726,7 +1681,7 @@ CRITICAL: Use the EXACT objectId values from the original structure. Return ONLY
         // Set as slide background
         const pageSlide = templateSlides[i];
         if (pageSlide) {
-          await saSlidesService.presentations.batchUpdate({
+          await slidesService.presentations.batchUpdate({
             presentationId,
             requestBody: {
               requests: [{
