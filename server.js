@@ -615,23 +615,38 @@ app.get('/api/auth/google/callback', async (req, res) => {
   }
 });
 
-// GET /api/auth/google/status — check if user has connected Google
+// GET /api/auth/google/status — check if user has connected Google AND token is still valid
 app.get('/api/auth/google/status', async (req, res) => {
   try {
     const email = req.query.email;
     if (!email) return res.status(400).json({ error: 'Email required' });
 
     const user = await getOrCreateUser(email);
-    const tokens = await query('SELECT google_email, token_expiry FROM google_tokens WHERE user_id = ?', [user.id]);
+    const tokens = await query('SELECT google_email, token_expiry, access_token, refresh_token FROM google_tokens WHERE user_id = ?', [user.id]);
 
     if (tokens.length === 0) {
       return res.json({ connected: false });
     }
 
-    res.json({
-      connected: true,
-      googleEmail: tokens[0].google_email
-    });
+    // Actually verify the token works by making a lightweight API call
+    try {
+      const authClient = await getAuthenticatedClient(user.id);
+      if (!authClient) {
+        // Token exists but refresh failed — getAuthenticatedClient already cleaned it up
+        return res.json({ connected: false, expired: true });
+      }
+      // Token is valid (getAuthenticatedClient refreshes if needed)
+      res.json({
+        connected: true,
+        googleEmail: tokens[0].google_email
+      });
+    } catch (verifyErr) {
+      console.log(`[GoogleStatus] Token verification failed for ${email}: ${verifyErr.message}`);
+      // Token exists but is invalid/expired and can't be refreshed
+      // Clean up the dead token
+      await query('DELETE FROM google_tokens WHERE user_id = ?', [user.id]);
+      res.json({ connected: false, expired: true });
+    }
   } catch (err) {
     console.error('Google status check error:', err);
     res.status(500).json({ error: 'Failed to check Google status' });

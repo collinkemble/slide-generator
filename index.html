@@ -1687,6 +1687,13 @@ async function checkGoogleStatus() {
         bannerText.textContent = `Connected as ${data.googleEmail}`;
         bannerText.style.color = '#065F46';
         bannerActions.innerHTML = `<button onclick="disconnectGoogle()" class="cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #374151; font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 8px;">Disconnect</button>`;
+      } else if (data.expired) {
+        // Token was expired — show reconnect messaging
+        banner.style.background = '#FEF2F2';
+        banner.style.border = '1px solid #FECACA';
+        bannerText.textContent = 'Google connection expired — please reconnect';
+        bannerText.style.color = '#DC2626';
+        bannerActions.innerHTML = `<button onclick="connectGoogle()" class="cursor-pointer" style="background: #0176D3; color: white; font-size: 13px; font-weight: 700; padding: 6px 16px; border-radius: 8px; border: none;">🔄 Reconnect Google</button>`;
       } else {
         banner.style.background = '#FEF3C7';
         banner.style.border = '1px solid #FCD34D';
@@ -1700,28 +1707,34 @@ async function checkGoogleStatus() {
     const detailBanner = document.getElementById('detail-google-banner');
     const detailText = document.getElementById('detail-google-text');
     const detailActions = document.getElementById('detail-google-actions');
+    const authErr = document.getElementById('detail-auth-error');
     if (detailBanner) {
-      detailBanner.classList.remove('hidden');
-      detailBanner.style.display = 'flex';
       if (data.connected) {
+        // Connected — show green banner, hide auth error
+        detailBanner.classList.remove('hidden');
+        detailBanner.style.display = 'flex';
         detailBanner.style.background = '#ECFDF5';
         detailBanner.style.border = '1px solid #6EE7B7';
         detailText.textContent = `Connected as ${data.googleEmail}`;
         detailText.style.color = '#065F46';
         detailActions.innerHTML = `<button onclick="disconnectGoogle()" class="cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #374151; font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 8px;">Disconnect</button>`;
+        if (authErr) { authErr.classList.add('hidden'); authErr.style.display = 'none'; }
+      } else if (data.expired) {
+        // Expired — show ONLY the auth error banner (not both)
+        detailBanner.classList.add('hidden');
+        detailBanner.style.display = 'none';
+        if (authErr) { authErr.classList.remove('hidden'); authErr.style.display = 'block'; }
       } else {
+        // Never connected — show connect banner only
+        detailBanner.classList.remove('hidden');
+        detailBanner.style.display = 'flex';
         detailBanner.style.background = '#FEF3C7';
         detailBanner.style.border = '1px solid #FCD34D';
         detailText.textContent = 'Connect your Google Account to generate presentations';
         detailText.style.color = '#92400E';
         detailActions.innerHTML = `<button onclick="connectGoogle()" class="cursor-pointer" style="background: #0176D3; color: white; font-size: 13px; font-weight: 700; padding: 6px 16px; border-radius: 8px; border: none;">Connect Google</button>`;
+        if (authErr) { authErr.classList.add('hidden'); authErr.style.display = 'none'; }
       }
-    }
-
-    // Hide auth error banner if connected
-    if (data.connected) {
-      const authErr = document.getElementById('detail-auth-error');
-      if (authErr) authErr.classList.add('hidden');
     }
   } catch (err) {
     console.log('Google status check failed:', err.message);
@@ -1734,16 +1747,11 @@ function showAuthError() {
     authErr.classList.remove('hidden');
     authErr.style.display = 'block';
   }
-  // Update the detail banner to show disconnected state
+  // HIDE the detail-google-banner to avoid duplicate connect buttons
   const detailBanner = document.getElementById('detail-google-banner');
-  const detailText = document.getElementById('detail-google-text');
-  const detailActions = document.getElementById('detail-google-actions');
   if (detailBanner) {
-    detailBanner.style.background = '#FEF3C7';
-    detailBanner.style.border = '1px solid #FCD34D';
-    detailText.textContent = 'Google connection expired — please reconnect';
-    detailText.style.color = '#92400E';
-    detailActions.innerHTML = `<button onclick="connectGoogle()" class="cursor-pointer" style="background: #0176D3; color: white; font-size: 13px; font-weight: 700; padding: 6px 16px; border-radius: 8px; border: none;">Connect Google</button>`;
+    detailBanner.classList.add('hidden');
+    detailBanner.style.display = 'none';
   }
   googleConnected = false;
 }
