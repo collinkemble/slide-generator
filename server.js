@@ -1400,6 +1400,85 @@ app.post('/api/presentations/:id/export-google', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════
+// APP-SPECIFIC — Web Presentation Viewer
+// ═══════════════════════════════════════════════
+
+// GET /present/:shareToken — Serve the presentation viewer
+app.get('/present/:shareToken', async (req, res) => {
+  try {
+    const rows = await query('SELECT id, sharing_mode FROM presentations WHERE share_token = ?', [req.params.shareToken]);
+    if (rows.length === 0) return res.status(404).send('Presentation not found');
+    // Serve the viewer HTML — auth is checked on the data API call, not here
+    res.sendFile(path.join(__dirname, 'present.html'));
+  } catch (err) {
+    console.error('Viewer route error:', err);
+    res.status(500).send('Internal server error');
+  }
+});
+
+// GET /api/present/:shareToken/data — Get presentation data for the viewer
+app.get('/api/present/:shareToken/data', async (req, res) => {
+  try {
+    const rows = await query(
+      `SELECT p.id, p.name, p.sharing_mode, p.user_id, p.data,
+              u.email as owner_email
+       FROM presentations p
+       JOIN users u ON p.user_id = u.id
+       WHERE p.share_token = ?`,
+      [req.params.shareToken]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    const presentation = rows[0];
+
+    // Check access based on sharing mode
+    if (presentation.sharing_mode === 'private') {
+      // Only the owner can view — require email match
+      const viewerEmail = req.query.email;
+      if (!viewerEmail || viewerEmail.toLowerCase() !== presentation.owner_email.toLowerCase()) {
+        return res.status(403).json({ error: 'This presentation is private', requiresAuth: true, authType: 'owner' });
+      }
+    } else if (presentation.sharing_mode === 'salesforce') {
+      // Require @salesforce.com email via Magic Link
+      const viewerEmail = req.query.email;
+      if (!viewerEmail || !viewerEmail.toLowerCase().endsWith('@salesforce.com')) {
+        return res.status(403).json({ error: 'This presentation requires a Salesforce login', requiresAuth: true, authType: 'salesforce' });
+      }
+    }
+    // 'everyone' mode — no auth needed
+
+    // Get slides
+    const slides = await query(
+      'SELECT slide_index, title, heading, body, image_url, layout_type FROM presentation_slides WHERE presentation_id = ? ORDER BY slide_index ASC',
+      [presentation.id]
+    );
+
+    let presData = presentation.data;
+    if (typeof presData === 'string') {
+      try { presData = JSON.parse(presData); } catch(e) { presData = {}; }
+    }
+
+    res.json({
+      name: presentation.name,
+      sharingMode: presentation.sharing_mode,
+      brandPrimaryColor: presData?.brandPrimaryColor || '#0176D3',
+      slides: slides.map(s => ({
+        index: s.slide_index,
+        title: s.title,
+        heading: s.heading,
+        body: s.body,
+        imageUrl: s.image_url,
+        layoutType: s.layout_type
+      }))
+    });
+
+  } catch (err) {
+    console.error('Viewer data error:', err);
+    res.status(500).json({ error: 'Failed to load presentation' });
+  }
+});
+
 // ─── Helpers for color conversion ───
 function hexToRgb(hex) {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);

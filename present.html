@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Presentation</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+
+    /* ─── Auth Screen ─── */
+    #auth-screen {
+      display: none;
+      position: fixed; inset: 0; z-index: 100;
+      background: #111; color: #fff;
+      flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+    }
+    #auth-screen h2 { font-size: 22px; font-weight: 600; }
+    #auth-screen p { font-size: 14px; color: #999; max-width: 400px; text-align: center; }
+    #auth-screen input {
+      padding: 12px 20px; border-radius: 10px; border: 1px solid #333; background: #1a1a1a;
+      color: #fff; font-size: 15px; width: 320px; outline: none;
+    }
+    #auth-screen input:focus { border-color: #0176D3; }
+    #auth-screen button {
+      padding: 12px 28px; border-radius: 10px; border: none; background: #0176D3;
+      color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
+    }
+    #auth-screen button:hover { background: #015bb0; }
+    #auth-error { color: #ef4444; font-size: 13px; display: none; }
+
+    /* ─── Loading Screen ─── */
+    #loading-screen {
+      position: fixed; inset: 0; z-index: 90;
+      background: #000; color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; gap: 12px;
+    }
+    .spinner {
+      width: 24px; height: 24px; border: 3px solid #333; border-top-color: #0176D3;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Slide Viewer ─── */
+    #viewer {
+      display: none;
+      position: fixed; inset: 0;
+      background: #000;
+      cursor: none;
+    }
+    #viewer.show-cursor { cursor: default; }
+
+    #slide-container {
+      width: 100%; height: 100%;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    #slide-img {
+      max-width: 100%; max-height: 100%;
+      object-fit: contain;
+      transition: opacity 0.2s ease;
+      user-select: none; -webkit-user-drag: none;
+    }
+    #slide-img.loading { opacity: 0.3; }
+
+    /* ─── Controls Overlay ─── */
+    #controls {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      padding: 16px 24px;
+      background: linear-gradient(transparent, rgba(0,0,0,0.7));
+      display: flex; align-items: center; justify-content: space-between;
+      opacity: 0; transition: opacity 0.3s ease;
+      z-index: 10;
+    }
+    #viewer.show-cursor #controls { opacity: 1; }
+
+    #slide-counter {
+      color: rgba(255,255,255,0.7); font-size: 14px; font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .control-btn {
+      background: rgba(255,255,255,0.15); border: none; color: #fff;
+      width: 40px; height: 40px; border-radius: 8px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; transition: background 0.2s;
+    }
+    .control-btn:hover { background: rgba(255,255,255,0.3); }
+
+    #nav-buttons { display: flex; gap: 8px; align-items: center; }
+
+    #fullscreen-btn {
+      background: rgba(255,255,255,0.15); border: none; color: #fff;
+      padding: 8px 16px; border-radius: 8px; cursor: pointer;
+      font-size: 13px; font-weight: 500; transition: background 0.2s;
+    }
+    #fullscreen-btn:hover { background: rgba(255,255,255,0.3); }
+
+    /* ─── Error Screen ─── */
+    #error-screen {
+      display: none; position: fixed; inset: 0; z-index: 80;
+      background: #111; color: #fff;
+      flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+    }
+    #error-screen h2 { font-size: 20px; }
+    #error-screen p { color: #999; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <!-- Auth Screen (for Salesforce-only presentations) -->
+  <div id="auth-screen">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#0176D3" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+    <h2 id="auth-title">Login Required</h2>
+    <p id="auth-message">This presentation requires authentication.</p>
+    <input type="email" id="auth-email" placeholder="Enter your email" autocomplete="email">
+    <button onclick="handleViewerAuth()">Continue</button>
+    <p id="auth-error"></p>
+  </div>
+
+  <!-- Loading Screen -->
+  <div id="loading-screen">
+    <div class="spinner"></div>
+    <span>Loading presentation...</span>
+  </div>
+
+  <!-- Main Viewer -->
+  <div id="viewer">
+    <div id="slide-container">
+      <img id="slide-img" alt="Presentation slide">
+    </div>
+    <div id="controls">
+      <span id="slide-counter">1 / 1</span>
+      <div id="nav-buttons">
+        <button class="control-btn" onclick="prevSlide()" title="Previous slide">◀</button>
+        <button class="control-btn" onclick="nextSlide()" title="Next slide">▶</button>
+      </div>
+      <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶ Fullscreen</button>
+    </div>
+  </div>
+
+  <!-- Error Screen -->
+  <div id="error-screen">
+    <h2>Unable to load presentation</h2>
+    <p id="error-message">Something went wrong.</p>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/magic-sdk/dist/magic.js"></script>
+  <script>
+    let slides = [];
+    let currentSlide = 0;
+    let cursorTimeout = null;
+    let magic = null;
+    let viewerEmail = null;
+
+    const shareToken = window.location.pathname.split('/present/')[1]?.split('?')[0]?.split('/')[0];
+
+    // ─── Init ───
+    async function init() {
+      if (!shareToken) return showError('Invalid presentation link');
+
+      // Try loading without auth first
+      const result = await loadPresentation();
+      if (result === 'ok') return;
+      if (result === 'salesforce') {
+        showAuthScreen('Salesforce Login Required', 'This presentation is restricted to Salesforce employees. Please log in with your @salesforce.com email.');
+      } else if (result === 'owner') {
+        showAuthScreen('Private Presentation', 'This presentation is private. Please log in with the owner\'s email.');
+      } else {
+        showError(result);
+      }
+    }
+
+    async function loadPresentation(email) {
+      try {
+        const url = `/api/present/${shareToken}/data` + (email ? `?email=${encodeURIComponent(email)}` : '');
+        const resp = await fetch(url);
+        const data = await resp.json();
+
+        if (!resp.ok) {
+          if (data.requiresAuth) return data.authType;
+          return data.error || 'Failed to load';
+        }
+
+        slides = data.slides || [];
+        if (slides.length === 0) return 'No slides found in this presentation';
+
+        document.title = data.name || 'Presentation';
+
+        // Preload first few images
+        slides.forEach((s, i) => {
+          if (i < 3 && s.imageUrl) {
+            const img = new Image();
+            img.src = s.imageUrl;
+          }
+        });
+
+        // Show viewer
+        document.getElementById('loading-screen').style.display = 'none';
+        document.getElementById('auth-screen').style.display = 'none';
+        document.getElementById('viewer').style.display = 'block';
+        showSlide(0);
+        return 'ok';
+      } catch (err) {
+        return 'Failed to load presentation: ' + err.message;
+      }
+    }
+
+    function showSlide(index) {
+      if (index < 0 || index >= slides.length) return;
+      currentSlide = index;
+
+      const img = document.getElementById('slide-img');
+      const slide = slides[index];
+
+      if (slide.imageUrl) {
+        img.classList.add('loading');
+        const preload = new Image();
+        preload.onload = () => {
+          img.src = slide.imageUrl;
+          img.classList.remove('loading');
+        };
+        preload.onerror = () => {
+          img.src = '';
+          img.alt = 'Failed to load slide';
+          img.classList.remove('loading');
+        };
+        preload.src = slide.imageUrl;
+      } else {
+        img.src = '';
+        img.alt = slide.title || 'Slide ' + (index + 1);
+      }
+
+      document.getElementById('slide-counter').textContent = `${index + 1} / ${slides.length}`;
+
+      // Preload next 2 slides
+      for (let i = 1; i <= 2; i++) {
+        const next = slides[index + i];
+        if (next?.imageUrl) {
+          const p = new Image();
+          p.src = next.imageUrl;
+        }
+      }
+    }
+
+    function nextSlide() { showSlide(currentSlide + 1); }
+    function prevSlide() { showSlide(currentSlide - 1); }
+
+    // ─── Keyboard Navigation ───
+    document.addEventListener('keydown', (e) => {
+      switch (e.key) {
+        case 'ArrowRight': case 'ArrowDown': case ' ': case 'PageDown':
+          e.preventDefault(); nextSlide(); break;
+        case 'ArrowLeft': case 'ArrowUp': case 'Backspace': case 'PageUp':
+          e.preventDefault(); prevSlide(); break;
+        case 'Home': e.preventDefault(); showSlide(0); break;
+        case 'End': e.preventDefault(); showSlide(slides.length - 1); break;
+        case 'Escape':
+          if (document.fullscreenElement) document.exitFullscreen();
+          break;
+        case 'f': case 'F':
+          e.preventDefault(); toggleFullscreen(); break;
+      }
+    });
+
+    // ─── Click Navigation ───
+    document.getElementById('slide-container').addEventListener('click', (e) => {
+      // Don't navigate if clicking controls
+      if (e.target.closest('#controls')) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      if (x < rect.width * 0.3) prevSlide();
+      else nextSlide();
+    });
+
+    // ─── Touch/Swipe ───
+    let touchStartX = 0;
+    document.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; }, { passive: true });
+    document.addEventListener('touchend', (e) => {
+      const dx = e.changedTouches[0].clientX - touchStartX;
+      if (Math.abs(dx) > 50) {
+        if (dx < 0) nextSlide();
+        else prevSlide();
+      }
+    }, { passive: true });
+
+    // ─── Cursor auto-hide ───
+    document.addEventListener('mousemove', () => {
+      document.getElementById('viewer').classList.add('show-cursor');
+      clearTimeout(cursorTimeout);
+      cursorTimeout = setTimeout(() => {
+        document.getElementById('viewer').classList.remove('show-cursor');
+      }, 3000);
+    });
+
+    // ─── Fullscreen ───
+    function toggleFullscreen() {
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+    }
+
+    // ─── Auth Screen ───
+    function showAuthScreen(title, message) {
+      document.getElementById('loading-screen').style.display = 'none';
+      document.getElementById('auth-screen').style.display = 'flex';
+      document.getElementById('auth-title').textContent = title;
+      document.getElementById('auth-message').textContent = message;
+    }
+
+    async function handleViewerAuth() {
+      const email = document.getElementById('auth-email').value.trim();
+      if (!email) return;
+
+      const errEl = document.getElementById('auth-error');
+      errEl.style.display = 'none';
+
+      // Initialize Magic Link if not done
+      if (!magic) {
+        try {
+          const configResp = await fetch('/api/auth/config');
+          const config = await configResp.json();
+          magic = new Magic(config.magicPublishableKey);
+        } catch (e) {
+          errEl.textContent = 'Failed to initialize authentication';
+          errEl.style.display = 'block';
+          return;
+        }
+      }
+
+      try {
+        // Magic Link OTP login
+        await magic.auth.loginWithEmailOTP({ email, showUI: true });
+        viewerEmail = email;
+
+        // Try loading again with authenticated email
+        document.getElementById('auth-screen').style.display = 'none';
+        document.getElementById('loading-screen').style.display = 'flex';
+
+        const result = await loadPresentation(email);
+        if (result !== 'ok') {
+          showError(result === 'salesforce' ? 'This presentation requires a @salesforce.com email' : result);
+        }
+      } catch (e) {
+        if (e.message?.includes('cancel')) return;
+        errEl.textContent = e.message || 'Authentication failed';
+        errEl.style.display = 'block';
+      }
+    }
+
+    // Enter on email input
+    document.getElementById('auth-email').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleViewerAuth();
+    });
+
+    // ─── Error ───
+    function showError(msg) {
+      document.getElementById('loading-screen').style.display = 'none';
+      document.getElementById('auth-screen').style.display = 'none';
+      document.getElementById('error-screen').style.display = 'flex';
+      document.getElementById('error-message').textContent = msg;
+    }
+
+    // ─── Start ───
+    init();
+  </script>
+</body>
+</html>
