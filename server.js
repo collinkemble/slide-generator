@@ -561,7 +561,7 @@ app.get('/api/auth/google', (req, res) => {
     access_type: 'offline',
     prompt: 'select_account',
     scope: [
-      'https://www.googleapis.com/auth/drive',
+      'https://www.googleapis.com/auth/drive.file',
       'https://www.googleapis.com/auth/userinfo.email'
     ],
     state
@@ -1418,33 +1418,35 @@ async function generateFromTemplate(presentation, presData, authClient, template
   let presentationId, presentationUrl;
 
   // Helper: copy template for user
-  // SA has 0 storage quota (consumer SA), so it can't copy files into its own Drive.
-  // Strategy: SA makes the template "anyone with link = reader", then the USER's OAuth copies it.
-  // The copy lands in the user's Drive using their quota.
+  // Problem: SA has 0 Drive quota, user's drive.file scope can't see shared files.
+  // Solution: SA downloads template as PPTX, user uploads it as a new Google Slides file.
+  // This works with drive.file scope (upload creates a new file the app owns).
   async function copyTemplateForUser(title) {
-    // Step 1: Make the template accessible to anyone with the link (so user's OAuth can see it)
-    try {
-      await saDriveService.permissions.create({
-        fileId: templateId,
-        requestBody: {
-          role: 'reader',
-          type: 'anyone'
-        }
-      });
-      console.log(`[Template] Made template link-accessible`);
-    } catch (permErr) {
-      // Might already be set, or SA might not own the file
-      console.log(`[Template] Link-access permission result: ${permErr.message || 'ok'}`);
-    }
-
-    // Step 2: User's OAuth copies the template (lands in their Drive)
-    const userDriveService = google.drive({ version: 'v3', auth: authClient });
-    const copyResp = await userDriveService.files.copy({
+    // Step 1: SA downloads the template as PPTX (binary)
+    console.log(`[Template] Downloading template as PPTX via SA...`);
+    const exportResp = await saDriveService.files.export({
       fileId: templateId,
-      requestBody: { name: title }
+      mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    }, { responseType: 'arraybuffer' });
+    const pptxBuffer = Buffer.from(exportResp.data);
+    console.log(`[Template] Downloaded PPTX: ${pptxBuffer.length} bytes`);
+
+    // Step 2: User uploads the PPTX as a new Google Slides presentation
+    const userDriveService = google.drive({ version: 'v3', auth: authClient });
+    const { Readable } = require('stream');
+    const uploadResp = await userDriveService.files.create({
+      requestBody: {
+        name: title,
+        mimeType: 'application/vnd.google-apps.presentation'  // Convert to Google Slides
+      },
+      media: {
+        mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        body: Readable.from(pptxBuffer)
+      },
+      fields: 'id'
     });
-    const newId = copyResp.data.id;
-    console.log(`[Template] User copied template to their Drive → ${newId}`);
+    const newId = uploadResp.data.id;
+    console.log(`[Template] Uploaded as Google Slides in user's Drive → ${newId}`);
 
     return newId;
   }
