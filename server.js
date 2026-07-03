@@ -1418,35 +1418,72 @@ async function generateFromTemplate(presentation, presData, authClient, template
   let presentationId, presentationUrl;
 
   // Helper: copy template for user
-  // Strategy: share the template with the user, then let the USER's auth do the copy
-  // (avoids SA Drive quota issues entirely — copy lands in user's Drive)
+  // Strategy: SA copies the template (it has read access), then shares the copy with the user.
+  // The copy lives on the SA's Drive briefly — SA then transfers ownership or grants writer.
   async function copyTemplateForUser(title) {
-    // Step 1: Ensure the user has at least 'reader' access to the template
-    // (so their OAuth can call files.copy on it)
+    // Step 1: Clean up SA Drive completely to free quota
     try {
-      await saDriveService.permissions.create({
-        fileId: templateId,
-        requestBody: {
-          role: 'reader',
-          type: 'user',
-          emailAddress: userEmail
-        },
-        sendNotificationEmail: false
-      });
-      console.log(`[Template] Shared template with user as reader`);
-    } catch (shareErr) {
-      // If permission already exists, that's fine
-      console.log(`[Template] Template share result: ${shareErr.message || 'ok'}`);
-    }
+      await saDriveService.files.emptyTrash();
+      console.log(`[Template] Emptied SA trash`);
+    } catch (e) { console.log(`[Template] Trash empty: ${e.message}`); }
 
-    // Step 2: Use the USER's auth to copy the file (lands in their Drive, uses their quota)
-    const userDriveService = google.drive({ version: 'v3', auth: authClient });
-    const copyResp = await userDriveService.files.copy({
+    // Delete ALL non-template files on SA Drive
+    try {
+      const allFiles = await saDriveService.files.list({
+        q: "trashed=false",
+        fields: 'files(id, name, mimeType, size)',
+        pageSize: 1000
+      });
+      const files = allFiles.data.files || [];
+      console.log(`[Template] SA Drive has ${files.length} files`);
+      for (const f of files) {
+        if (f.id === templateId) continue;
+        try {
+          await saDriveService.files.delete({ fileId: f.id });
+          console.log(`[Template] Deleted SA file: ${f.name} (${f.size || '?'} bytes)`);
+        } catch (e) { console.log(`[Template] Could not delete ${f.id}: ${e.message}`); }
+      }
+    } catch (e) { console.log(`[Template] Cleanup error: ${e.message}`); }
+
+    // Step 2: Check SA storage quota
+    try {
+      const about = await saDriveService.about.get({ fields: 'storageQuota' });
+      const q = about.data.storageQuota;
+      console.log(`[Template] SA quota: limit=${q.limit}, usage=${q.usage}, usageInDrive=${q.usageInDrive}, usageInDriveTrash=${q.usageInDriveTrash}`);
+    } catch (e) { console.log(`[Template] Quota check: ${e.message}`); }
+
+    // Step 3: SA copies the template
+    const copyResp = await saDriveService.files.copy({
       fileId: templateId,
       requestBody: { name: title }
     });
     const newId = copyResp.data.id;
-    console.log(`[Template] User copied template to their Drive → ${newId}`);
+    console.log(`[Template] SA copied template → ${newId}`);
+
+    // Step 4: Share the copy with the user as writer
+    try {
+      await saDriveService.permissions.create({
+        fileId: newId,
+        transferOwnership: true,
+        requestBody: {
+          role: 'owner',
+          type: 'user',
+          emailAddress: userEmail
+        }
+      });
+      console.log(`[Template] Transferred ownership to ${userEmail}`);
+    } catch (ownerErr) {
+      console.log(`[Template] Ownership transfer failed: ${ownerErr.message}, trying writer`);
+      await saDriveService.permissions.create({
+        fileId: newId,
+        requestBody: {
+          role: 'writer',
+          type: 'user',
+          emailAddress: userEmail
+        }
+      });
+      console.log(`[Template] Granted writer access to ${userEmail}`);
+    }
 
     return newId;
   }
