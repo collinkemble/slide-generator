@@ -992,10 +992,10 @@ app.post('/api/presentations/:id/share/confirm', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
-// APP-SPECIFIC — Google Slides Generation
+// APP-SPECIFIC — Image-Based Slide Generation
 // ═══════════════════════════════════════════════
 
-// POST /api/presentations/:id/generate — generate Google Slides
+// POST /api/presentations/:id/generate — generate image-based slides
 app.post('/api/presentations/:id/generate', async (req, res) => {
   try {
     const { email } = req.body;
@@ -1014,20 +1014,21 @@ app.post('/api/presentations/:id/generate', async (req, res) => {
     }
     presData = presData || {};
 
-    // Check Google connection
-    const authClient = await getAuthenticatedClient(user.id);
-    if (!authClient) {
-      return res.status(400).json({ error: 'Google account not connected. Please connect your Google account first.' });
+    // Generate a share_token if one doesn't exist
+    let shareToken = presentation.share_token;
+    if (!shareToken) {
+      shareToken = crypto.randomBytes(16).toString('hex');
+      await query('UPDATE presentations SET share_token = ? WHERE id = ?', [shareToken, presentation.id]);
     }
 
     // Mark as generating
     await query('UPDATE presentations SET status = ? WHERE id = ?', ['generating', presentation.id]);
 
     // Respond immediately — do heavy work in background to avoid Heroku 30s timeout
-    res.json({ success: true, status: 'generating', message: 'Generation started. Poll for status.' });
+    res.json({ success: true, status: 'generating', message: 'Generation started. Poll for status.', shareToken });
 
-    // ── Background generation (runs after response is sent) ──
-    generateInBackground(presentation, presData, authClient).catch(err => {
+    // Background generation (runs after response is sent) — no authClient needed
+    generateInBackground(presentation, presData).catch(err => {
       console.error('Background generation failed:', err);
     });
 
@@ -1038,7 +1039,7 @@ app.post('/api/presentations/:id/generate', async (req, res) => {
 });
 
 // POST /api/presentations/:id/slides/:slideIndex/regenerate-image
-// Regenerate a single slide's background image with optional custom prompt
+// Regenerate a single slide's image with optional custom prompt
 app.post('/api/presentations/:id/slides/:slideIndex/regenerate-image', async (req, res) => {
   try {
     const { email, prompt } = req.body;
@@ -1080,73 +1081,25 @@ app.post('/api/presentations/:id/slides/:slideIndex/regenerate-image', async (re
       slide.backgroundImageDescription = prompt.trim();
     }
 
-    // Generate new image
+    // Generate new complete slide image
     const publicUrl = await generateAndUploadSlideImage(slide, presData, topic, presentation.id, slideIndex);
     if (!publicUrl) {
       return res.status(500).json({ error: 'Image generation failed. Try rephrasing your prompt.' });
     }
 
-    // Update the Google Slide background if presentation has a Google Slides ID
-    let newThumbnailBase64 = null;
-    if (presentation.google_presentation_id) {
-      try {
-        const authClient = await getAuthenticatedClient(user.id);
-        if (authClient) {
-          const slidesService = google.slides({ version: 'v1', auth: authClient });
-          const presentationId = presentation.google_presentation_id;
-
-          // Get the page object ID for this slide
-          const pres = await slidesService.presentations.get({ presentationId });
-          const pageSlide = pres.data.slides?.[slideIndex];
-          if (pageSlide) {
-            // Update background with new image
-            await slidesService.presentations.batchUpdate({
-              presentationId,
-              requestBody: {
-                requests: [{
-                  updatePageProperties: {
-                    objectId: pageSlide.objectId,
-                    pageProperties: {
-                      pageBackgroundFill: {
-                        stretchedPictureFill: { contentUrl: publicUrl }
-                      }
-                    },
-                    fields: 'pageBackgroundFill.stretchedPictureFill.contentUrl'
-                  }
-                }]
-              }
-            });
-            console.log(`Updated Google Slide ${slideIndex + 1} background for presentation ${presentation.id}`);
-
-            // Wait for rendering, then fetch updated thumbnail
-            await new Promise(resolve => setTimeout(resolve, 1500));
-            try {
-              const thumbRes = await slidesService.presentations.pages.getThumbnail({
-                presentationId,
-                pageObjectId: pageSlide.objectId,
-                'thumbnailProperties.mimeType': 'PNG',
-                'thumbnailProperties.thumbnailSize': 'SMALL'
-              });
-              const thumbUrl = thumbRes.data.contentUrl;
-              if (thumbUrl) {
-                const imgResp = await fetch(thumbUrl);
-                if (imgResp.ok) {
-                  const imgBuffer = Buffer.from(await imgResp.arrayBuffer());
-                  newThumbnailBase64 = imgBuffer.toString('base64');
-                  slide.thumbnailBase64 = newThumbnailBase64;
-                }
-              }
-            } catch (thumbErr) {
-              console.warn('Thumbnail refresh failed (non-fatal):', thumbErr.message);
-            }
-          }
-        }
-      } catch (slidesErr) {
-        console.warn('Google Slides update failed (non-fatal):', slidesErr.message);
-      }
+    // Update the presentation_slides row
+    try {
+      await query(
+        `INSERT INTO presentation_slides (presentation_id, slide_index, image_url, title, heading, body, speaker_notes, layout_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE image_url = VALUES(image_url), updated_at = NOW()`,
+        [presentation.id, slideIndex, publicUrl, slide.title || '', slide.heading || '', slide.body || '', slide.speakerNotes || '', slide.layoutType || slide.layout || 'CONTENT']
+      );
+    } catch (dbErr) {
+      console.warn('Failed to update presentation_slides row (non-fatal):', dbErr.message);
     }
 
-    // Save updated data to DB
+    // Save updated data to JSON blob
     presData.generatedSlides = slideData;
     await query(
       'UPDATE presentations SET data = ?, updated_at = NOW() WHERE id = ?',
@@ -1155,8 +1108,7 @@ app.post('/api/presentations/:id/slides/:slideIndex/regenerate-image', async (re
 
     res.json({
       success: true,
-      backgroundImageUrl: publicUrl,
-      thumbnailBase64: newThumbnailBase64,
+      imageUrl: publicUrl,
       aiImagePrompt: slide.aiImagePrompt || '',
     });
 
@@ -1166,7 +1118,289 @@ app.post('/api/presentations/:id/slides/:slideIndex/regenerate-image', async (re
   }
 });
 
-// ─── Helpers for Google Slides color conversion ───
+// PUT /api/presentations/:id/slides/:slideIndex — Update slide text fields
+app.put('/api/presentations/:id/slides/:slideIndex', async (req, res) => {
+  try {
+    const { email, title, heading, body } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const slideIndex = parseInt(req.params.slideIndex, 10);
+    if (isNaN(slideIndex) || slideIndex < 0) {
+      return res.status(400).json({ error: 'Invalid slide index' });
+    }
+
+    const user = await getOrCreateUser(email);
+
+    // Verify ownership
+    const rows = await query('SELECT * FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    const presentation = rows[0];
+
+    // Update presentation_slides row
+    const updates = [];
+    const params = [];
+    if (title !== undefined) { updates.push('title = ?'); params.push(title); }
+    if (heading !== undefined) { updates.push('heading = ?'); params.push(heading); }
+    if (body !== undefined) { updates.push('body = ?'); params.push(body); }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ error: 'No fields to update (title, heading, body)' });
+    }
+
+    updates.push('updated_at = NOW()');
+    params.push(presentation.id, slideIndex);
+
+    const result = await query(
+      `UPDATE presentation_slides SET ${updates.join(', ')} WHERE presentation_id = ? AND slide_index = ?`,
+      params
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Slide not found at that index' });
+    }
+
+    // Also update the JSON blob for backward compat
+    let presData = presentation.data;
+    if (typeof presData === 'string') {
+      try { presData = JSON.parse(presData); } catch(e) { presData = {}; }
+    }
+    presData = presData || {};
+
+    if (presData.generatedSlides?.slides?.[slideIndex]) {
+      const slide = presData.generatedSlides.slides[slideIndex];
+      if (title !== undefined) slide.title = title;
+      if (heading !== undefined) slide.heading = heading;
+      if (body !== undefined) slide.body = body;
+      await query(
+        'UPDATE presentations SET data = ?, updated_at = NOW() WHERE id = ?',
+        [JSON.stringify(presData), presentation.id]
+      );
+    }
+
+    // Return updated slide data
+    const slideRows = await query(
+      'SELECT * FROM presentation_slides WHERE presentation_id = ? AND slide_index = ?',
+      [presentation.id, slideIndex]
+    );
+
+    res.json({ success: true, slide: slideRows[0] || null });
+  } catch (err) {
+    console.error('Update slide error:', err);
+    res.status(500).json({ error: 'Failed to update slide' });
+  }
+});
+
+// PUT /api/presentations/:id/sharing — Update sharing mode
+app.put('/api/presentations/:id/sharing', async (req, res) => {
+  try {
+    const { email, sharingMode } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!sharingMode || !['private', 'salesforce', 'everyone'].includes(sharingMode)) {
+      return res.status(400).json({ error: 'sharingMode must be one of: private, salesforce, everyone' });
+    }
+
+    const user = await getOrCreateUser(email);
+
+    // Verify ownership
+    const rows = await query('SELECT * FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    const presentation = rows[0];
+
+    // Ensure share_token exists
+    let shareToken = presentation.share_token;
+    if (!shareToken) {
+      shareToken = crypto.randomBytes(16).toString('hex');
+    }
+
+    await query(
+      'UPDATE presentations SET sharing_mode = ?, share_token = ?, updated_at = NOW() WHERE id = ?',
+      [sharingMode, shareToken, presentation.id]
+    );
+
+    res.json({ success: true, sharingMode, shareToken });
+  } catch (err) {
+    console.error('Update sharing error:', err);
+    res.status(500).json({ error: 'Failed to update sharing mode' });
+  }
+});
+
+// GET /api/presentations/:id/slides — Get all slides for a presentation
+app.get('/api/presentations/:id/slides', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+
+    // Verify ownership
+    const rows = await query('SELECT id FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    const slides = await query(
+      'SELECT * FROM presentation_slides WHERE presentation_id = ? ORDER BY slide_index ASC',
+      [req.params.id]
+    );
+
+    res.json({ slides });
+  } catch (err) {
+    console.error('Get slides error:', err);
+    res.status(500).json({ error: 'Failed to get slides' });
+  }
+});
+
+// POST /api/presentations/:id/export-google — Export to Google Slides
+app.post('/api/presentations/:id/export-google', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+
+    // Check Google connection
+    const authClient = await getAuthenticatedClient(user.id);
+    if (!authClient) {
+      return res.status(400).json({ error: 'Google account not connected. Please connect your Google account first.' });
+    }
+
+    // Verify ownership
+    const rows = await query('SELECT * FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    const presentation = rows[0];
+    let presData = presentation.data;
+    if (typeof presData === 'string') {
+      try { presData = JSON.parse(presData); } catch(e) { presData = {}; }
+    }
+    presData = presData || {};
+
+    // Get slides from presentation_slides table
+    const slides = await query(
+      'SELECT * FROM presentation_slides WHERE presentation_id = ? ORDER BY slide_index ASC',
+      [presentation.id]
+    );
+
+    if (slides.length === 0) {
+      return res.status(400).json({ error: 'No slides found. Generate the presentation first.' });
+    }
+
+    // Create a blank Google Slides presentation
+    const slidesService = google.slides({ version: 'v1', auth: authClient });
+    const createResp = await slidesService.presentations.create({
+      requestBody: { title: presData.generatedSlides?.title || presentation.name }
+    });
+
+    const presentationId = createResp.data.presentationId;
+    const presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
+    console.log(`[Export] Created Google Slides: ${presentationId}`);
+
+    // Delete the default blank slide and add blank slides for each of our slides
+    const setupRequests = [];
+    if (createResp.data.slides && createResp.data.slides.length > 0) {
+      setupRequests.push({ deleteObject: { objectId: createResp.data.slides[0].objectId } });
+    }
+    for (let i = 0; i < slides.length; i++) {
+      setupRequests.push({
+        createSlide: {
+          objectId: `export_slide_${i}`,
+          insertionIndex: i,
+          slideLayoutReference: { predefinedLayout: 'BLANK' }
+        }
+      });
+    }
+    if (setupRequests.length > 0) {
+      await slidesService.presentations.batchUpdate({
+        presentationId,
+        requestBody: { requests: setupRequests }
+      });
+    }
+
+    // For each slide, insert the R2 image as a full-page image
+    const slideWidth = 9144000;  // 10 inches in EMU
+    const slideHeight = 6858000; // 7.5 inches in EMU
+
+    for (let i = 0; i < slides.length; i++) {
+      const slide = slides[i];
+      if (!slide.image_url) continue;
+
+      try {
+        await slidesService.presentations.batchUpdate({
+          presentationId,
+          requestBody: {
+            requests: [{
+              createImage: {
+                objectId: `img_${i}_${Date.now()}`,
+                url: slide.image_url,
+                elementProperties: {
+                  pageObjectId: `export_slide_${i}`,
+                  size: {
+                    width: { magnitude: slideWidth, unit: 'EMU' },
+                    height: { magnitude: slideHeight, unit: 'EMU' }
+                  },
+                  transform: {
+                    scaleX: 1, scaleY: 1,
+                    translateX: 0, translateY: 0,
+                    unit: 'EMU'
+                  }
+                }
+              }
+            }]
+          }
+        });
+        console.log(`[Export] Inserted image for slide ${i + 1}`);
+      } catch (imgErr) {
+        console.warn(`[Export] Failed to insert image for slide ${i + 1} (non-fatal):`, imgErr.message);
+      }
+
+      // Add speaker notes if available
+      if (slide.speaker_notes) {
+        try {
+          // Get the notes page for this slide
+          const pres = await slidesService.presentations.get({ presentationId });
+          const pageSlide = pres.data.slides?.[i];
+          if (pageSlide?.slideProperties?.notesPage) {
+            const notesPage = pageSlide.slideProperties.notesPage;
+            const notesShape = notesPage.pageElements?.find(
+              el => el.shape?.shapeType === 'TEXT_BOX' && el.shape?.placeholder?.type === 'BODY'
+            );
+            if (notesShape) {
+              await slidesService.presentations.batchUpdate({
+                presentationId,
+                requestBody: {
+                  requests: [{
+                    insertText: {
+                      objectId: notesShape.objectId,
+                      text: slide.speaker_notes,
+                      insertionIndex: 0
+                    }
+                  }]
+                }
+              });
+            }
+          }
+        } catch (notesErr) {
+          console.warn(`[Export] Failed to add speaker notes for slide ${i + 1} (non-fatal):`, notesErr.message);
+        }
+      }
+    }
+
+    // Update the presentation record with the Google Slides link
+    await query(
+      'UPDATE presentations SET google_presentation_id = ?, google_presentation_url = ?, updated_at = NOW() WHERE id = ?',
+      [presentationId, presentationUrl, presentation.id]
+    );
+
+    console.log(`[Export] Presentation ${presentation.id} exported to Google Slides: ${presentationUrl}`);
+    res.json({ success: true, googleUrl: presentationUrl });
+
+  } catch (err) {
+    console.error('Export to Google Slides error:', err);
+    res.status(500).json({ error: 'Failed to export to Google Slides: ' + err.message });
+  }
+});
+
+// ─── Helpers for color conversion ───
 function hexToRgb(hex) {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   if (!result) return null;
@@ -1242,11 +1476,11 @@ async function generateSlideImage(prompt, refImages) {
 
   // Add reference images for style matching (up to 3 to avoid token limits)
   if (refImages && refImages.length > 0) {
-    contentParts.push({ text: 'Here are reference slides from an existing presentation. Match their visual style, color scheme, and design aesthetic when generating the new background image:' });
+    contentParts.push({ text: 'Here are reference slides from an existing presentation. Match their visual style, color scheme, and design aesthetic when generating the new slide image:' });
     for (const ref of refImages.slice(0, 3)) {
       contentParts.push({ inlineData: { mimeType: 'image/png', data: ref } });
     }
-    contentParts.push({ text: 'Now generate a NEW background image in a similar visual style for this slide:' });
+    contentParts.push({ text: 'Now generate a NEW complete slide image in a similar visual style:' });
   }
 
   contentParts.push({ text: prompt });
@@ -1267,7 +1501,7 @@ async function generateSlideImage(prompt, refImages) {
 
   for (const part of parts) {
     if (part.inlineData) {
-      console.log(`[Image Gen] ✓ Got image: ${part.inlineData.mimeType}, ${Math.round((part.inlineData.data?.length || 0) / 1024)}KB base64`);
+      console.log(`[Image Gen] Got image: ${part.inlineData.mimeType}, ${Math.round((part.inlineData.data?.length || 0) / 1024)}KB base64`);
       return {
         imageBase64: part.inlineData.data,
         mimeType: part.inlineData.mimeType || 'image/png',
@@ -1279,7 +1513,8 @@ async function generateSlideImage(prompt, refImages) {
 }
 
 /**
- * Build a descriptive image prompt from slide data + brand info.
+ * Build a prompt to generate a COMPLETE presentation slide image (1920x1080)
+ * with all text content baked into the image.
  */
 function buildImagePrompt(slide, brandData, presentationTopic) {
   const brandName = brandData.brand || brandData.brandName || '';
@@ -1289,67 +1524,96 @@ function buildImagePrompt(slide, brandData, presentationTopic) {
   const brandStyle = brandData.brandVisualStyle || '';
   const brandTone = brandData.brandTone || '';
   const brandIndustry = brandData.brandDescription || '';
-  const brandWebsite = brandData.brandWebsiteUrl || '';
 
-  let prompt = `Generate a COLORFUL, VIVID background image for a presentation slide. The image must use RICH, SATURATED brand colors prominently — even if the brand uses dark colors like navy or dark green, make the image vibrant by using lighter/brighter tints and gradients of those colors, mixed with whites, light blues, or warm highlights to keep the overall image feeling BRIGHT and energetic.
+  const slideTitle = slide.title || '';
+  const slideHeading = slide.heading || '';
+  const slideBody = slide.body || '';
+  const layoutType = slide.layoutType || slide.layout || 'CONTENT';
 
-CRITICAL: Even if the brand colors are dark (e.g. navy #032D60, dark green, maroon), create the image with LIGHTER TINTS of those colors — use the 40-60% lighter versions mixed with highlights. The image should feel like a bright, professional marketing hero image, not a dark or moody background.
+  let prompt = `Generate a COMPLETE, FINISHED presentation slide image at exactly 1920x1080 pixels (16:9 widescreen landscape).
 
-ASPECT RATIO: The image MUST be exactly 16:9 landscape widescreen. It should be WIDE (much wider than tall), like a TV screen or cinema display. Width should be approximately 1.78× the height. NEVER generate a square or portrait image.
+This is NOT a background image — this is the ENTIRE SLIDE with ALL text content rendered directly into the image, as if screenshotted from a professional presentation tool like PowerPoint or Keynote.
 
-SLIDE CONTEXT:
-- Slide title: "${slide.title || ''}"
-- Presentation topic: "${presentationTopic || ''}"
-- Slide type: ${slide.layout || 'content'}
-- Color palette hint: ${slide.backgroundColor || '#032D60'}`;
+SLIDE CONTENT TO RENDER:`;
+
+  if (slideTitle) prompt += `\nTitle: "${slideTitle}"`;
+  if (slideHeading) prompt += `\nHeading: "${slideHeading}"`;
+  if (slideBody) prompt += `\nBody text: "${slideBody}"`;
+  prompt += `\nSlide type: ${layoutType}`;
+  prompt += `\nPresentation topic: "${presentationTopic || ''}"`;
+
+  prompt += `\n\nTEXT LAYOUT RULES:`;
+  if (layoutType === 'TITLE') {
+    prompt += `
+- This is the TITLE/COVER slide — the first slide of the presentation
+- Title should be large (48-60pt equivalent), bold, centered vertically and horizontally
+- Heading (subtitle) below the title in smaller text (24-30pt equivalent)
+- Use dramatic, bold design with strong visual impact`;
+  } else if (layoutType === 'SECTION') {
+    prompt += `
+- This is a SECTION DIVIDER slide
+- Title should be large (40-48pt equivalent), bold, centered
+- Heading as a subtitle below
+- Bold, clean design that signals a new section`;
+  } else if (layoutType === 'CLOSING') {
+    prompt += `
+- This is the CLOSING/THANK YOU slide
+- Title ("Thank You", "Questions?", etc.) centered and prominent
+- Any body text or contact info below
+- Polished, professional ending feel`;
+  } else {
+    prompt += `
+- This is a CONTENT slide
+- Title at the top (28-36pt equivalent), bold
+- Heading as a secondary header if present (22-28pt equivalent)
+- Body text in the main content area (16-20pt equivalent)
+- If body has bullet points (lines starting with bullet characters), render them as a properly formatted bulleted list with consistent indentation
+- Text should be left-aligned for readability
+- Leave appropriate margins (at least 5% on each side)`;
+  }
 
   if (brandName) {
-    prompt += `\n\nBRAND IDENTITY — THIS IS CRITICAL:
+    prompt += `\n\nBRAND IDENTITY:
 - Brand: ${brandName}
 - Industry: ${brandIndustry || 'technology/business'}`;
-    if (brandWebsite) prompt += `\n- Website: ${brandWebsite}`;
     if (brandTone) prompt += `\n- Brand personality: ${brandTone}`;
     if (brandStyle) prompt += `\n- Visual style: ${brandStyle}`;
-    prompt += `\nThe image MUST feel like it belongs on ${brandName}'s website or in their annual report. Think about what ${brandName} represents — their products, customers, values — and create imagery that reflects THEIR world, not generic corporate stock.`;
+    prompt += `\nThe slide MUST look like it belongs in ${brandName}'s official presentation materials.`;
   }
+
   if (brandColors.length > 0) {
-    prompt += `\n- Brand color palette: ${brandColors.join(', ')} — use these colors as the color scheme, but use BRIGHTER TINTS (lighter versions) of dark colors. For example, if the brand color is #032D60 (dark navy), use lighter blues like #4A90D9, #6DB3F8, etc. alongside the original. The image should feel COLORFUL and bright, not dark.`;
+    prompt += `\n\nBRAND COLORS: ${brandColors.join(', ')} — use these as the primary color scheme for backgrounds, accent elements, and design features. Use lighter tints for backgrounds and darker shades for text contrast.`;
   }
 
-  // Use slide's own description if AI provided one
+  // Use slide's own image description for background/design direction
   if (slide.backgroundImageDescription) {
-    prompt += `\n\nCREATIVE DIRECTION FOR THIS SPECIFIC SLIDE:\n${slide.backgroundImageDescription}`;
+    prompt += `\n\nDESIGN DIRECTION FOR THIS SLIDE:\n${slide.backgroundImageDescription}`;
   }
 
-  // Layout-specific guidance
-  if (slide.layout === 'TITLE') {
-    prompt += `\n\nThis is the TITLE/COVER slide — make it bold, cinematic, and impressive. Use dramatic lighting, rich colors, and strong visual impact. This is the first impression.`;
-  } else if (slide.layout === 'SECTION_HEADER') {
-    prompt += `\n\nThis is a SECTION DIVIDER slide — create a visually distinct transition image. Bold colors with some depth/dimension.`;
-  } else if (slide.layout === 'TITLE_AND_BODY' || slide.layout === 'TWO_COLUMNS') {
-    prompt += `\n\nThis is a CONTENT slide with text — keep the image vibrant and colorful but with areas of solid/smooth color that work well behind white text. Use rich brand-colored gradients, smooth bokeh effects, or softly blurred photography. The image should still be visually interesting, not just a flat color.`;
-  }
-
-  prompt += `\n\nMANDATORY REQUIREMENTS:
-- MUST be landscape orientation, wider than tall, 16:9 widescreen aspect ratio (e.g. 1920×1080 pixels). NEVER generate a portrait or square image.
-- BRIGHT, VIVID, SATURATED colors — NOT dark, NOT dim, NOT moody
-- NO text, NO words, NO letters, NO numbers, NO logos, NO watermarks
-- NO UI elements, NO icons with text, NO charts
-- Professional quality — looks like premium marketing material from a Fortune 500 company
-- The image should reinforce the brand identity of ${brandName || 'the brand'} through vibrant color, energy, and subject matter`;
+  prompt += `\n\nMANDATORY DESIGN REQUIREMENTS:
+- MUST be exactly 1920x1080 pixels, landscape orientation, 16:9 aspect ratio
+- ALL text content listed above MUST appear in the image, correctly spelled and complete
+- Professional typography with proper kerning, leading, and hierarchy
+- Clean, modern presentation design with proper use of whitespace
+- High contrast between text and background for readability
+- Use design elements like colored shapes, boxes, gradients, or subtle patterns to create visual interest
+- NO watermarks, NO AI artifacts, NO "generated by" text
+- NO placeholder text — use ONLY the exact text content provided above
+- The slide should look like it was designed by a professional graphic designer
+- Text must be sharp and legible at presentation resolution`;
 
   return prompt;
 }
 
 /**
- * Generate an image for a slide and upload to R2.
+ * Generate a complete slide image and upload to R2.
  * Optionally includes reference images for style matching.
  * Returns the public URL or null on failure.
  */
 async function generateAndUploadSlideImage(slide, brandData, presentationTopic, presentationId, slideIndex, refImages) {
   try {
     const prompt = buildImagePrompt(slide, brandData, presentationTopic);
-    console.log(`Generating image for slide ${slideIndex + 1} of presentation ${presentationId}...`);
+    console.log(`Generating complete slide image for slide ${slideIndex + 1} of presentation ${presentationId}...`);
 
     const { imageBase64, mimeType } = await generateSlideImage(prompt, refImages);
     const ext = mimeType === 'image/jpeg' ? '.jpg' : '.png';
@@ -1359,7 +1623,7 @@ async function generateAndUploadSlideImage(slide, brandData, presentationTopic, 
     const buffer = Buffer.from(imageBase64, 'base64');
     const publicUrl = await uploadToR2(buffer, key, mimeType);
 
-    console.log(`✓ Image generated and uploaded for slide ${slideIndex + 1}: ${publicUrl}`);
+    console.log(`Slide image generated and uploaded for slide ${slideIndex + 1}: ${publicUrl}`);
 
     // Store the prompt for regeneration
     slide.aiImagePrompt = prompt;
@@ -1368,591 +1632,14 @@ async function generateAndUploadSlideImage(slide, brandData, presentationTopic, 
     return publicUrl;
   } catch (err) {
     console.warn(`Image generation failed for slide ${slideIndex + 1} (non-fatal):`, err.message);
-    // Remove the backgroundImageUrl/description so it falls back to solid color
     delete slide.backgroundImageUrl;
     return null;
   }
 }
 
-/**
- * TEMPLATE-COPY APPROACH: Copy the grounding asset's Google Slides file,
- * then replace text content and background images.
- * This preserves ALL design elements (shapes, boxes, colors, fonts, positioning).
- */
-async function generateFromTemplate(presentation, presData, authClient, templateRef) {
-  const topic = presData.topic || presentation.name;
-  const audience = presData.audience || 'general business audience';
-  const style = presData.style || 'professional';
-  const targetBrand = presData.brand || presData.brandName || '';
-
-  // We need TWO auth clients:
-  // 1. Service account (with Drive + Slides scope) — to copy the template file (which the user can't access via drive.file scope)
-  // 2. User's OAuth client — to edit the copied file (which will be in the user's Drive after transfer)
-  const serviceAuth = getServiceAccountClient([
-    'https://www.googleapis.com/auth/drive',
-    'https://www.googleapis.com/auth/presentations'
-  ]);
-  if (!serviceAuth) throw new Error('Google service account not configured — required for template copy');
-
-  const saDriveService = google.drive({ version: 'v3', auth: serviceAuth });
-
-  // Look up the user's Google email so we can transfer ownership of the copied file
-  const tokenRows = await query('SELECT google_email FROM google_tokens WHERE user_id = ?', [presentation.user_id]);
-  const userEmail = tokenRows.length > 0 ? tokenRows[0].google_email : null;
-  if (!userEmail) throw new Error('Cannot determine user email for file sharing');
-  console.log(`[Template] User email for sharing: ${userEmail}`);
-
-  // User's OAuth Drive service (for deleting old files during regeneration — user owns those)
-  const driveService = google.drive({ version: 'v3', auth: authClient });
-
-  // 1. Extract the template's Google Slides ID
-  const templateUrl = templateRef.google_slides_url;
-  const templateMatch = templateUrl.match(/\/presentation\/d\/([a-zA-Z0-9_-]+)/);
-  if (!templateMatch) throw new Error('Invalid template Google Slides URL');
-  const templateId = templateMatch[1];
-
-  console.log(`[Template] Using template: "${templateRef.name}" (${templateId})`);
-
-  // 2. Copy the template using the SERVICE ACCOUNT (which has read access to the template)
-  //    Then transfer ownership to the user so their OAuth can edit it.
-  let presentationId, presentationUrl;
-
-  // Helper: copy template for user
-  // Problem: SA has 0 Drive quota, user's drive.file scope can't see shared files,
-  // and PPTX export has a 10MB limit.
-  // Solution: SA reads the full template via Slides API, creates a blank presentation
-  // via user's auth (drive.file scope), then replicates all slides with their
-  // page elements using batch updates. Background images are downloaded via SA
-  // and re-uploaded to the user's presentation.
-  async function copyTemplateForUser(title) {
-    const saSlidesService = google.slides({ version: 'v1', auth: serviceAuth });
-
-    // Step 1: Read the full template structure via SA
-    console.log(`[Template] Reading template structure via SA...`);
-    const templatePres = await saSlidesService.presentations.get({ presentationId: templateId });
-    const templateSlides = templatePres.data.slides || [];
-    const pageWidth = templatePres.data.pageSize?.width;
-    const pageHeight = templatePres.data.pageSize?.height;
-    console.log(`[Template] Template has ${templateSlides.length} slides`);
-
-    // Step 2: Create a blank presentation via user's auth
-    const userSlidesService = google.slides({ version: 'v1', auth: authClient });
-    const createResp = await userSlidesService.presentations.create({
-      requestBody: { title }
-    });
-    const newId = createResp.data.id;
-    console.log(`[Template] Created blank presentation in user's Drive → ${newId}`);
-
-    // Step 3: Delete the default blank slide
-    const defaultSlides = createResp.data.slides || [];
-    if (defaultSlides.length > 0) {
-      await userSlidesService.presentations.batchUpdate({
-        presentationId: newId,
-        requestBody: {
-          requests: defaultSlides.map(s => ({ deleteObject: { objectId: s.objectId } }))
-        }
-      });
-    }
-
-    // Step 4: For each template slide, create a blank slide and replicate elements
-    for (let i = 0; i < templateSlides.length; i++) {
-      const tSlide = templateSlides[i];
-      const slideId = `slide_${i}_${Date.now()}`;
-
-      const requests = [];
-
-      // Create blank slide
-      requests.push({
-        createSlide: {
-          objectId: slideId,
-          insertionIndex: i
-        }
-      });
-
-      // If the template slide has a background image, replicate it
-      const bgFill = tSlide.slideProperties?.notesPage ? null :
-        tSlide.pageElements ? null : null; // We'll handle bg separately
-      const slideBg = tSlide.slideProperties?.background?.stretchedPictureFill;
-      if (slideBg?.contentUrl) {
-        requests.push({
-          updatePageProperties: {
-            objectId: slideId,
-            pageProperties: {
-              pageBackgroundFill: {
-                stretchedPictureFill: {
-                  contentUrl: slideBg.contentUrl
-                }
-              }
-            },
-            fields: 'pageBackgroundFill'
-          }
-        });
-      } else if (tSlide.slideProperties?.background?.solidFill) {
-        const sf = tSlide.slideProperties.background.solidFill;
-        requests.push({
-          updatePageProperties: {
-            objectId: slideId,
-            pageProperties: {
-              pageBackgroundFill: {
-                solidFill: sf
-              }
-            },
-            fields: 'pageBackgroundFill'
-          }
-        });
-      }
-
-      // Apply requests for this slide
-      if (requests.length > 0) {
-        try {
-          await userSlidesService.presentations.batchUpdate({
-            presentationId: newId,
-            requestBody: { requests }
-          });
-        } catch (batchErr) {
-          console.warn(`[Template] Slide ${i} creation batch error: ${batchErr.message}`);
-          // Try just creating the slide without background
-          try {
-            await userSlidesService.presentations.batchUpdate({
-              presentationId: newId,
-              requestBody: {
-                requests: [{ createSlide: { objectId: slideId, insertionIndex: i } }]
-              }
-            });
-          } catch (e) {
-            console.error(`[Template] Failed to create slide ${i}: ${e.message}`);
-          }
-        }
-      }
-
-      // Now add page elements (shapes, text boxes, images) individually
-      for (const el of (tSlide.pageElements || [])) {
-        try {
-          const elId = `el_${i}_${Math.random().toString(36).slice(2, 10)}`;
-
-          if (el.shape) {
-            // Recreate shape with text
-            const shapeReqs = [];
-            shapeReqs.push({
-              createShape: {
-                objectId: elId,
-                shapeType: el.shape.shapeType || 'TEXT_BOX',
-                elementProperties: {
-                  pageObjectId: slideId,
-                  size: el.size,
-                  transform: el.transform
-                }
-              }
-            });
-
-            // Set shape fill if exists
-            if (el.shape.shapeProperties?.shapeBackgroundFill?.solidFill) {
-              shapeReqs.push({
-                updateShapeProperties: {
-                  objectId: elId,
-                  shapeProperties: {
-                    shapeBackgroundFill: {
-                      solidFill: el.shape.shapeProperties.shapeBackgroundFill.solidFill
-                    }
-                  },
-                  fields: 'shapeBackgroundFill'
-                }
-              });
-            }
-
-            // Set outline if exists
-            if (el.shape.shapeProperties?.outline) {
-              shapeReqs.push({
-                updateShapeProperties: {
-                  objectId: elId,
-                  shapeProperties: {
-                    outline: el.shape.shapeProperties.outline
-                  },
-                  fields: 'outline'
-                }
-              });
-            }
-
-            // Insert text if exists
-            const textContent = (el.shape.text?.textElements || [])
-              .filter(te => te.textRun?.content)
-              .map(te => te.textRun.content)
-              .join('');
-            if (textContent) {
-              shapeReqs.push({
-                insertText: {
-                  objectId: elId,
-                  text: textContent,
-                  insertionIndex: 0
-                }
-              });
-
-              // Apply text styling from the first text run
-              const firstRun = (el.shape.text?.textElements || []).find(te => te.textRun?.style);
-              if (firstRun?.textRun?.style) {
-                const style = firstRun.textRun.style;
-                const styleFields = [];
-                const textStyle = {};
-                if (style.foregroundColor) { textStyle.foregroundColor = style.foregroundColor; styleFields.push('foregroundColor'); }
-                if (style.fontSize) { textStyle.fontSize = style.fontSize; styleFields.push('fontSize'); }
-                if (style.bold !== undefined) { textStyle.bold = style.bold; styleFields.push('bold'); }
-                if (style.italic !== undefined) { textStyle.italic = style.italic; styleFields.push('italic'); }
-                if (style.fontFamily) { textStyle.fontFamily = style.fontFamily; styleFields.push('fontFamily'); }
-
-                if (styleFields.length > 0) {
-                  shapeReqs.push({
-                    updateTextStyle: {
-                      objectId: elId,
-                      style: textStyle,
-                      textRange: { type: 'ALL' },
-                      fields: styleFields.join(',')
-                    }
-                  });
-                }
-              }
-            }
-
-            await userSlidesService.presentations.batchUpdate({
-              presentationId: newId,
-              requestBody: { requests: shapeReqs }
-            });
-
-          } else if (el.image) {
-            // Recreate image
-            if (el.image.contentUrl) {
-              await userSlidesService.presentations.batchUpdate({
-                presentationId: newId,
-                requestBody: {
-                  requests: [{
-                    createImage: {
-                      objectId: elId,
-                      url: el.image.contentUrl,
-                      elementProperties: {
-                        pageObjectId: slideId,
-                        size: el.size,
-                        transform: el.transform
-                      }
-                    }
-                  }]
-                }
-              });
-            }
-          }
-        } catch (elErr) {
-          console.warn(`[Template] Slide ${i} element replication failed (non-fatal): ${elErr.message}`);
-        }
-      }
-
-      console.log(`[Template] Replicated slide ${i + 1}/${templateSlides.length}`);
-    }
-
-    console.log(`[Template] Template replication complete → ${newId}`);
-    return newId;
-  }
-
-  if (presentation.google_presentation_id) {
-    // REGENERATION: delete the old file, create fresh copy from template
-    const oldId = presentation.google_presentation_id;
-    console.log(`[Template] Regenerating — will replace old file: ${oldId}`);
-
-    presentationId = await copyTemplateForUser(topic || presentation.name);
-    presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
-
-    // Delete the old file using user's auth (they own it)
-    try {
-      await driveService.files.delete({ fileId: oldId });
-      console.log(`[Template] Deleted old presentation file: ${oldId}`);
-    } catch (delErr) {
-      console.warn(`[Template] Could not delete old file (non-fatal): ${delErr.message}`);
-    }
-
-  } else {
-    // FIRST GENERATION: Copy the template
-    presentationId = await copyTemplateForUser(topic || presentation.name);
-    presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
-    console.log(`[Template] Copied template to: ${presentationId}`);
-  }
-
-  // 3. Read the copied presentation to understand its slide structure
-  // Use user's auth since the copy is now in the user's Drive
-  const slidesService = google.slides({ version: 'v1', auth: authClient });
-  const copiedPres = await slidesService.presentations.get({ presentationId });
-  const templateSlides = copiedPres.data.slides || [];
-
-  // Extract the text content from each slide in the template
-  const slideStructure = templateSlides.map((slide, idx) => {
-    const elements = [];
-    for (const el of (slide.pageElements || [])) {
-      if (el.shape?.text) {
-        const textContent = (el.shape.text.textElements || [])
-          .filter(te => te.textRun?.content)
-          .map(te => te.textRun.content)
-          .join('')
-          .trim();
-        const placeholder = el.shape.placeholder;
-        elements.push({
-          objectId: el.objectId,
-          type: placeholder?.type || 'TEXT_BOX',
-          text: textContent,
-          isTitle: placeholder?.type === 'TITLE' || placeholder?.type === 'CENTERED_TITLE',
-          isSubtitle: placeholder?.type === 'SUBTITLE',
-          isBody: placeholder?.type === 'BODY',
-        });
-      }
-    }
-    return {
-      slideNumber: idx + 1,
-      objectId: slide.objectId,
-      elements,
-      allText: elements.map(e => `[${e.type}]: ${e.text}`).join('\n'),
-    };
-  });
-
-  console.log(`[Template] Template has ${templateSlides.length} slides with structure extracted`);
-
-  // 4. Ask Gemini to generate NEW content matching the template structure
-  const slideStructureText = slideStructure.map(s =>
-    `Slide ${s.slideNumber}:\n${s.allText}`
-  ).join('\n\n');
-
-  const geminiPrompt = `You are rewriting a presentation for a NEW topic while keeping the EXACT SAME slide structure.
-
-ORIGINAL PRESENTATION STRUCTURE (${templateSlides.length} slides):
-${slideStructureText}
-
-NEW PRESENTATION REQUIREMENTS:
-- Topic: "${topic}"
-- Target audience: ${audience}
-- Style: ${style}
-${targetBrand ? `- Target brand: ${targetBrand} — tailor ALL content specifically for this brand` : ''}
-${presData.additionalContext ? `- Additional context: ${presData.additionalContext}` : ''}
-${presData.brandName ? `- Brand: ${presData.brandName}` : ''}
-${presData.brandTone ? `- Tone: ${presData.brandTone}` : ''}
-
-INSTRUCTIONS:
-- Generate NEW content for EACH slide, matching the EXACT same structure.
-- For each slide, provide replacement text for EVERY text element (titles, subtitles, body text).
-- Keep the same number of slides (${templateSlides.length}).
-- Keep a similar amount of text per element — if the original body has 5 bullet points, write 5 bullet points.
-- Use \\n for line breaks. Use • for bullet points.
-- Make content substantive, professional, and tailored to the new topic/brand.
-${targetBrand ? `- Frame everything in terms of value for ${targetBrand}. Use their name throughout.` : ''}
-
-Also for EACH slide, provide a backgroundImageDescription (1-2 sentences) describing a BRIGHT, COLORFUL, 16:9 landscape background image that matches the slide topic and brand.${presData.brandColorPrimary ? ` Use lighter tints of brand color ${presData.brandColorPrimary}.` : ''}
-
-Return a JSON array with this structure:
-[
-  {
-    "slideNumber": 1,
-    "replacements": [
-      { "objectId": "element_object_id", "newText": "New text content" },
-      ...
-    ],
-    "backgroundImageDescription": "Bright, vivid description of a 16:9 landscape background image..."
-  },
-  ...
-]
-
-CRITICAL: Use the EXACT objectId values from the original structure. Return ONLY valid JSON.`;
-
-  // Call Gemini
-  const geminiApiKey = process.env.GEMINI_API_KEY;
-  if (!geminiApiKey) throw new Error('GEMINI_API_KEY not configured');
-
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
-
-  // Include template slide thumbnails for visual context
-  let refImageParts = [];
-  let refThumbnails = [];
-  let annotations = templateRef.slide_annotations;
-  if (typeof annotations === 'string') {
-    try { annotations = JSON.parse(annotations); } catch(e) { annotations = null; }
-  }
-  if (annotations && Array.isArray(annotations)) {
-    for (const ann of annotations) {
-      if (ann.thumbnailBase64) {
-        refImageParts.push({ text: `[Template Slide ${ann.slideNumber}: "${ann.name}"]` });
-        refImageParts.push({ inlineData: { mimeType: 'image/png', data: ann.thumbnailBase64 } });
-        if (refThumbnails.length < 5) refThumbnails.push(ann.thumbnailBase64);
-      }
-    }
-  }
-
-  console.log(`[Template] Calling Gemini for content generation (${refImageParts.length / 2} reference images)...`);
-
-  const geminiResp = await fetch(geminiUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: geminiPrompt }, ...refImageParts] }],
-      generationConfig: { temperature: 0.7, maxOutputTokens: 16384 }
-    })
-  });
-
-  if (!geminiResp.ok) {
-    const errData = await geminiResp.json().catch(() => ({}));
-    throw new Error(errData.error?.message || 'Gemini API error');
-  }
-
-  const geminiData = await geminiResp.json();
-  const parts = geminiData.candidates?.[0]?.content?.parts || [];
-  let content = parts
-    .filter(p => p.text !== undefined && !p.thought)
-    .map(p => p.text)
-    .join('\n')
-    .trim();
-
-  if (!content) throw new Error('No content returned from AI');
-
-  // Parse JSON response
-  let slideReplacements;
+// Background generation function (runs outside request lifecycle) — no authClient needed
+async function generateInBackground(presentation, presData) {
   try {
-    // Strip code fences if present
-    let cleaned = content;
-    if (cleaned.startsWith('```')) {
-      cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```$/, '');
-    }
-    const jsonMatch = cleaned.match(/\[[\s\S]*\]/);
-    if (jsonMatch) cleaned = jsonMatch[0];
-    slideReplacements = JSON.parse(cleaned);
-  } catch (parseErr) {
-    console.error('[Template] Failed to parse Gemini response:', parseErr.message);
-    console.error('[Template] Raw response (first 500 chars):', content.substring(0, 500));
-    throw new Error('Failed to parse AI content for template');
-  }
-
-  console.log(`[Template] Got ${slideReplacements.length} slide replacements from Gemini`);
-
-  // 5. Replace text in each slide
-  const textReplaceRequests = [];
-  for (const slideRep of slideReplacements) {
-    for (const rep of (slideRep.replacements || [])) {
-      if (!rep.objectId || !rep.newText) continue;
-
-      // First delete all existing text, then insert new text
-      textReplaceRequests.push({
-        deleteText: {
-          objectId: rep.objectId,
-          textRange: { type: 'ALL' }
-        }
-      });
-      textReplaceRequests.push({
-        insertText: {
-          objectId: rep.objectId,
-          text: rep.newText.replace(/\\n/g, '\n'),
-          insertionIndex: 0
-        }
-      });
-    }
-  }
-
-  if (textReplaceRequests.length > 0) {
-    try {
-      await slidesService.presentations.batchUpdate({
-        presentationId,
-        requestBody: { requests: textReplaceRequests }
-      });
-      console.log(`[Template] Replaced text in ${textReplaceRequests.length / 2} elements`);
-    } catch (textErr) {
-      console.error('[Template] Text replacement failed:', textErr.message);
-      // Try one by one as fallback
-      let successCount = 0;
-      for (let i = 0; i < textReplaceRequests.length; i += 2) {
-        try {
-          await slidesService.presentations.batchUpdate({
-            presentationId,
-            requestBody: { requests: [textReplaceRequests[i], textReplaceRequests[i + 1]] }
-          });
-          successCount++;
-        } catch (e) {
-          console.warn(`[Template] Skipping element: ${e.message}`);
-        }
-      }
-      console.log(`[Template] Replaced text in ${successCount} elements (individual fallback)`);
-    }
-  }
-
-  // 6. Generate and replace background images
-  const r2Available = !!getR2Client();
-  if (r2Available) {
-    console.log(`[Template] Generating ${slideReplacements.length} background images...`);
-    for (let i = 0; i < slideReplacements.length && i < templateSlides.length; i++) {
-      const rep = slideReplacements[i];
-      if (!rep.backgroundImageDescription) continue;
-
-      try {
-        // Build a simple prompt from the description
-        const imgPrompt = `Generate a BRIGHT, COLORFUL, 16:9 widescreen landscape background image. ${rep.backgroundImageDescription}. MUST be landscape orientation (wider than tall). NO text, NO words, NO logos.${presData.brandColorPrimary ? ` Use lighter, vibrant tints of brand color ${presData.brandColorPrimary}.` : ''}`;
-
-        const { imageBase64, mimeType } = await generateSlideImage(imgPrompt, refThumbnails);
-        const ext = mimeType === 'image/jpeg' ? '.jpg' : '.png';
-        const randomId = crypto.randomBytes(8).toString('hex');
-        const key = `slides/${presentation.id}/${i}-${randomId}${ext}`;
-        const buffer = Buffer.from(imageBase64, 'base64');
-        const publicUrl = await uploadToR2(buffer, key, mimeType);
-
-        // Set as slide background
-        const pageSlide = templateSlides[i];
-        if (pageSlide) {
-          await slidesService.presentations.batchUpdate({
-            presentationId,
-            requestBody: {
-              requests: [{
-                updatePageProperties: {
-                  objectId: pageSlide.objectId,
-                  pageProperties: {
-                    pageBackgroundFill: {
-                      stretchedPictureFill: { contentUrl: publicUrl }
-                    }
-                  },
-                  fields: 'pageBackgroundFill.stretchedPictureFill.contentUrl'
-                }
-              }]
-            }
-          });
-          console.log(`[Template] ✓ Background image set for slide ${i + 1}`);
-        }
-      } catch (imgErr) {
-        console.warn(`[Template] Image generation failed for slide ${i + 1} (non-fatal): ${imgErr.message}`);
-      }
-
-      // Rate limiting delay
-      if (i < slideReplacements.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 1500));
-      }
-    }
-  }
-
-  // 7. Update presentation title (user owns the copy)
-  try {
-    await driveService.files.update({
-      fileId: presentationId,
-      requestBody: { name: topic || presentation.name }
-    });
-  } catch (titleErr) {
-    console.warn('[Template] Failed to update title (non-fatal):', titleErr.message);
-  }
-
-  // 8. Save to database
-  presData.generatedFromTemplate = templateRef.name;
-  presData.templateId = templateRef.id;
-  await query(
-    'UPDATE presentations SET status = ?, google_presentation_id = ?, google_presentation_url = ?, data = ?, updated_at = NOW() WHERE id = ?',
-    ['completed', presentationId, presentationUrl, JSON.stringify(presData), presentation.id]
-  );
-
-  console.log(`[Template] ✓ Presentation ${presentation.id} generated from template: ${presentationUrl}`);
-  return true; // Signal success
-}
-
-
-// Background generation function (runs outside request lifecycle)
-async function generateInBackground(presentation, presData, authClient) {
-  try {
-
-    // Build the Gemini prompt
-    const slides = presData.slides || [];
     const topic = presData.topic || presentation.name;
     const slideCount = presData.slideCount || 10;
     const audience = presData.audience || 'general business audience';
@@ -1962,23 +1649,16 @@ async function generateInBackground(presentation, presData, authClient) {
     let refSection = '';
     let refImageParts = []; // Multimodal image parts for Gemini text generation
     let refThumbnails = []; // Raw base64 thumbnails for image style matching
-    let templateRef = null; // Best matching reference with a Google Slides URL
     console.log(`[Generate] Starting for presentation ${presentation.id} — industryTag="${presData.industryTag || 'none'}", presentationTypeTag="${presData.presentationTypeTag || 'none'}"`);
     try {
       const refs = await findMatchingReferences(presData.industryTag, presData.presentationTypeTag);
       console.log(`[Generate] Found ${refs.length} matching references`);
       refs.forEach((ref, i) => {
-        console.log(`[Generate]   ref[${i}]: "${ref.name}" — google_slides_url=${ref.google_slides_url ? 'YES' : 'NO'} — industry=${ref.industry_tag} — type=${ref.presentation_type_tag}`);
+        console.log(`[Generate]   ref[${i}]: "${ref.name}" — industry=${ref.industry_tag} — type=${ref.presentation_type_tag}`);
       });
       if (refs.length > 0) {
         refSection = '\n\n--- REFERENCE PRESENTATIONS FOR STYLE AND STRUCTURE GUIDANCE ---\n';
         refs.forEach((ref, i) => {
-          // Track the first reference that has a Google Slides URL for template-copy approach
-          if (!templateRef && ref.google_slides_url) {
-            templateRef = ref;
-            console.log(`[Template] Found template candidate: "${ref.name}" (${ref.google_slides_url})`);
-          }
-
           refSection += `\n[Reference ${i+1}: "${ref.name}" (${ref.industry_tag || 'general'} / ${ref.presentation_type_tag || 'general'})]\n`;
 
           // If slide annotations exist, use structured per-slide info
@@ -2017,43 +1697,18 @@ async function generateInBackground(presentation, presData, authClient) {
           }
         });
         refSection += '\n--- END REFERENCE PRESENTATIONS ---\n';
-        refSection += `CRITICAL DESIGN EXTRACTION — Study the reference slide images above and identify:
-1. FONT SIZES: What pt size are titles? What pt size is body text? Use the SAME sizes.
-2. TEXT COLORS: What color are titles? Body text? Headers? Use the SAME colors.
-3. ALIGNMENT: Is text left-aligned, centered, or right? Match it per slide type.
-4. DESIGN ELEMENTS: Are there accent bars, colored stripes, decorative shapes? Where are they positioned? What color? Include them in your accentBar field.
-5. LAYOUT PATTERN: How many slides? What slide types? In what order? Follow the same structure.
-6. VISUAL STYLE: Dark backgrounds with light text? Or light backgrounds with dark text? Match the overall aesthetic.
-7. FONTS: What font style — geometric (Montserrat, Poppins), humanist (Open Sans, Lato), or modern (Inter, DM Sans)? Match it.
-You MUST replicate the reference design as closely as possible. The generated presentation should look like it came from the same design system.\n`;
+        refSection += `Study the reference slide images above and replicate their design language, visual style, and layout patterns.\n`;
       }
     } catch (err) {
       console.error('Context grounding lookup failed:', err.message);
     }
 
-    // TEMPLATE-COPY APPROACH: If we found a reference with a Google Slides URL,
-    // copy its file and replace content — preserving all design elements.
-    console.log(`[Generate] Template ref decision: ${templateRef ? `YES — "${templateRef.name}" (${templateRef.google_slides_url})` : 'NO — falling through to create-from-scratch'}`);
-    if (templateRef) {
-      try {
-        console.log(`[Template] Using template-copy approach with: "${templateRef.name}"`);
-        const success = await generateFromTemplate(presentation, presData, authClient, templateRef);
-        if (success) {
-          console.log(`[Template] ✓ Template-copy approach succeeded for presentation ${presentation.id}`);
-          return; // Done — skip the create-from-scratch approach below
-        }
-      } catch (templateErr) {
-        console.error(`[Template] Template-copy approach failed, falling back to create-from-scratch:`, templateErr.message);
-        // Fall through to the original create-from-scratch approach
-      }
-    }
-
     const targetBrand = presData.brand || presData.brandName || '';
-    const systemPrompt = `You are an expert presentation designer creating Salesforce presentations customized for specific brands. Generate a Google Slides presentation as structured JSON.
+    const systemPrompt = `You are an expert presentation designer. Generate a presentation as structured JSON — an array of slides with text content and design direction.
 ${refSection}
 ${targetBrand ? `
 TARGET BRAND: ${targetBrand}
-This presentation is being created FROM Salesforce FOR "${targetBrand}". The content should be tailored to this brand — use their name, speak to their specific needs, and frame Salesforce capabilities in terms of value to "${targetBrand}".
+This presentation is being created for "${targetBrand}". Tailor all content to this brand — use their name, speak to their needs, and frame value propositions for "${targetBrand}".
 ` : ''}
 Create a ${slideCount}-slide presentation about: "${topic}"
 Target audience: ${audience}
@@ -2067,137 +1722,42 @@ ${presData.brandColorSecondary ? `Secondary Color: ${presData.brandColorSecondar
 ${presData.brandTone ? `Tone & Voice: ${presData.brandTone}` : ''}
 ${presData.brandVisualStyle ? `Visual Style: ${presData.brandVisualStyle}` : ''}
 ${presData.brandDescription ? `Brand Description: ${presData.brandDescription}` : ''}
-Use these brand colors, tone, and visual style throughout the presentation. Ensure the content voice matches the brand's tone. When describing slide designs, reference the brand colors for backgrounds, headers, and accents.
 ` : ''}
-Return a JSON object with this exact structure:
+
+Return a JSON object with this EXACT structure:
 {
   "title": "Presentation Title",
-  "design": {
-    "fontFamily": "Montserrat",
-    "accentColor": "#FF6B35",
-    "titleFontFamily": "Montserrat",
-    "bodyFontFamily": "Open Sans"
-  },
   "slides": [
     {
-      "layout": "TITLE",
-      "title": "Slide Title",
-      "subtitle": "Optional subtitle",
-      "backgroundColor": "#032D60",
-      "backgroundImageDescription": "A sweeping abstract gradient in deep navy and electric blue, with soft bokeh light particles suggesting innovation and forward momentum",
-      "backgroundImageOpacity": 0.8,
-      "titleColor": "#FFFFFF",
-      "bodyColor": "#F0F0F0",
-      "titleFontSize": 44,
-      "bodyFontSize": 18,
-      "titleBold": true,
-      "titleAlignment": "CENTER",
-      "bodyAlignment": "CENTER",
-      "accentBar": { "color": "#FF6B35", "position": "bottom", "height": 8 }
-    },
-    {
-      "layout": "TITLE_AND_BODY",
-      "title": "Slide Title",
-      "body": "Slide body content. Use \\n for line breaks. Use bullet points with • character.",
-      "backgroundColor": "#F5F5F5",
-      "backgroundImageDescription": "A vibrant, colorful lifestyle photograph showing a customer happily engaging with the brand's products in a modern retail environment, with warm natural lighting and rich brand colors throughout, professional marketing quality",
-      "backgroundImageOpacity": 0.6,
-      "titleColor": "#FFFFFF",
-      "bodyColor": "#F0F0F0",
-      "titleFontSize": 30,
-      "bodyFontSize": 16,
-      "titleBold": true,
-      "titleAlignment": "START",
-      "bodyAlignment": "START",
-      "accentBar": { "color": "#0176D3", "position": "left", "height": 4 }
-    },
-    {
-      "layout": "SECTION_HEADER",
-      "title": "Section Title",
-      "subtitle": "Optional section subtitle",
-      "backgroundColor": "#0176D3",
-      "backgroundImageDescription": "Bold, vibrant abstract geometric shapes with bright gradients transitioning from the brand's primary blue to teal, evoking data flow and digital transformation, with crystalline light refractions creating depth and luminous energy",
-      "backgroundImageOpacity": 0.7,
-      "titleColor": "#FFFFFF",
-      "bodyColor": "#F0F0F0",
-      "titleFontSize": 36,
-      "bodyFontSize": 18,
-      "titleBold": true,
-      "titleAlignment": "CENTER",
-      "bodyAlignment": "CENTER",
-      "accentBar": { "color": "#FF6B35", "position": "bottom", "height": 6 }
-    },
-    {
-      "layout": "TWO_COLUMNS",
-      "title": "Comparison Title",
-      "leftColumn": "Left column content",
-      "rightColumn": "Right column content",
-      "backgroundColor": "#FAFAFA",
-      "backgroundImageDescription": "A vibrant watercolor-wash texture blending the brand's primary and secondary colors in rich gradients, creating an elegant colorful background with luminous organic patterns and professional depth",
-      "backgroundImageOpacity": 0.5,
-      "titleColor": "#FFFFFF",
-      "bodyColor": "#F0F0F0",
-      "titleFontSize": 30,
-      "bodyFontSize": 16,
-      "titleBold": true,
-      "titleAlignment": "START",
-      "bodyAlignment": "START"
+      "title": "The main title text for this slide",
+      "heading": "A secondary heading or subtitle (can be empty string)",
+      "body": "The main body content. Use \\n for line breaks. Use • for bullet points.",
+      "speakerNotes": "Notes for the presenter (not shown on slide)",
+      "layoutType": "TITLE",
+      "backgroundImageDescription": "2-3 sentence description of the visual design direction for this slide — what imagery, colors, patterns, and design elements should appear"
     }
   ]
 }
 
-DESIGN INSTRUCTIONS — REPLICATE THE REFERENCE PRESENTATION STYLE:
-CRITICAL: Before generating ANYTHING, carefully analyze the reference presentation images and answer these questions:
-1. What are the EXACT title font sizes used? (typically 36-48pt for title slides, 28-36pt for content)
-2. What are the body text font sizes? (typically 14-20pt)
-3. What colors are the titles? Body text? Are they white on dark backgrounds or dark on light?
-4. Is there a consistent design pattern — accent bars, colored stripes, decorative shapes?
-5. How is text aligned — left, center, or right? Does it change between slide types?
-6. What is the overall design language — minimal, bold, corporate, playful?
-7. What font family/style does the reference use — serif, sans-serif, geometric, humanist?
+LAYOUT TYPES:
+- TITLE: First slide, cover page. Title is large and centered.
+- CONTENT: Main content slides with title, heading, and body text.
+- SECTION: Section divider slides. Title and heading only.
+- CLOSING: Last slide (Thank You, Q&A, contact info).
 
-NOW APPLY WHAT YOU OBSERVED:
-- Match the EXACT font sizes, colors, and alignment from the reference. Do NOT use generic defaults.
-- For each slide, you MUST specify backgroundColor, titleColor, bodyColor, titleFontSize, bodyFontSize, titleBold, titleAlignment, and bodyAlignment.
-- titleAlignment and bodyAlignment must be one of: "START" (left-aligned), "CENTER", or "END" (right-aligned).
-- TEXT COLORS: Use white (#FFFFFF) text when background is dark/colorful. Use light gray (#F0F0F0) for body text. NEVER use black text on dark backgrounds.
-- If the reference has accent bars or colored stripes, add an "accentBar" object with: color (hex), position ("top", "bottom", "left", or "right"), and height (thickness in pt, 4-10).
-- Set design.fontFamily AND optionally design.titleFontFamily and design.bodyFontFamily if the reference uses different fonts for titles vs body.
-- Use LARGER font sizes than you think — titles should be 30-48pt, body should be 14-20pt. Small text looks unprofessional in presentations.
-- Set design.accentColor to the secondary brand color or a complementary highlight color.
-- All color values must be valid 6-digit hex codes starting with #.
-- FOLLOW THE SAME SLIDE ORDERING PATTERN as the reference: typically Title → Agenda/Overview → Content Sections → Key Insights → Call to Action → Thank You/Contact.
+CONTENT RULES:
+- "title" is the primary slide title (short, impactful — 3-8 words)
+- "heading" is a secondary heading or subtitle (can be empty for simple slides)
+- "body" contains the main content (bullet points with •, paragraphs, key facts). Use \\n for line breaks. For TITLE and SECTION slides, body can be empty.
+- "speakerNotes" are talking points for the presenter (2-4 sentences)
+- "backgroundImageDescription" describes the visual design — colors, patterns, imagery. Be specific about the brand's visual identity.
+- First slide MUST be layoutType "TITLE". Last slide should be "CLOSING".
+- Content slides should have 3-5 bullet points in the body.
+- Make content substantive, detailed, and professional.
 
-BACKGROUND IMAGES — MANDATORY FOR EVERY SLIDE:
-- backgroundImageDescription is REQUIRED on EVERY slide. An AI image generator will create a custom background image from your description.
-- backgroundImageOpacity: always set to 0.85 (the system handles readability with content boxes).
-- IMPORTANT: The system will automatically add COLORED CONTENT BOXES on top of the background image for text readability:
-  * TITLE/SECTION_HEADER slides get a centered rounded box (75% width) in the brand primary color
-  * CONTENT slides get a bottom-anchored box (full width, 55% height) with a thin accent strip above it
-  * These boxes make text readable without darkening the background image
-  * This means the background image should be BRIGHT and COLORFUL — the content box handles contrast
-- Write DETAILED, VIVID, BRAND-SPECIFIC descriptions for BRIGHT, COLORFUL images. Each description must:
-  * Reference the SPECIFIC BRAND by name and industry
-  * Use BRIGHT TINTS of the brand colors (not dark/moody). Even if brand uses navy/dark green, describe lighter vivid versions.
-  * Match the slide's topic visually
-  * Be at least 2–3 sentences with rich detail
-- DO NOT describe text, logos, UI elements, or words — just the visual background
-- TEXT COLORS: ALWAYS use white (#FFFFFF) for titles and light (#F0F0F0) for body — text sits on colored content boxes.
-- backgroundColor is used for the content box color. Use the brand's PRIMARY dark color for this.
-- IMPORTANT: Vary imagery across slides — different visual concepts per slide.
-
-DESIGN LANGUAGE — MAKE IT LOOK PROFESSIONAL:
-- The system creates content boxes, accent strips, and accent bars automatically based on your data.
-- backgroundColor determines the content box color — use the brand primary color so boxes look branded.
-- accentBar adds a colored stripe along one edge — use the brand's secondary/accent color.
-- Together these create a DESIGNED look: vibrant bg image + branded content box + accent strip + accent bar.
-- Think about how premium Salesforce or Apple presentations look — background imagery visible at top, branded content area at bottom.
-
-Available layouts: TITLE (first slide only), TITLE_AND_BODY (main content), SECTION_HEADER (section dividers), TWO_COLUMNS (side-by-side).
-Make the content substantive, detailed, and professional. Each body should have 3-5 meaningful bullet points.
 Return ONLY valid JSON, no markdown fences.`;
 
-    // Call Gemini
+    // Call Gemini for text generation
     const geminiApiKey = process.env.GEMINI_API_KEY;
     if (!geminiApiKey) {
       await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
@@ -2227,8 +1787,7 @@ Return ONLY valid JSON, no markdown fences.`;
     const geminiData = await geminiResp.json();
     console.log(`Gemini responded for presentation ${presentation.id}`);
 
-    // Gemini 2.5 models may return multiple parts (thought + text).
-    // Extract all text parts (skip thought parts) and concatenate.
+    // Extract text parts (skip thought parts) and concatenate
     const parts = geminiData.candidates?.[0]?.content?.parts || [];
     let content = parts
       .filter(p => p.text !== undefined && !p.thought)
@@ -2245,18 +1804,15 @@ Return ONLY valid JSON, no markdown fences.`;
     content = content.trim();
 
     let slideData;
-    // Strategy 1: Try parsing directly
     try {
       slideData = JSON.parse(content);
     } catch (e1) {
-      // Strategy 2: Extract from markdown code fences
       const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (jsonMatch) {
         try {
           slideData = JSON.parse(jsonMatch[1].trim());
         } catch (e2) { /* fall through */ }
       }
-      // Strategy 3: Find first { to last } (greedy JSON object extraction)
       if (!slideData) {
         const firstBrace = content.indexOf('{');
         const lastBrace = content.lastIndexOf('}');
@@ -2273,732 +1829,62 @@ Return ONLY valid JSON, no markdown fences.`;
       }
     }
 
-    // Apply design defaults for any fields Gemini may have omitted
-    const defaultDesign = {
-      fontFamily: 'Open Sans',
-      accentColor: presData.brandColorSecondary || '#0176D3'
-    };
-    slideData.design = { ...defaultDesign, ...(slideData.design || {}) };
-
-    for (const slide of (slideData.slides || [])) {
-      if (!slide.backgroundColor) {
-        if (slide.layout === 'TITLE' || slide.layout === 'SECTION_HEADER') {
-          slide.backgroundColor = presData.brandColorPrimary || '#032D60';
-        } else {
-          slide.backgroundColor = '#FFFFFF';
-        }
-      }
-      if (!slide.titleColor) {
-        // Default to white text since all slides have vibrant background images
-        slide.titleColor = '#FFFFFF';
-      }
-      if (!slide.bodyColor) {
-        // Default to light text for readability on colorful backgrounds
-        slide.bodyColor = '#F0F0F0';
-      }
-      if (!slide.titleFontSize) slide.titleFontSize = slide.layout === 'TITLE' ? 40 : 28;
-      if (!slide.bodyFontSize) slide.bodyFontSize = 14;
-      if (slide.titleBold === undefined) slide.titleBold = true;
-    }
-
-    console.log(`Design defaults applied for presentation ${presentation.id}`);
-
-    // ── AI Image Generation: generate background images for ALL slides ──
     const aiSlides = slideData.slides || [];
+    console.log(`Parsed ${aiSlides.length} slides from Gemini response for presentation ${presentation.id}`);
+
+    // Generate complete slide images for each slide
     const r2Available = !!getR2Client();
     console.log(`[Image Gen] R2 available: ${r2Available}, total slides: ${aiSlides.length}`);
 
     if (r2Available) {
-      // Ensure every slide has a backgroundImageDescription (auto-generate for any Gemini missed)
       for (let i = 0; i < aiSlides.length; i++) {
         const slide = aiSlides[i];
+
+        // Auto-generate backgroundImageDescription if missing
         if (!slide.backgroundImageDescription) {
-          // Auto-generate a brand-aware description based on slide content
           const brandName = presData.brand || presData.brandName || '';
           const brandColor = presData.brandColorPrimary || '#032D60';
-          if (slide.layout === 'TITLE') {
-            slide.backgroundImageDescription = `A bright, vibrant, wide-angle landscape image related to ${brandName || topic} with vivid, lighter tints of ${brandColor}, bright lighting, high energy, and a sense of innovation. Use rich saturated colors — not dark or moody. 16:9 widescreen.`;
-          } else if (slide.layout === 'SECTION_HEADER') {
-            slide.backgroundImageDescription = `Colorful abstract composition using bright, lighter gradients inspired by ${brandColor} with geometric shapes and luminous energy, suggesting a new chapter in the ${brandName || topic} story. Wide landscape 16:9.`;
-          } else {
-            slide.backgroundImageDescription = `Bright, colorful professional background using vivid tints of ${brandColor}, with smooth gradients, bokeh effects, and energetic visual interest related to "${slide.title || topic}". Must be 16:9 landscape, NOT dark.`;
-          }
-          slide.backgroundImageOpacity = 0.85;
-          console.log(`[Image Gen] Auto-generated description for slide ${i + 1} (${slide.layout})`);
-        } else {
-          console.log(`[Image Gen] Slide ${i + 1} has backgroundImageDescription: "${slide.backgroundImageDescription.substring(0, 80)}..."`);
+          slide.backgroundImageDescription = `Professional slide design using brand colors (${brandColor}), with clean geometric shapes, subtle gradients, and modern typography layout suitable for ${brandName || topic}. 1920x1080.`;
         }
-      }
 
-      console.log(`Generating AI background images for ALL ${aiSlides.length} slides of presentation ${presentation.id}... (${refThumbnails.length} reference images for style matching)`);
-      for (let i = 0; i < aiSlides.length; i++) {
-        await generateAndUploadSlideImage(aiSlides[i], presData, topic, presentation.id, i, refThumbnails);
-        // Delay between images to avoid rate limiting
+        try {
+          const publicUrl = await generateAndUploadSlideImage(slide, presData, topic, presentation.id, i, refThumbnails);
+
+          // Save to presentation_slides table
+          if (publicUrl) {
+            try {
+              await query(
+                `INSERT INTO presentation_slides (presentation_id, slide_index, image_url, title, heading, body, speaker_notes, layout_type)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE image_url = VALUES(image_url), title = VALUES(title), heading = VALUES(heading), body = VALUES(body), speaker_notes = VALUES(speaker_notes), layout_type = VALUES(layout_type), updated_at = NOW()`,
+                [presentation.id, i, publicUrl, slide.title || '', slide.heading || '', slide.body || '', slide.speakerNotes || '', slide.layoutType || 'CONTENT']
+              );
+            } catch (dbErr) {
+              console.warn(`Failed to save slide ${i + 1} to presentation_slides (non-fatal):`, dbErr.message);
+            }
+          }
+        } catch (imgErr) {
+          console.warn(`Slide image generation failed for slide ${i + 1} (non-fatal):`, imgErr.message);
+        }
+
+        // Rate limit: ~2 seconds between slides to avoid Gemini rate limits
         if (i < aiSlides.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 1500));
+          await new Promise(resolve => setTimeout(resolve, 2000));
         }
       }
       console.log(`Image generation complete for presentation ${presentation.id}`);
     } else {
-      console.log('R2 storage not configured — skipping AI image generation');
-      for (const slide of aiSlides) {
-        delete slide.backgroundImageUrl;
-        delete slide.backgroundImageDescription;
-      }
+      console.log('R2 storage not configured — skipping slide image generation');
     }
 
-    // Create or reuse Google Slides presentation
-    try {
-      const slidesService = google.slides({ version: 'v1', auth: authClient });
-
-      let presentationId;
-      let presentationUrl;
-      const generatedSlides = slideData.slides || [];
-
-      // Check if this presentation already has a Google Slides file (regeneration)
-      if (presentation.google_presentation_id) {
-        // ── REGENERATION: Reuse existing Google Slides presentation ──
-        presentationId = presentation.google_presentation_id;
-        presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
-        console.log(`Regenerating into existing Google Slides: ${presentationId}`);
-
-        // Get existing presentation to find all current slides
-        const existingPres = await slidesService.presentations.get({ presentationId });
-        const existingSlides = existingPres.data.slides || [];
-
-        // Delete all existing slides (except we must keep at least one, so add new slides first)
-        // Strategy: 1) Add all new slides 2) Delete all old slides
-        const addRequests = [];
-        for (let i = 0; i < generatedSlides.length; i++) {
-          const slide = generatedSlides[i];
-          const slideId = `slide_${i}_${Date.now()}`;
-
-          let predefinedLayout = 'BLANK';
-          if (slide.layout === 'TITLE') predefinedLayout = 'TITLE';
-          else if (slide.layout === 'SECTION_HEADER') predefinedLayout = 'SECTION_HEADER';
-          else if (slide.layout === 'TITLE_AND_BODY') predefinedLayout = 'TITLE_AND_BODY';
-          else if (slide.layout === 'TWO_COLUMNS') predefinedLayout = 'TITLE_AND_TWO_COLUMNS';
-
-          addRequests.push({
-            createSlide: {
-              objectId: slideId,
-              insertionIndex: i,
-              slideLayoutReference: { predefinedLayout }
-            }
-          });
-        }
-
-        // Add new slides first
-        if (addRequests.length > 0) {
-          await slidesService.presentations.batchUpdate({
-            presentationId,
-            requestBody: { requests: addRequests }
-          });
-        }
-
-        // Now delete all old slides (they're now at the end after the newly inserted ones)
-        if (existingSlides.length > 0) {
-          const deleteRequests = existingSlides.map(s => ({
-            deleteObject: { objectId: s.objectId }
-          }));
-          await slidesService.presentations.batchUpdate({
-            presentationId,
-            requestBody: { requests: deleteRequests }
-          });
-          console.log(`Deleted ${existingSlides.length} old slides from presentation ${presentationId}`);
-        }
-
-        // Update the title
-        if (slideData.title || presentation.name) {
-          try {
-            const driveService = google.drive({ version: 'v3', auth: authClient });
-            await driveService.files.update({
-              fileId: presentationId,
-              requestBody: { name: slideData.title || presentation.name }
-            });
-          } catch (titleErr) {
-            console.warn('Failed to update presentation title (non-fatal):', titleErr.message);
-          }
-        }
-
-      } else {
-        // ── FIRST GENERATION: Create a new Google Slides presentation ──
-        const createResp = await slidesService.presentations.create({
-          requestBody: { title: slideData.title || presentation.name }
-        });
-
-        presentationId = createResp.data.presentationId;
-        presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
-        console.log(`Created new Google Slides: ${presentationId}`);
-
-        // Build batch update requests
-        const requests = [];
-
-        // Delete the default blank slide
-        if (createResp.data.slides && createResp.data.slides.length > 0) {
-          requests.push({
-            deleteObject: { objectId: createResp.data.slides[0].objectId }
-          });
-        }
-
-        // Add each slide
-        for (let i = 0; i < generatedSlides.length; i++) {
-          const slide = generatedSlides[i];
-          const slideId = `slide_${i}`;
-
-          let predefinedLayout = 'BLANK';
-          if (slide.layout === 'TITLE') predefinedLayout = 'TITLE';
-          else if (slide.layout === 'SECTION_HEADER') predefinedLayout = 'SECTION_HEADER';
-          else if (slide.layout === 'TITLE_AND_BODY') predefinedLayout = 'TITLE_AND_BODY';
-          else if (slide.layout === 'TWO_COLUMNS') predefinedLayout = 'TITLE_AND_TWO_COLUMNS';
-
-          requests.push({
-            createSlide: {
-              objectId: slideId,
-              insertionIndex: i,
-              slideLayoutReference: { predefinedLayout }
-            }
-          });
-        }
-
-        // Execute slide creation
-        if (requests.length > 0) {
-          await slidesService.presentations.batchUpdate({
-            presentationId,
-            requestBody: { requests }
-          });
-        }
-      }
-
-      // Get the presentation to find placeholder IDs
-      const createdPres = await slidesService.presentations.get({ presentationId });
-
-      // Now populate text in each slide
-      const textRequests = [];
-      for (let i = 0; i < generatedSlides.length; i++) {
-        const slide = generatedSlides[i];
-        const pageSlide = createdPres.data.slides[i];
-        if (!pageSlide) continue;
-
-        const elements = pageSlide.pageElements || [];
-
-        for (const element of elements) {
-          const placeholder = element.shape?.placeholder;
-          if (!placeholder) continue;
-
-          let text = '';
-          if (placeholder.type === 'TITLE' || placeholder.type === 'CENTERED_TITLE') {
-            text = slide.title || '';
-          } else if (placeholder.type === 'SUBTITLE') {
-            text = slide.subtitle || '';
-          } else if (placeholder.type === 'BODY') {
-            if (slide.layout === 'TWO_COLUMNS') {
-              // For two columns, first body placeholder gets left, second gets right
-              // This is a simplification - in practice we handle by index
-              text = slide.body || slide.leftColumn || '';
-            } else {
-              text = slide.body || '';
-            }
-          }
-
-          if (text) {
-            textRequests.push({
-              insertText: {
-                objectId: element.objectId,
-                text: text.replace(/\\n/g, '\n'),
-                insertionIndex: 0
-              }
-            });
-          }
-        }
-      }
-
-      if (textRequests.length > 0) {
-        await slidesService.presentations.batchUpdate({
-          presentationId,
-          requestBody: { requests: textRequests }
-        });
-      }
-
-      // ── Batch 3a: Apply BACKGROUND styling (images + solid colors) — separate batch ──
-      const bgRequests = [];
-      const slidesWithBgImages = [];
-
-      for (let i = 0; i < generatedSlides.length; i++) {
-        const slide = generatedSlides[i];
-        const pageSlide = createdPres.data.slides[i];
-        if (!pageSlide) continue;
-
-        if (slide.backgroundImageUrl) {
-          bgRequests.push({
-            updatePageProperties: {
-              objectId: pageSlide.objectId,
-              pageProperties: {
-                pageBackgroundFill: {
-                  stretchedPictureFill: {
-                    contentUrl: slide.backgroundImageUrl
-                  }
-                }
-              },
-              fields: 'pageBackgroundFill.stretchedPictureFill.contentUrl'
-            }
-          });
-          slidesWithBgImages.push({
-            slideIndex: i,
-            pageObjectId: pageSlide.objectId,
-            opacity: slide.backgroundImageOpacity || 0.3,
-            backgroundColor: slide.backgroundColor || '#000000'
-          });
-          console.log(`Background image queued for slide ${i + 1}: ${slide.backgroundImageUrl}`);
-        } else if (slide.backgroundColor) {
-          const bgRgb = hexToRgb(slide.backgroundColor);
-          if (bgRgb) {
-            bgRequests.push({
-              updatePageProperties: {
-                objectId: pageSlide.objectId,
-                pageProperties: {
-                  pageBackgroundFill: {
-                    solidFill: { color: { rgbColor: bgRgb } }
-                  }
-                },
-                fields: 'pageBackgroundFill.solidFill.color'
-              }
-            });
-          }
-        }
-      }
-
-      // Execute background batch SEPARATELY so text styling errors don't break it
-      if (bgRequests.length > 0) {
-        try {
-          await slidesService.presentations.batchUpdate({
-            presentationId,
-            requestBody: { requests: bgRequests }
-          });
-          console.log(`Applied ${bgRequests.length} background updates to presentation ${presentation.id}`);
-        } catch (bgErr) {
-          console.error('Background styling failed:', bgErr.message);
-        }
-      }
-
-      // ── Batch 3b: Apply TEXT styling (colors, fonts, sizes, alignment) — separate batch ──
-      const textStyleRequests = [];
-      const paragraphStyleRequests = [];
-
-      for (let i = 0; i < generatedSlides.length; i++) {
-        const slide = generatedSlides[i];
-        const pageSlide = createdPres.data.slides[i];
-        if (!pageSlide) continue;
-
-        for (const element of (pageSlide.pageElements || [])) {
-          const placeholder = element.shape?.placeholder;
-          if (!placeholder) continue;
-
-          const isTitle = placeholder.type === 'TITLE' || placeholder.type === 'CENTERED_TITLE';
-          const isSubtitle = placeholder.type === 'SUBTITLE';
-          const isBody = placeholder.type === 'BODY';
-          if (!isTitle && !isSubtitle && !isBody) continue;
-
-          // CRITICAL: Skip elements that have no text content to avoid Google API errors
-          const textElements = element.shape?.text?.textElements || [];
-          const hasText = textElements.some(te => te.textRun?.content?.trim());
-          if (!hasText) continue;
-
-          const style = {};
-          const fields = [];
-
-          // Font family — use separate title/body fonts if specified
-          const titleFont = slideData.design?.titleFontFamily || slideData.design?.fontFamily;
-          const bodyFont = slideData.design?.bodyFontFamily || slideData.design?.fontFamily;
-          const font = (isTitle || isSubtitle) ? titleFont : bodyFont;
-          if (font) {
-            style.fontFamily = font;
-            fields.push('fontFamily');
-          }
-
-          // Text color
-          const colorHex = isTitle || isSubtitle ? slide.titleColor : slide.bodyColor;
-          if (colorHex) {
-            const rgb = hexToRgb(colorHex);
-            if (rgb) {
-              style.foregroundColor = { opaqueColor: { rgbColor: rgb } };
-              fields.push('foregroundColor');
-            }
-          }
-
-          // Font size
-          const fontSize = isTitle ? slide.titleFontSize : (isSubtitle ? (slide.bodyFontSize || 18) : slide.bodyFontSize);
-          if (fontSize) {
-            style.fontSize = { magnitude: fontSize, unit: 'PT' };
-            fields.push('fontSize');
-          }
-
-          // Bold for titles
-          if ((isTitle || isSubtitle) && slide.titleBold) {
-            style.bold = true;
-            fields.push('bold');
-          }
-
-          if (fields.length > 0) {
-            textStyleRequests.push({
-              updateTextStyle: {
-                objectId: element.objectId,
-                textRange: { type: 'ALL' },
-                style,
-                fields: fields.join(',')
-              }
-            });
-          }
-
-          // Paragraph alignment
-          const alignment = (isTitle || isSubtitle) ? slide.titleAlignment : slide.bodyAlignment;
-          if (alignment && ['START', 'CENTER', 'END'].includes(alignment)) {
-            const paraStyle = { alignment };
-            const paraFields = ['alignment'];
-
-            // Add line spacing for body text to improve readability
-            if (isBody) {
-              paraStyle.lineSpacing = 150; // 1.5x line spacing
-              paraStyle.spaceBelow = { magnitude: 8, unit: 'PT' };
-              paraFields.push('lineSpacing', 'spaceBelow');
-            }
-
-            paragraphStyleRequests.push({
-              updateParagraphStyle: {
-                objectId: element.objectId,
-                textRange: { type: 'ALL' },
-                style: paraStyle,
-                fields: paraFields.join(',')
-              }
-            });
-          }
-        }
-      }
-
-      // Execute text styling batch separately
-      if (textStyleRequests.length > 0) {
-        try {
-          await slidesService.presentations.batchUpdate({
-            presentationId,
-            requestBody: { requests: textStyleRequests }
-          });
-          console.log(`Applied ${textStyleRequests.length} text style updates to presentation ${presentation.id}`);
-        } catch (textErr) {
-          console.error('Text styling failed (non-fatal):', textErr.message);
-        }
-      }
-
-      // Execute paragraph styling batch separately
-      if (paragraphStyleRequests.length > 0) {
-        try {
-          await slidesService.presentations.batchUpdate({
-            presentationId,
-            requestBody: { requests: paragraphStyleRequests }
-          });
-          console.log(`Applied ${paragraphStyleRequests.length} paragraph style updates`);
-        } catch (paraErr) {
-          console.error('Paragraph styling failed (non-fatal):', paraErr.message);
-        }
-      }
-
-      // ── Batch 3b: Add content boxes behind text areas for designed look ──
-      // Instead of darkening the entire slide, add semi-transparent colored boxes
-      // behind the text areas — like the grounding asset uses.
-      const boxTimestamp = Date.now();
-      const contentBoxRequests = [];
-      const contentBoxIds = []; // Track IDs for z-ordering
-
-      // Refresh slide data after backgrounds were applied
-      const presAfterBg = await slidesService.presentations.get({ presentationId });
-
-      for (let i = 0; i < generatedSlides.length; i++) {
-        const slide = generatedSlides[i];
-        const pageSlide = presAfterBg.data.slides[i];
-        if (!pageSlide) continue;
-        if (!slide.backgroundImageUrl) continue; // Only add boxes on slides with bg images
-
-        const brandPrimary = hexToRgb(presData.brandColorPrimary || slide.backgroundColor || '#032D60') || { red: 0.012, green: 0.176, blue: 0.376 };
-        const slideWidth = 9144000; // 10 inches EMU
-        const slideHeight = 6858000; // 7.5 inches EMU
-
-        if (slide.layout === 'TITLE' || slide.layout === 'SECTION_HEADER') {
-          // TITLE/SECTION: Large centered content box (70% width, 50% height, centered)
-          const boxId = `cbox_${i}_${boxTimestamp}`;
-          const boxWidth = Math.round(slideWidth * 0.75);
-          const boxHeight = Math.round(slideHeight * 0.45);
-          const boxX = Math.round((slideWidth - boxWidth) / 2);
-          const boxY = Math.round((slideHeight - boxHeight) / 2);
-
-          contentBoxRequests.push({
-            createShape: {
-              objectId: boxId, shapeType: 'ROUND_RECTANGLE',
-              elementProperties: {
-                pageObjectId: pageSlide.objectId,
-                size: { width: { magnitude: boxWidth, unit: 'EMU' }, height: { magnitude: boxHeight, unit: 'EMU' } },
-                transform: { scaleX: 1, scaleY: 1, translateX: boxX, translateY: boxY, unit: 'EMU' }
-              }
-            }
-          });
-          contentBoxRequests.push({
-            updateShapeProperties: {
-              objectId: boxId,
-              shapeProperties: {
-                shapeBackgroundFill: { solidFill: { color: { rgbColor: brandPrimary }, alpha: 0.75 } },
-                outline: { propertyState: 'NOT_RENDERED' }
-              },
-              fields: 'shapeBackgroundFill.solidFill.color,shapeBackgroundFill.solidFill.alpha,outline.propertyState'
-            }
-          });
-          contentBoxIds.push({ id: boxId, slideIndex: i });
-
-        } else {
-          // CONTENT slides: Bottom content box (full width, 55% height at bottom)
-          const boxId = `cbox_${i}_${boxTimestamp}`;
-          const boxHeight = Math.round(slideHeight * 0.55);
-          const boxY = slideHeight - boxHeight;
-
-          contentBoxRequests.push({
-            createShape: {
-              objectId: boxId, shapeType: 'RECTANGLE',
-              elementProperties: {
-                pageObjectId: pageSlide.objectId,
-                size: { width: { magnitude: slideWidth, unit: 'EMU' }, height: { magnitude: boxHeight, unit: 'EMU' } },
-                transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: boxY, unit: 'EMU' }
-              }
-            }
-          });
-          contentBoxRequests.push({
-            updateShapeProperties: {
-              objectId: boxId,
-              shapeProperties: {
-                shapeBackgroundFill: { solidFill: { color: { rgbColor: brandPrimary }, alpha: 0.80 } },
-                outline: { propertyState: 'NOT_RENDERED' }
-              },
-              fields: 'shapeBackgroundFill.solidFill.color,shapeBackgroundFill.solidFill.alpha,outline.propertyState'
-            }
-          });
-          contentBoxIds.push({ id: boxId, slideIndex: i });
-
-          // Also add a thin accent strip at the top edge of the content box
-          const stripId = `cstrip_${i}_${boxTimestamp}`;
-          const accentColor = hexToRgb(slideData.design?.accentColor || presData.brandColorSecondary || '#FF6B35') || { red: 1, green: 0.42, blue: 0.21 };
-          const stripHeight = 50800; // ~4pt
-
-          contentBoxRequests.push({
-            createShape: {
-              objectId: stripId, shapeType: 'RECTANGLE',
-              elementProperties: {
-                pageObjectId: pageSlide.objectId,
-                size: { width: { magnitude: slideWidth, unit: 'EMU' }, height: { magnitude: stripHeight, unit: 'EMU' } },
-                transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: boxY - stripHeight, unit: 'EMU' }
-              }
-            }
-          });
-          contentBoxRequests.push({
-            updateShapeProperties: {
-              objectId: stripId,
-              shapeProperties: {
-                shapeBackgroundFill: { solidFill: { color: { rgbColor: accentColor }, alpha: 1.0 } },
-                outline: { propertyState: 'NOT_RENDERED' }
-              },
-              fields: 'shapeBackgroundFill.solidFill.color,shapeBackgroundFill.solidFill.alpha,outline.propertyState'
-            }
-          });
-        }
-      }
-
-      if (contentBoxRequests.length > 0) {
-        try {
-          await slidesService.presentations.batchUpdate({
-            presentationId,
-            requestBody: { requests: contentBoxRequests }
-          });
-          console.log(`Added ${contentBoxIds.length} content boxes for presentation ${presentation.id}`);
-
-          // Re-order: move content boxes behind text placeholders but in front of background
-          const presForReorder = await slidesService.presentations.get({ presentationId });
-          const reorderRequests = [];
-          for (const box of contentBoxIds) {
-            const pageSlide = presForReorder.data.slides[box.slideIndex];
-            if (!pageSlide) continue;
-            const boxEl = pageSlide.pageElements?.find(el => el.objectId === box.id);
-            if (boxEl) {
-              reorderRequests.push({
-                updatePageElementsZOrder: {
-                  pageElementObjectIds: [box.id],
-                  operation: 'SEND_BACKWARD'
-                }
-              });
-            }
-          }
-          if (reorderRequests.length > 0) {
-            await slidesService.presentations.batchUpdate({
-              presentationId,
-              requestBody: { requests: reorderRequests }
-            });
-            console.log(`Reordered ${reorderRequests.length} content boxes behind text`);
-          }
-        } catch (boxErr) {
-          console.warn('Content box creation failed (non-fatal):', boxErr.message);
-        }
-      }
-
-      // ── Batch 3c: Add accent bars/stripes for designed look ──
-      const accentTimestamp = Date.now();
-      const accentRequests = [];
-      for (let i = 0; i < generatedSlides.length; i++) {
-        const slide = generatedSlides[i];
-        const pageSlide = createdPres.data.slides[i];
-        if (!pageSlide || !slide.accentBar) continue;
-
-        const bar = slide.accentBar;
-        const barColor = hexToRgb(bar.color || slideData.design?.accentColor || '#0176D3');
-        if (!barColor) continue;
-
-        const barId = `accent_${i}_${accentTimestamp}`;
-        const thickness = (bar.height || 6) * 12700; // pt to EMU
-        const slideWidth = 9144000; // 10 inches in EMU
-        const slideHeight = 6858000; // 7.5 inches in EMU
-
-        let size, transform;
-        if (bar.position === 'top') {
-          size = { width: { magnitude: slideWidth, unit: 'EMU' }, height: { magnitude: thickness, unit: 'EMU' } };
-          transform = { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, unit: 'EMU' };
-        } else if (bar.position === 'bottom') {
-          size = { width: { magnitude: slideWidth, unit: 'EMU' }, height: { magnitude: thickness, unit: 'EMU' } };
-          transform = { scaleX: 1, scaleY: 1, translateX: 0, translateY: slideHeight - thickness, unit: 'EMU' };
-        } else if (bar.position === 'left') {
-          size = { width: { magnitude: thickness, unit: 'EMU' }, height: { magnitude: slideHeight, unit: 'EMU' } };
-          transform = { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, unit: 'EMU' };
-        } else if (bar.position === 'right') {
-          size = { width: { magnitude: thickness, unit: 'EMU' }, height: { magnitude: slideHeight, unit: 'EMU' } };
-          transform = { scaleX: 1, scaleY: 1, translateX: slideWidth - thickness, translateY: 0, unit: 'EMU' };
-        } else {
-          continue;
-        }
-
-        accentRequests.push({
-          createShape: {
-            objectId: barId,
-            shapeType: 'RECTANGLE',
-            elementProperties: { pageObjectId: pageSlide.objectId, size, transform }
-          }
-        });
-        accentRequests.push({
-          updateShapeProperties: {
-            objectId: barId,
-            shapeProperties: {
-              shapeBackgroundFill: { solidFill: { color: { rgbColor: barColor }, alpha: 1.0 } },
-              outline: { propertyState: 'NOT_RENDERED' }
-            },
-            fields: 'shapeBackgroundFill.solidFill.color,shapeBackgroundFill.solidFill.alpha,outline.propertyState'
-          }
-        });
-      }
-
-      if (accentRequests.length > 0) {
-        try {
-          await slidesService.presentations.batchUpdate({
-            presentationId,
-            requestBody: { requests: accentRequests }
-          });
-          console.log(`Added accent bars to ${accentRequests.length / 2} slides`);
-        } catch (accentErr) {
-          console.warn('Accent bar creation failed (non-fatal):', accentErr.message);
-        }
-      }
-
-      // ── Batch 4: Logo insertion (isolated to prevent cascading failures) ──
-      if (presData.brandLogoUrl) {
-        try {
-          await slidesService.presentations.batchUpdate({
-            presentationId,
-            requestBody: {
-              requests: [{
-                createImage: {
-                  url: presData.brandLogoUrl,
-                  elementProperties: {
-                    pageObjectId: createdPres.data.slides[0]?.objectId || 'slide_0',
-                    size: {
-                      width: { magnitude: 1200000, unit: 'EMU' },
-                      height: { magnitude: 600000, unit: 'EMU' }
-                    },
-                    transform: {
-                      scaleX: 1, scaleY: 1,
-                      translateX: 7200000, translateY: 300000,
-                      unit: 'EMU'
-                    }
-                  }
-                }
-              }]
-            }
-          });
-          console.log(`Logo inserted on title slide for presentation ${presentation.id}`);
-        } catch (logoErr) {
-          console.warn('Logo insertion failed (non-fatal):', logoErr.message);
-        }
-      }
-
-      // ── Fetch thumbnails of generated slides ──
-      // Brief delay to allow Google Slides to render styling
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      const generatedThumbnails = [];
-      try {
-        const finalPres = await slidesService.presentations.get({ presentationId });
-        const finalSlides = finalPres.data.slides || [];
-
-        const thumbPromises = finalSlides.map(async (pageSlide, idx) => {
-          try {
-            const thumbRes = await slidesService.presentations.pages.getThumbnail({
-              presentationId,
-              pageObjectId: pageSlide.objectId,
-              'thumbnailProperties.mimeType': 'PNG',
-              'thumbnailProperties.thumbnailSize': 'SMALL'
-            });
-            const thumbUrl = thumbRes.data.contentUrl;
-            if (thumbUrl) {
-              const imgResp = await fetch(thumbUrl);
-              if (imgResp.ok) {
-                const imgBuffer = Buffer.from(await imgResp.arrayBuffer());
-                generatedThumbnails[idx] = imgBuffer.toString('base64');
-              }
-            }
-          } catch (thumbErr) {
-            console.warn(`Could not get thumbnail for generated slide ${idx + 1}:`, thumbErr.message);
-          }
-        });
-
-        await Promise.all(thumbPromises);
-        console.log(`Fetched ${generatedThumbnails.filter(Boolean).length}/${finalSlides.length} thumbnails`);
-      } catch (thumbFetchErr) {
-        console.error('Thumbnail fetching failed (non-fatal):', thumbFetchErr.message);
-      }
-
-      // Attach thumbnails to slide data
-      if (generatedThumbnails.length > 0 && slideData.slides) {
-        slideData.slides.forEach((slide, idx) => {
-          slide.thumbnailBase64 = generatedThumbnails[idx] || null;
-        });
-      }
-
-      // Update presentation record
-      presData.generatedSlides = slideData;
-      await query(
-        'UPDATE presentations SET status = ?, google_presentation_id = ?, google_presentation_url = ?, data = ?, updated_at = NOW() WHERE id = ?',
-        ['completed', presentationId, presentationUrl, JSON.stringify(presData), presentation.id]
-      );
-
-      console.log(`✓ Presentation ${presentation.id} generated successfully: ${presentationUrl}`);
-
-    } catch (err) {
-      console.error('Google Slides creation error:', err);
-      const errMsg = err.message || 'Google Slides creation failed';
-      const isAuthError = errMsg.toLowerCase().includes('invalid_grant') || errMsg.toLowerCase().includes('token') || errMsg.toLowerCase().includes('unauthorized') || errMsg.toLowerCase().includes('auth') || (err.code === 401);
-      presData.lastError = errMsg;
-      presData.lastErrorType = isAuthError ? 'auth' : 'google';
-      await query('UPDATE presentations SET status = ?, data = ? WHERE id = ?', ['failed', JSON.stringify(presData), presentation.id]);
-    }
+    // Save slide data to presData.generatedSlides for backward compat
+    presData.generatedSlides = slideData;
+    await query(
+      'UPDATE presentations SET status = ?, data = ?, updated_at = NOW() WHERE id = ?',
+      ['completed', JSON.stringify(presData), presentation.id]
+    );
+
+    console.log(`Presentation ${presentation.id} generated successfully (${aiSlides.length} slides)`);
 
   } catch (err) {
     console.error('Background generate error:', err);
@@ -3006,7 +1892,7 @@ Return ONLY valid JSON, no markdown fences.`;
       const errMsg = err.message || 'Generation failed';
       const errorData = typeof presentation.data === 'string' ? JSON.parse(presentation.data || '{}') : (presentation.data || {});
       errorData.lastError = errMsg;
-      errorData.lastErrorType = errMsg.toLowerCase().includes('auth') || errMsg.toLowerCase().includes('token') || errMsg.toLowerCase().includes('invalid_grant') ? 'auth' : 'generation';
+      errorData.lastErrorType = 'generation';
       await query('UPDATE presentations SET status = ?, data = ? WHERE id = ?', ['failed', JSON.stringify(errorData), presentation.id]);
     } catch (dbErr) {
       console.error('Failed to mark presentation as failed:', dbErr);

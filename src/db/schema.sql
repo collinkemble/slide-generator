@@ -90,6 +90,25 @@ CREATE TABLE IF NOT EXISTS reference_presentations (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Individual slides (pulled out of JSON blob for direct access/editing)
+CREATE TABLE IF NOT EXISTS presentation_slides (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  presentation_id INT NOT NULL,
+  slide_index INT NOT NULL,
+  title TEXT,
+  heading TEXT,
+  body TEXT,
+  speaker_notes TEXT,
+  layout_type VARCHAR(50) DEFAULT 'CONTENT',
+  image_url TEXT,
+  image_prompt TEXT,
+  additional_context TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (presentation_id) REFERENCES presentations(id) ON DELETE CASCADE,
+  UNIQUE KEY idx_pres_slide (presentation_id, slide_index)
+);
+
 -- Shared presentations tracking
 CREATE TABLE IF NOT EXISTS shared_presentations (
   id INT AUTO_INCREMENT PRIMARY KEY,
