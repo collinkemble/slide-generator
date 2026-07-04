@@ -9,8 +9,26 @@ const { migrate } = require('./src/db/migrate');
 const { google } = require('googleapis');
 const { GoogleGenAI } = require('@google/genai');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const sharp = require('sharp');
 
 const app = express();
+
+// ─── Salesforce logo buffer (loaded once at startup) ───
+let sfLogoBuffer = null;
+async function getSfLogoBuffer() {
+  if (sfLogoBuffer) return sfLogoBuffer;
+  try {
+    sfLogoBuffer = await sharp(path.join(__dirname, 'sflogo.png'))
+      .resize({ height: 36, withoutEnlargement: true })
+      .png()
+      .toBuffer();
+  } catch (err) {
+    console.warn('Could not load Salesforce logo:', err.message);
+  }
+  return sfLogoBuffer;
+}
+// Pre-load it
+getSfLogoBuffer();
 const PORT = process.env.PORT || 3000;
 
 // ─── Middleware ───
@@ -1558,7 +1576,7 @@ async function generateSlideImage(prompt, refImages) {
 
   // Add reference images for style/layout matching (up to 3 to avoid token limits)
   if (refImages && refImages.length > 0) {
-    contentParts.push({ text: 'Here are reference slides from an existing presentation. COPY their exact layout structure, text positioning, design patterns, and visual style. Match the same slide design language — same placement of titles, headings, body text, and decorative elements. The ONLY things that should differ are: background imagery (use new images appropriate for the target brand), logo branding (use the target brand logo, NOT the reference brand logo), and brand name. Everything else — text layout, design elements, color usage patterns, whitespace — should be a near-identical match:' });
+    contentParts.push({ text: 'Here are reference slides from an existing presentation. COPY their exact layout structure, text positioning, design patterns, and visual style. Match the same slide design language — same placement of titles, headings, body text, and decorative elements. The ONLY things that should differ are: background imagery (use new images appropriate for the target brand), and brand name. DO NOT copy any logos — logos will be added separately. DO NOT copy any photographs of people, team members, speakers, or headshots from the references. Everything else — text layout, design elements, color usage patterns, whitespace — should be a near-identical match:' });
     for (const ref of refImages.slice(0, 3)) {
       contentParts.push({ inlineData: { mimeType: 'image/png', data: ref } });
     }
@@ -1595,6 +1613,106 @@ async function generateSlideImage(prompt, refImages) {
 }
 
 /**
+ * Post-process a generated slide image:
+ * 1. Enforce exact 1920x1080 dimensions (resize + letterbox/crop)
+ * 2. Composite brand logo + Salesforce logo in upper-right corner
+ * Returns the processed buffer.
+ */
+async function postProcessSlideImage(imageBuffer, brandData) {
+  const TARGET_W = 1920;
+  const TARGET_H = 1080;
+  const LOGO_MARGIN = 30;
+  const LOGO_HEIGHT = 36;
+  const DIVIDER_WIDTH = 1;
+  const LOGO_GAP = 12;
+
+  // Step 1: Enforce 1920x1080 — resize to fit, then extend/crop to exact dimensions
+  let img = sharp(imageBuffer);
+  const meta = await img.metadata();
+  console.log(`[PostProcess] Original image: ${meta.width}x${meta.height}`);
+
+  // Resize to fill 1920x1080, then crop to exact size
+  img = sharp(imageBuffer)
+    .resize(TARGET_W, TARGET_H, {
+      fit: 'cover',        // Fill the entire 1920x1080 area
+      position: 'centre',  // Center-crop if needed
+    })
+    .png();
+
+  // Step 2: Composite logos in upper-right corner
+  const composites = [];
+
+  // Get Salesforce logo
+  const sfLogo = await getSfLogoBuffer();
+
+  // Try to fetch brand logo from URL
+  let brandLogoBuffer = null;
+  const brandLogoUrl = brandData.brandLogoUrl || '';
+  if (brandLogoUrl) {
+    try {
+      const logoResp = await fetch(brandLogoUrl);
+      if (logoResp.ok) {
+        const logoArrayBuffer = await logoResp.arrayBuffer();
+        brandLogoBuffer = await sharp(Buffer.from(logoArrayBuffer))
+          .resize({ height: LOGO_HEIGHT, withoutEnlargement: true })
+          .png()
+          .toBuffer();
+      }
+    } catch (err) {
+      console.warn('[PostProcess] Failed to fetch brand logo:', err.message);
+    }
+  }
+
+  if (brandLogoBuffer && sfLogo) {
+    // Both logos available — build lockup: [brand logo] | [SF logo]
+    const brandMeta = await sharp(brandLogoBuffer).metadata();
+    const sfMeta = await sharp(sfLogo).metadata();
+
+    const totalWidth = brandMeta.width + LOGO_GAP + DIVIDER_WIDTH + LOGO_GAP + sfMeta.width;
+    const lockupHeight = LOGO_HEIGHT;
+
+    // Create the divider line (thin white vertical line)
+    const divider = await sharp({
+      create: { width: DIVIDER_WIDTH, height: lockupHeight, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 0.5 } }
+    }).png().toBuffer();
+
+    // Create the lockup as a composite image
+    const lockup = await sharp({
+      create: { width: totalWidth, height: lockupHeight, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } }
+    })
+      .composite([
+        { input: brandLogoBuffer, left: 0, top: 0 },
+        { input: divider, left: brandMeta.width + LOGO_GAP, top: 0 },
+        { input: sfLogo, left: brandMeta.width + LOGO_GAP + DIVIDER_WIDTH + LOGO_GAP, top: 0 },
+      ])
+      .png()
+      .toBuffer();
+
+    composites.push({
+      input: lockup,
+      left: TARGET_W - totalWidth - LOGO_MARGIN,
+      top: LOGO_MARGIN,
+    });
+  } else if (sfLogo) {
+    // Only SF logo available
+    const sfMeta = await sharp(sfLogo).metadata();
+    composites.push({
+      input: sfLogo,
+      left: TARGET_W - sfMeta.width - LOGO_MARGIN,
+      top: LOGO_MARGIN,
+    });
+  }
+
+  if (composites.length > 0) {
+    img = img.composite(composites);
+  }
+
+  const result = await img.toBuffer();
+  console.log(`[PostProcess] Final image: ${TARGET_W}x${TARGET_H}, ${Math.round(result.length / 1024)}KB`);
+  return result;
+}
+
+/**
  * Build a prompt to generate a COMPLETE presentation slide image (1920x1080)
  * with all text content baked into the image.
  */
@@ -1613,9 +1731,16 @@ function buildImagePrompt(slide, brandData, presentationTopic) {
   const slideBody = slide.body || '';
   const layoutType = slide.layoutType || slide.layout || 'CONTENT';
 
-  let prompt = `Generate a COMPLETE, FINISHED presentation slide image. The image MUST be EXACTLY 1920 pixels wide by 1080 pixels tall — a perfect 16:9 widescreen landscape rectangle. This is a HARD REQUIREMENT — do not generate any other dimensions.
+  let prompt = `Generate a COMPLETE, FINISHED, FULL-SCREEN presentation slide image. This is a single slide from a professional presentation displayed in full-screen presentation mode.
 
-This is NOT a background image — this is the ENTIRE SLIDE with ALL text content rendered directly into the image, as if screenshotted from a professional presentation tool like PowerPoint or Keynote.
+IMAGE DIMENSIONS — CRITICAL:
+- The output image MUST be a WIDE LANDSCAPE rectangle — significantly wider than it is tall
+- Target aspect ratio: 16:9 (widescreen), like a full-screen presentation on a widescreen monitor
+- The image should be 1920 pixels wide by 1080 pixels tall
+- DO NOT generate a square image. DO NOT generate a portrait/vertical image. DO NOT generate a 1:1 image.
+- The width MUST be approximately 1.78x the height (16:9 ratio)
+
+This is NOT a background image — this is the ENTIRE SLIDE with ALL text content rendered directly into the image, as if screenshotted from a professional presentation tool like PowerPoint or Keynote running in full-screen mode.
 
 SLIDE CONTENT TO RENDER:`;
 
@@ -1625,13 +1750,8 @@ SLIDE CONTENT TO RENDER:`;
   prompt += `\nSlide type: ${layoutType}`;
   prompt += `\nPresentation topic: "${presentationTopic || ''}"`;
 
-  // Logo treatment — brand logo + Salesforce logo in upper right on EVERY slide
-  prompt += `\n\nLOGO TREATMENT (MANDATORY — EVERY SLIDE):
-- In the upper right corner of the slide, render a logo lockup: "${brandName || 'Brand'}" + "Salesforce"
-- The logo lockup should show the brand name "${brandName || 'Brand'}" on the left and "Salesforce" (with the Salesforce cloud logo) on the right, separated by a thin vertical divider line
-- The logo lockup must be clean, small (approximately 200-250px wide total), and positioned in the top-right corner with ~40px margin from the edges
-- Use white text/logo on dark backgrounds, or the brand primary color on light backgrounds
-- This EXACT SAME logo treatment must appear on EVERY slide — consistent placement, consistent size`;
+  // Logo treatment is handled programmatically via sharp compositing — DO NOT ask the AI to draw logos
+  prompt += `\n\nLOGO NOTE: Do NOT render any logo in the upper-right corner. Leave the upper-right corner empty — logos will be added separately after image generation.`;
 
   prompt += `\n\nTEXT LAYOUT RULES:`;
   if (layoutType === 'TITLE') {
@@ -1682,7 +1802,8 @@ SLIDE CONTENT TO RENDER:`;
   }
 
   prompt += `\n\nMANDATORY DESIGN REQUIREMENTS:
-- MUST be EXACTLY 1920x1080 pixels — 16:9 widescreen landscape. NO other aspect ratio. NO square. NO portrait. EXACTLY 1920 wide by 1080 tall.
+- MUST be a WIDE LANDSCAPE image (16:9 widescreen). Width must be ~1.78x the height. Target: 1920x1080 pixels.
+- This is a FULL-SCREEN presentation slide — it fills the entire widescreen display
 - ALL text content listed above MUST appear in the image, correctly spelled and complete
 - Professional typography with proper kerning, leading, and hierarchy
 - Clean, modern presentation design with proper use of whitespace
@@ -1693,7 +1814,10 @@ SLIDE CONTENT TO RENDER:`;
 - NO placeholder text — use ONLY the exact text content provided above
 - The slide should look like it was designed by a professional graphic designer
 - Text must be sharp and legible at full HD presentation resolution
-- DO NOT include any branding from the reference slides — only use "${brandName || 'the target brand'}" branding`;
+- DO NOT include any branding or logos from the reference slides — only use "${brandName || 'the target brand'}" branding
+- DO NOT include any photographs of people, team members, speakers, headshots, or portraits
+- DO NOT include speaker names, titles, or biographical information
+- NO logos in the upper-right corner — that area is reserved for post-processing`;
 
   return prompt;
 }
@@ -1709,12 +1833,13 @@ async function generateAndUploadSlideImage(slide, brandData, presentationTopic, 
     console.log(`Generating complete slide image for slide ${slideIndex + 1} of presentation ${presentationId}...`);
 
     const { imageBase64, mimeType } = await generateSlideImage(prompt, refImages);
-    const ext = mimeType === 'image/jpeg' ? '.jpg' : '.png';
     const randomId = crypto.randomBytes(8).toString('hex');
-    const key = `slides/${presentationId}/${slideIndex}-${randomId}${ext}`;
+    const key = `slides/${presentationId}/${slideIndex}-${randomId}.png`;
 
-    const buffer = Buffer.from(imageBase64, 'base64');
-    const publicUrl = await uploadToR2(buffer, key, mimeType);
+    // Post-process: enforce 1920x1080 + composite brand/SF logos
+    const rawBuffer = Buffer.from(imageBase64, 'base64');
+    const processedBuffer = await postProcessSlideImage(rawBuffer, brandData);
+    const publicUrl = await uploadToR2(processedBuffer, key, 'image/png');
 
     console.log(`Slide image generated and uploaded for slide ${slideIndex + 1}: ${publicUrl}`);
 
@@ -1855,6 +1980,8 @@ CRITICAL RULES:
 - The "backgroundImageDescription" should describe visuals appropriate for "${targetBrand || 'the target brand'}" — NOT the reference brand's imagery.
 - Do NOT summarize, paraphrase, or rewrite any content. Copy it VERBATIM with only brand name changes.
 - The layout types MUST match the reference exactly.
+- If the reference includes slides with team member photos, speaker headshots, names, or titles — SKIP those entirely. Do NOT include any slides about specific people, team introductions, or speaker bios. Only include content slides.
+- The "backgroundImageDescription" must NEVER describe photographs of people, headshots, team photos, or portraits. Use abstract imagery, patterns, cityscapes, or product imagery instead.
 
 Return ONLY valid JSON, no markdown fences.`;
     } else {
