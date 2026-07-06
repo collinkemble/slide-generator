@@ -784,6 +784,107 @@
       </div>
     </div>
 
+    <!-- ═══════════════════════════════════════════════ -->
+    <!-- APP: Reference Detail Page                    -->
+    <!-- ═══════════════════════════════════════════════ -->
+    <div id="reference-detail" class="hidden" style="max-width: 1024px; margin: 0 auto; padding: 32px 16px 0;">
+      <!-- Header -->
+      <div class="flex items-center justify-between mb-6">
+        <div class="flex items-center gap-3">
+          <button onclick="showPage('grounding')" class="text-sm text-gray-500 hover:text-gray-800 cursor-pointer" style="font-size: 14px;">← Back</button>
+          <h2 class="text-2xl font-bold text-gray-800" id="ref-detail-name">Reference Presentation</h2>
+        </div>
+      </div>
+
+      <!-- Metadata Card -->
+      <div class="bg-white rounded-2xl shadow-md p-6 mb-6">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div>
+            <span class="text-gray-500 block mb-1">Industry</span>
+            <span id="ref-detail-industry" class="font-medium text-gray-800">—</span>
+          </div>
+          <div>
+            <span class="text-gray-500 block mb-1">Type</span>
+            <span id="ref-detail-type" class="font-medium text-gray-800">—</span>
+          </div>
+          <div>
+            <span class="text-gray-500 block mb-1">Slides</span>
+            <span id="ref-detail-slides" class="font-medium text-gray-800">—</span>
+          </div>
+          <div>
+            <span class="text-gray-500 block mb-1">Source</span>
+            <span id="ref-detail-source" class="font-medium text-gray-800">—</span>
+          </div>
+        </div>
+        <div id="ref-detail-synopsis-wrap" class="mt-4 hidden">
+          <span class="text-gray-500 text-sm block mb-1">Synopsis</span>
+          <p id="ref-detail-synopsis" class="text-sm text-gray-700"></p>
+        </div>
+      </div>
+
+      <!-- Web Version Actions -->
+      <div class="bg-white rounded-2xl shadow-md p-6 mb-6">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="text-lg font-bold text-gray-800">Web Version</h3>
+            <p class="text-sm text-gray-500">HTML-based slide version with AI-generated photo backgrounds.</p>
+          </div>
+          <div id="ref-detail-web-status" class="text-sm">
+            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium" style="background: #F4F6F9; color: #666;">Not Generated</span>
+          </div>
+        </div>
+
+        <!-- Brand Kit Selector for Web Version -->
+        <div id="ref-detail-brandkit-section" class="mb-4 p-4 rounded-xl" style="background: #EEF4FF; border: 1px dashed #B4C7E7;">
+          <div class="flex items-center gap-2 mb-2">
+            <span style="font-size: 18px;">🎨</span>
+            <span class="font-semibold text-sm text-gray-700">Brand Kit</span>
+          </div>
+          <p class="text-xs text-gray-500 mb-3">Select a brand kit to customize the web version with brand colors, logo, and style.</p>
+          <div class="flex items-center gap-3">
+            <button id="ref-detail-brandkit-btn" onclick="toggleRefDetailBrandKitPicker()" class="px-3 py-1.5 text-sm font-medium text-white rounded-lg cursor-pointer" style="background: #0176D3;">📋 Select Brand Kit</button>
+            <span id="ref-detail-brandkit-name" class="text-sm text-gray-500"></span>
+          </div>
+          <div id="ref-detail-brandkit-picker" class="hidden mt-3 bg-white rounded-lg border border-gray-200 shadow-lg" style="max-height: 200px; overflow-y: auto;"></div>
+        </div>
+
+        <div class="flex gap-3">
+          <button id="ref-detail-view-btn" onclick="viewWebVersion()" disabled class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed" style="background: #0176D3;">▶ View Web Version</button>
+          <button id="ref-detail-regen-btn" onclick="regenerateWebVersion()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #2E844A;">🔄 Generate Web Version</button>
+        </div>
+        <div id="ref-detail-gen-progress" class="hidden mt-3">
+          <div class="flex items-center gap-2 text-sm text-gray-600">
+            <div class="spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
+            <span id="ref-detail-gen-status-text">Generating web version...</span>
+          </div>
+        </div>
+        <p id="ref-detail-gen-error" class="hidden text-sm mt-3" style="color: #C23934;"></p>
+      </div>
+
+      <!-- Original Thumbnails -->
+      <div class="bg-white rounded-2xl shadow-md p-6 mb-6">
+        <h3 class="text-lg font-bold text-gray-800 mb-1">Original Thumbnails</h3>
+        <p class="text-sm text-gray-500 mb-4">Slides extracted from the source presentation. These are used as the design reference for AI generation.</p>
+        <div id="ref-detail-thumbnails" class="grid gap-4" style="grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));">
+          <div class="text-center py-8 text-gray-400 text-sm">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Slide Annotations (editable) -->
+      <div class="bg-white rounded-2xl shadow-md p-6 mb-6">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="text-lg font-bold text-gray-800">Slide Annotations</h3>
+            <p class="text-sm text-gray-500">Edit slide names and descriptions for AI grounding context.</p>
+          </div>
+          <button id="ref-detail-save-btn" onclick="saveRefDetailAnnotations()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Save Changes</button>
+        </div>
+        <p id="ref-detail-save-error" class="hidden text-sm mb-3" style="color: #C23934;"></p>
+        <p id="ref-detail-save-success" class="hidden text-sm mb-3" style="color: #2E844A;"></p>
+        <div id="ref-detail-annotations-list" style="border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden;"></div>
+      </div>
+    </div>
+
     <!-- Add Reference Dialog -->
     <div id="add-reference-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8" style="max-height: 90vh; overflow-y: auto;">
@@ -1058,13 +1159,16 @@ async function showApp(email) {
   document.getElementById('app-section').style.display = 'block';
   document.getElementById('user-email').textContent = email;
 
-  // Check if URL has a deep link (e.g. /views/123)
+  // Check if URL has a deep link (e.g. /views/123 or /references/123)
   const viewMatch = window.location.pathname.match(/^\/views\/(\d+)$/);
+  const refMatch = window.location.pathname.match(/^\/references\/(\d+)$/);
   const pageMap = { '/api-keys': 'api-keys', '/feedback': 'feedback', '/users': 'users', '/grounding': 'grounding' };
   const urlPage = pageMap[window.location.pathname];
 
   if (viewMatch) {
     viewItem(parseInt(viewMatch[1]), true);
+  } else if (refMatch) {
+    viewReference(parseInt(refMatch[1]), true);
   } else if (urlPage) {
     showPage(urlPage, true);
   } else {
@@ -1074,6 +1178,8 @@ async function showApp(email) {
   // Replace current history state so back button works from initial load
   const initState = viewMatch
     ? { page: 'item-detail', itemId: parseInt(viewMatch[1]) }
+    : refMatch
+    ? { page: 'reference-detail', refId: parseInt(refMatch[1]) }
     : { page: urlPage || 'items' };
   history.replaceState(initState, '', window.location.pathname);
 
@@ -1213,9 +1319,10 @@ function showPage(page, skipPush) {
   document.getElementById('admin-feedback-section').classList.toggle('hidden', page !== 'feedback');
   document.getElementById('admin-users-section').classList.toggle('hidden', page !== 'users');
   document.getElementById('admin-grounding-section').classList.toggle('hidden', page !== 'grounding');
+  document.getElementById('reference-detail').classList.toggle('hidden', page !== 'reference-detail');
 
-  // Update desktop nav button styles — item-detail highlights the Items tab
-  const navPage = page === 'item-detail' ? 'items' : page;
+  // Update desktop nav button styles — item-detail highlights Items, reference-detail highlights Grounding
+  const navPage = page === 'item-detail' ? 'items' : page === 'reference-detail' ? 'grounding' : page;
   ['items', 'api-keys', 'users', 'feedback', 'grounding'].forEach(p => {
     const btn = document.getElementById('nav-' + p);
     if (!btn) return;
@@ -1233,8 +1340,8 @@ function showPage(page, skipPush) {
     mobBtn.classList.toggle('mobile-nav-active', p === navPage);
   });
 
-  // Push URL state (skip when triggered by popstate or viewItem which pushes its own)
-  if (!skipPush && page !== 'item-detail') {
+  // Push URL state (skip when triggered by popstate or viewItem/viewReference which push their own)
+  if (!skipPush && page !== 'item-detail' && page !== 'reference-detail') {
     const urlMap = { 'items': '/', 'api-keys': '/api-keys', 'feedback': '/feedback', 'users': '/users', 'grounding': '/grounding' };
     const url = urlMap[page] || '/';
     history.pushState({ page: page }, '', url);
@@ -2736,17 +2843,16 @@ async function loadGroundingReferences() {
     window._groundingRefs = refs;
 
     tbody.innerHTML = refs.map((ref, idx) => `
-      <tr class="border-t border-gray-100">
+      <tr class="border-t border-gray-100 hover:bg-gray-50 cursor-pointer" onclick="viewReference(${ref.id})">
         <td class="px-5 py-3 font-bold text-gray-800">${esc(ref.name)}</td>
-        <td class="px-5 py-3 text-gray-500">${ref.google_slides_url ? `<a href="${esc(ref.google_slides_url)}" target="_blank" class="text-blue-600 hover:underline text-xs font-medium">Google Slides ↗</a>` : '<span class="text-xs text-gray-400">Manual</span>'}</td>
+        <td class="px-5 py-3 text-gray-500">${ref.google_slides_url ? `<span class="text-xs font-medium" style="color: #0176D3;">Google Slides</span>` : '<span class="text-xs text-gray-400">Manual</span>'}</td>
         <td class="px-5 py-3 text-gray-500">${esc(ref.industry_tag || '—')}</td>
         <td class="px-5 py-3 text-gray-500">${esc(ref.presentation_type_tag || '—')}</td>
         <td class="px-5 py-3 text-gray-500">${ref.slide_count || 0}</td>
         <td class="px-5 py-3 text-gray-500">${(ref.content_length || 0).toLocaleString()}</td>
         <td class="px-5 py-3 text-gray-500">${esc(ref.uploaded_by || '—')}</td>
         <td class="px-5 py-3 text-right whitespace-nowrap">
-          <button onclick="openViewReferenceDialog(${idx})" class="px-3 py-1 text-xs font-medium rounded-md cursor-pointer mr-1" style="color: #0176D3; background: #EEF4FF;">View / Edit</button>
-          <button onclick="deleteGroundingReference(${ref.id})" class="px-3 py-1 text-xs font-medium text-red-500 rounded-md cursor-pointer" style="background: #FEE2E2;">Delete</button>
+          <button onclick="event.stopPropagation(); deleteGroundingReference(${ref.id})" class="px-3 py-1 text-xs font-medium text-red-500 rounded-md cursor-pointer" style="background: #FEE2E2;">Delete</button>
         </td>
       </tr>
     `).join('');
@@ -2956,7 +3062,323 @@ async function deleteGroundingReference(id) {
   }
 }
 
-// View / Edit reference dialog
+// ═══════════════════════════════════════════════
+// Reference Detail Page
+// ═══════════════════════════════════════════════
+let currentRefId = null;
+let currentRefData = null;
+let currentRefAnnotations = [];
+let refDetailBrandKit = null; // selected brand kit for web version generation
+let refDetailGenPollTimer = null;
+
+async function viewReference(id, skipPush) {
+  currentRefId = id;
+  showPage('reference-detail', true);
+
+  // Push URL
+  if (!skipPush) {
+    history.pushState({ page: 'reference-detail', refId: id }, '', `/references/${id}`);
+  }
+
+  // Reset UI
+  document.getElementById('ref-detail-name').textContent = 'Loading...';
+  document.getElementById('ref-detail-industry').textContent = '—';
+  document.getElementById('ref-detail-type').textContent = '—';
+  document.getElementById('ref-detail-slides').textContent = '—';
+  document.getElementById('ref-detail-source').textContent = '—';
+  document.getElementById('ref-detail-synopsis').textContent = '';
+  document.getElementById('ref-detail-synopsis-wrap').classList.add('hidden');
+  document.getElementById('ref-detail-thumbnails').innerHTML = '<div class="text-center py-8 text-gray-400 text-sm">Loading...</div>';
+  document.getElementById('ref-detail-annotations-list').innerHTML = '';
+  document.getElementById('ref-detail-save-error').classList.add('hidden');
+  document.getElementById('ref-detail-save-success').classList.add('hidden');
+  document.getElementById('ref-detail-gen-error').classList.add('hidden');
+  document.getElementById('ref-detail-gen-progress').classList.add('hidden');
+
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/reference-presentations/${id}?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to load reference');
+    const data = await resp.json();
+    currentRefData = data.reference;
+
+    // Populate metadata
+    document.getElementById('ref-detail-name').textContent = currentRefData.name;
+    document.getElementById('ref-detail-industry').textContent = currentRefData.industry_tag || '—';
+    document.getElementById('ref-detail-type').textContent = currentRefData.presentation_type_tag || '—';
+    document.getElementById('ref-detail-slides').textContent = currentRefData.slide_count || 0;
+    document.getElementById('ref-detail-source').textContent = currentRefData.google_slides_url ? 'Google Slides' : 'Manual';
+
+    if (currentRefData.synopsis) {
+      document.getElementById('ref-detail-synopsis').textContent = currentRefData.synopsis;
+      document.getElementById('ref-detail-synopsis-wrap').classList.remove('hidden');
+    }
+
+    // Parse annotations
+    let annotations = currentRefData.slide_annotations;
+    if (typeof annotations === 'string') {
+      try { annotations = JSON.parse(annotations); } catch (e) { annotations = []; }
+    }
+    currentRefAnnotations = annotations || [];
+
+    // Render thumbnails grid
+    renderRefDetailThumbnails(currentRefAnnotations);
+
+    // Render annotations list (editable)
+    renderRefDetailAnnotations(currentRefAnnotations);
+
+    // Update web version status
+    updateRefDetailWebStatus(currentRefData.web_version_status || 'none');
+
+    // If currently generating, start polling
+    if (currentRefData.web_version_status === 'generating') {
+      startRefDetailGenPolling();
+    }
+
+  } catch (err) {
+    document.getElementById('ref-detail-name').textContent = 'Error loading reference';
+    document.getElementById('ref-detail-thumbnails').innerHTML = `<div class="text-center py-8 text-red-500 text-sm">${esc(err.message)}</div>`;
+  }
+}
+
+function renderRefDetailThumbnails(annotations) {
+  const container = document.getElementById('ref-detail-thumbnails');
+  if (!annotations || annotations.length === 0) {
+    container.innerHTML = '<div class="text-center py-8 text-gray-400 text-sm">No thumbnails available.</div>';
+    return;
+  }
+  container.innerHTML = annotations.map((slide, i) => `
+    <div class="bg-gray-50 rounded-xl overflow-hidden border border-gray-200">
+      ${slide.thumbnailBase64
+        ? `<img src="data:image/png;base64,${slide.thumbnailBase64}" alt="Slide ${slide.slideNumber}" style="width: 100%; height: auto; display: block;">`
+        : `<div style="width: 100%; padding-top: 56.25%; background: #f3f4f6; position: relative;"><span class="text-xs text-gray-400" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);">No thumbnail</span></div>`}
+      <div class="px-3 py-2">
+        <div class="flex items-center gap-2">
+          <span class="flex-shrink-0 flex items-center justify-center text-xs font-bold text-white rounded-full" style="width: 20px; height: 20px; background: #0176D3;">${slide.slideNumber}</span>
+          <span class="text-xs font-medium text-gray-700 truncate">${esc(slide.name || 'Untitled')}</span>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderRefDetailAnnotations(annotations) {
+  const container = document.getElementById('ref-detail-annotations-list');
+  if (!annotations || annotations.length === 0) {
+    container.innerHTML = '<div class="text-center py-8 text-gray-400 text-sm">No slide data available.</div>';
+    return;
+  }
+  container.innerHTML = annotations.map((slide, i) => `
+    <div style="padding: 14px 16px; ${i > 0 ? 'border-top: 1px solid #e5e7eb;' : ''}" class="hover:bg-gray-50">
+      <div class="flex gap-3">
+        ${slide.thumbnailBase64 ? `<div class="flex-shrink-0"><img src="data:image/png;base64,${slide.thumbnailBase64}" alt="Slide ${slide.slideNumber}" style="width: 120px; height: auto; border-radius: 6px; border: 1px solid #e5e7eb;"></div>` : ''}
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="flex-shrink-0 flex items-center justify-center text-xs font-bold text-white rounded-full" style="width: 22px; height: 22px; background: #0176D3;">${slide.slideNumber}</span>
+            <input type="text" data-refdetail-idx="${i}" data-refdetail-field="name" value="${esc(slide.name || '')}" placeholder="Slide name..." class="flex-1 px-2 py-1 rounded border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm font-medium">
+          </div>
+          <input type="text" data-refdetail-idx="${i}" data-refdetail-field="description" value="${esc(slide.description || '')}" placeholder="What does this slide do?" class="w-full px-2 py-1 rounded border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-xs text-gray-600 mb-1">
+          <p class="text-xs text-gray-400 mt-1 truncate">${esc((slide.textContent || '').substring(0, 150))}${(slide.textContent || '').length > 150 ? '...' : ''}</p>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function saveRefDetailAnnotations() {
+  const errorEl = document.getElementById('ref-detail-save-error');
+  const successEl = document.getElementById('ref-detail-save-success');
+  errorEl.classList.add('hidden');
+  successEl.classList.add('hidden');
+
+  // Collect updated values
+  const updated = currentRefAnnotations.map((slide, i) => {
+    const nameInput = document.querySelector(`input[data-refdetail-idx="${i}"][data-refdetail-field="name"]`);
+    const descInput = document.querySelector(`input[data-refdetail-idx="${i}"][data-refdetail-field="description"]`);
+    return {
+      ...slide,
+      name: nameInput ? nameInput.value.trim() : slide.name,
+      description: descInput ? descInput.value.trim() : slide.description
+    };
+  });
+
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/reference-presentations/${currentRefId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, slideAnnotations: updated })
+    });
+    if (!resp.ok) throw new Error('Failed to save');
+    currentRefAnnotations = updated;
+    successEl.textContent = '✓ Changes saved successfully';
+    successEl.classList.remove('hidden');
+    setTimeout(() => successEl.classList.add('hidden'), 3000);
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.classList.remove('hidden');
+  }
+}
+
+function updateRefDetailWebStatus(status) {
+  const statusEl = document.getElementById('ref-detail-web-status');
+  const viewBtn = document.getElementById('ref-detail-view-btn');
+  const regenBtn = document.getElementById('ref-detail-regen-btn');
+
+  if (status === 'completed') {
+    statusEl.innerHTML = '<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium" style="background: #E3F9E5; color: #2E844A;">✓ Generated</span>';
+    viewBtn.disabled = false;
+    regenBtn.textContent = '🔄 Regenerate Web Version';
+  } else if (status === 'generating') {
+    statusEl.innerHTML = '<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium" style="background: #FFF3CD; color: #856404;">⏳ Generating...</span>';
+    viewBtn.disabled = true;
+    regenBtn.disabled = true;
+  } else if (status === 'failed') {
+    statusEl.innerHTML = '<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium" style="background: #FEE2E2; color: #C23934;">✗ Failed</span>';
+    viewBtn.disabled = true;
+    regenBtn.disabled = false;
+    regenBtn.textContent = '🔄 Retry Generation';
+  } else {
+    statusEl.innerHTML = '<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium" style="background: #F4F6F9; color: #666;">Not Generated</span>';
+    viewBtn.disabled = true;
+    regenBtn.textContent = '🔄 Generate Web Version';
+  }
+}
+
+// Brand Kit picker for reference detail page
+async function toggleRefDetailBrandKitPicker() {
+  const picker = document.getElementById('ref-detail-brandkit-picker');
+  if (!picker.classList.contains('hidden')) {
+    picker.classList.add('hidden');
+    return;
+  }
+  picker.innerHTML = '<div class="text-center py-4 text-gray-400 text-sm">Loading brand kits...</div>';
+  picker.classList.remove('hidden');
+
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/brandkit-builder/items?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to load brand kits');
+    const data = await resp.json();
+    const kits = data.items || [];
+
+    if (kits.length === 0) {
+      picker.innerHTML = '<div class="text-center py-4 text-gray-400 text-sm">No brand kits found.</div>';
+      return;
+    }
+
+    picker.innerHTML = kits.map(kit => `
+      <div onclick="selectRefDetailBrandKit(${kit.id})" class="flex items-center gap-3 px-4 py-3 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-0">
+        ${kit.logo_url ? `<img src="${esc(kit.logo_url)}" alt="" style="width: 28px; height: 28px; object-fit: contain; border-radius: 4px;">` : '<div style="width: 28px; height: 28px; background: #E5E7EB; border-radius: 4px;"></div>'}
+        <div>
+          <div class="text-sm font-medium text-gray-800">${esc(kit.name || kit.brand_name || 'Unnamed')}</div>
+          ${kit.brand_industry ? `<div class="text-xs text-gray-400">${esc(kit.brand_industry)}</div>` : ''}
+        </div>
+      </div>
+    `).join('');
+  } catch (err) {
+    picker.innerHTML = `<div class="text-center py-4 text-red-500 text-sm">${esc(err.message)}</div>`;
+  }
+}
+
+async function selectRefDetailBrandKit(kitId) {
+  document.getElementById('ref-detail-brandkit-picker').classList.add('hidden');
+  const nameEl = document.getElementById('ref-detail-brandkit-name');
+  nameEl.textContent = 'Loading...';
+
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/brandkit-builder/items/${kitId}?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed');
+    const data = await resp.json();
+    const bk = data.item;
+
+    refDetailBrandKit = {
+      brandName: bk.brand_name || bk.name,
+      brandColorPrimary: bk.brand_color_primary || bk.color_primary || '',
+      brandColorSecondary: bk.brand_color_secondary || bk.color_secondary || '',
+      brandTone: bk.brand_tone || '',
+      brandVisualStyle: bk.brand_visual_style || '',
+      brandLogoUrl: bk.logo_url || '',
+      brandDescription: bk.brand_description || bk.brand_industry || '',
+      brandKitId: kitId,
+    };
+
+    nameEl.textContent = '✓ ' + (refDetailBrandKit.brandName || 'Brand kit applied');
+    nameEl.style.color = '#2E844A';
+  } catch (err) {
+    nameEl.textContent = 'Failed to load brand kit';
+    nameEl.style.color = '#C23934';
+    refDetailBrandKit = null;
+  }
+}
+
+async function regenerateWebVersion() {
+  if (!currentRefId) return;
+  const errorEl = document.getElementById('ref-detail-gen-error');
+  errorEl.classList.add('hidden');
+
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/reference-presentations/${currentRefId}/generate-web-version`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, brandData: refDetailBrandKit || {} })
+    });
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({}));
+      throw new Error(errData.error || 'Failed to start generation');
+    }
+
+    updateRefDetailWebStatus('generating');
+    document.getElementById('ref-detail-gen-progress').classList.remove('hidden');
+    startRefDetailGenPolling();
+  } catch (err) {
+    errorEl.textContent = err.message;
+    errorEl.classList.remove('hidden');
+  }
+}
+
+function startRefDetailGenPolling() {
+  if (refDetailGenPollTimer) clearInterval(refDetailGenPollTimer);
+  document.getElementById('ref-detail-gen-progress').classList.remove('hidden');
+
+  refDetailGenPollTimer = setInterval(async () => {
+    try {
+      const email = document.getElementById('user-email').textContent;
+      const resp = await fetch(`/api/reference-presentations/${currentRefId}/status?email=${encodeURIComponent(email)}`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+
+      if (data.web_version_status === 'completed') {
+        clearInterval(refDetailGenPollTimer);
+        refDetailGenPollTimer = null;
+        document.getElementById('ref-detail-gen-progress').classList.add('hidden');
+        updateRefDetailWebStatus('completed');
+        document.getElementById('ref-detail-regen-btn').disabled = false;
+      } else if (data.web_version_status === 'failed') {
+        clearInterval(refDetailGenPollTimer);
+        refDetailGenPollTimer = null;
+        document.getElementById('ref-detail-gen-progress').classList.add('hidden');
+        updateRefDetailWebStatus('failed');
+        document.getElementById('ref-detail-gen-error').textContent = 'Generation failed. Try again.';
+        document.getElementById('ref-detail-gen-error').classList.remove('hidden');
+      } else {
+        // Update status text if slide count info available
+        if (data.completedSlides != null && data.totalSlides) {
+          document.getElementById('ref-detail-gen-status-text').textContent = `Generating web version... (${data.completedSlides}/${data.totalSlides} slides)`;
+        }
+      }
+    } catch (err) { /* ignore poll errors */ }
+  }, 3000);
+}
+
+function viewWebVersion() {
+  if (!currentRefId) return;
+  window.open(`/present-web/${currentRefId}`, '_blank');
+}
+
+// View / Edit reference dialog (legacy modal — still available)
 let viewRefId = null;
 let viewRefSlides = [];
 
@@ -3080,6 +3502,8 @@ window.addEventListener('popstate', function(e) {
   const state = e.state;
   if (state && state.page === 'item-detail' && state.itemId) {
     viewItem(state.itemId, true);
+  } else if (state && state.page === 'reference-detail' && state.refId) {
+    viewReference(state.refId, true);
   } else if (state && state.page) {
     showPage(state.page, true);
   } else {

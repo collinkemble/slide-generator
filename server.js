@@ -2433,6 +2433,357 @@ app.delete('/api/reference-presentations/:id', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════
+// Web Version Generation for Reference Presentations
+// ═══════════════════════════════════════════════
+
+// POST /api/reference-presentations/:id/generate-web-version — start generating HTML web version
+app.post('/api/reference-presentations/:id/generate-web-version', async (req, res) => {
+  try {
+    const { email, brandData } = req.body;
+    if (!email || !isAdmin(email)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const refId = parseInt(req.params.id);
+    const refs = await query('SELECT * FROM reference_presentations WHERE id = ?', [refId]);
+    if (refs.length === 0) return res.status(404).json({ error: 'Reference not found' });
+
+    // Set status to generating and save brand data for the viewer
+    await query('UPDATE reference_presentations SET web_version_status = ?, web_version_brand_data = ? WHERE id = ?',
+      ['generating', JSON.stringify(brandData || {}), refId]);
+
+    // Respond immediately
+    res.status(202).json({ success: true, message: 'Web version generation started' });
+
+    // Generate in background
+    generateWebVersionInBackground(refId, refs[0], brandData || {}).catch(err => {
+      console.error('[WebVersion] Background generation failed:', err);
+    });
+  } catch (err) {
+    console.error('Failed to start web version generation:', err);
+    res.status(500).json({ error: 'Failed to start generation' });
+  }
+});
+
+// GET /api/reference-presentations/:id/web-slides — get generated web slides
+app.get('/api/reference-presentations/:id/web-slides', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email || !isAdmin(email)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const slides = await query(
+      'SELECT slide_index, html_content, css_content, background_image_url FROM reference_web_slides WHERE reference_id = ? ORDER BY slide_index',
+      [req.params.id]
+    );
+    res.json({ slides });
+  } catch (err) {
+    console.error('Failed to get web slides:', err);
+    res.status(500).json({ error: 'Failed to get web slides' });
+  }
+});
+
+// GET /api/reference-presentations/:id/status — poll generation status
+app.get('/api/reference-presentations/:id/status', async (req, res) => {
+  try {
+    const refs = await query(
+      'SELECT web_version_status, web_version_generated_at, slide_count FROM reference_presentations WHERE id = ?',
+      [req.params.id]
+    );
+    if (refs.length === 0) return res.status(404).json({ error: 'Not found' });
+
+    // Count completed web slides for progress tracking
+    const completedSlides = await query(
+      'SELECT COUNT(*) as cnt FROM reference_web_slides WHERE reference_id = ?',
+      [req.params.id]
+    );
+
+    res.json({
+      web_version_status: refs[0].web_version_status || 'none',
+      web_version_generated_at: refs[0].web_version_generated_at,
+      totalSlides: refs[0].slide_count || 0,
+      completedSlides: completedSlides[0]?.cnt || 0
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get status' });
+  }
+});
+
+// GET /api/present-web/:refId/data — get web slide data for the viewer
+app.get('/api/present-web/:refId/data', async (req, res) => {
+  try {
+    const refId = parseInt(req.params.refId);
+    const refs = await query('SELECT id, name, web_version_status, web_version_brand_data FROM reference_presentations WHERE id = ?', [refId]);
+    if (refs.length === 0) return res.status(404).json({ error: 'Reference not found' });
+    if (refs[0].web_version_status !== 'completed') return res.status(400).json({ error: 'Web version not generated yet' });
+
+    const slides = await query(
+      'SELECT slide_index, html_content, css_content, background_image_url FROM reference_web_slides WHERE reference_id = ? ORDER BY slide_index',
+      [refId]
+    );
+
+    // Parse stored brand data for logo URL
+    let brandData = {};
+    try {
+      brandData = typeof refs[0].web_version_brand_data === 'string'
+        ? JSON.parse(refs[0].web_version_brand_data)
+        : (refs[0].web_version_brand_data || {});
+    } catch (e) { /* ignore */ }
+
+    res.json({
+      name: refs[0].name,
+      brandLogoUrl: brandData.brandLogoUrl || '',
+      brandName: brandData.brandName || '',
+      slides: slides.map(s => ({
+        slideIndex: s.slide_index,
+        html: s.html_content,
+        css: s.css_content,
+        backgroundImageUrl: s.background_image_url
+      }))
+    });
+  } catch (err) {
+    console.error('Failed to get present-web data:', err);
+    res.status(500).json({ error: 'Failed to load presentation' });
+  }
+});
+
+// Serve the web slide viewer
+app.get('/present-web/:refId', (req, res) => {
+  res.sendFile(path.join(__dirname, 'present-web.html'));
+});
+
+/**
+ * Build a prompt to generate a PHOTO-ONLY background image.
+ * No text, no logos, no typography — just a photograph.
+ */
+function buildPhotoOnlyPrompt(description, brandData) {
+  const brandName = brandData.brandName || brandData.brand || '';
+  const brandColors = [];
+  if (brandData.brandColorPrimary) brandColors.push(brandData.brandColorPrimary);
+  if (brandData.brandColorSecondary) brandColors.push(brandData.brandColorSecondary);
+
+  let prompt = `Generate a HIGH QUALITY photographic background image for a presentation slide.
+
+IMAGE REQUIREMENTS:
+- This is a BACKGROUND PHOTOGRAPH only — it will have text overlaid on top of it later
+- MUST be a WIDE LANDSCAPE image (16:9 widescreen). Target: 1920x1080 pixels.
+- DO NOT include ANY text, words, numbers, letters, labels, captions, watermarks, or typography of any kind
+- DO NOT include ANY logos, brand marks, icons, or symbols
+- The image should be a beautiful, professional photograph or high-quality illustration
+- Use slight blur or darken/lighten effects that make text readable when overlaid
+- HIGH RESOLUTION — crisp, sharp, professional quality`;
+
+  prompt += `\n\nPHOTO DESCRIPTION:\n${description}`;
+
+  if (brandName) {
+    prompt += `\n\nBRAND CONTEXT: This is for "${brandName}". The photo should evoke the brand's visual identity and industry.`;
+  }
+
+  if (brandColors.length > 0) {
+    prompt += `\nCOLOR MOOD: The photo should complement these brand colors: ${brandColors.join(', ')}. Use warm/cool tones that harmonize with the brand palette.`;
+  }
+
+  prompt += `\n\nCRITICAL REMINDERS:
+- ZERO TEXT in the image — absolutely no words, letters, or numbers
+- ZERO LOGOS — no brand marks or symbols
+- Professional photograph quality — not illustration or clip art (unless the description specifically calls for abstract/geometric design)
+- WIDE LANDSCAPE orientation (width is ~1.78x the height)`;
+
+  return prompt;
+}
+
+/**
+ * Generate the web version of a reference presentation in the background.
+ * For each slide: use Gemini to generate HTML layout + photo description,
+ * then generate the background photo and save everything to reference_web_slides.
+ */
+async function generateWebVersionInBackground(refId, refData, brandData) {
+  try {
+    console.log(`[WebVersion] Starting generation for reference ${refId}`);
+
+    // Parse annotations
+    let annotations = refData.slide_annotations;
+    if (typeof annotations === 'string') {
+      try { annotations = JSON.parse(annotations); } catch (e) { annotations = []; }
+    }
+    if (!annotations || annotations.length === 0) {
+      throw new Error('No slide annotations found');
+    }
+
+    // Clear existing web slides
+    await query('DELETE FROM reference_web_slides WHERE reference_id = ?', [refId]);
+
+    const brandName = brandData.brandName || brandData.brand || '';
+    const brandColorPrimary = brandData.brandColorPrimary || '#0176D3';
+    const brandColorSecondary = brandData.brandColorSecondary || '#032D60';
+    const brandLogoUrl = brandData.brandLogoUrl || '';
+
+    for (let i = 0; i < annotations.length; i++) {
+      const slide = annotations[i];
+      console.log(`[WebVersion] Generating slide ${i + 1}/${annotations.length}: "${slide.name}"`);
+
+      try {
+        // Step 1: Use Gemini text model to generate HTML/CSS for this slide
+        const slideHtmlData = await generateSlideHtml(slide, brandData, i, annotations.length);
+
+        // Step 2: Generate background photo
+        let backgroundImageUrl = null;
+        if (slideHtmlData.backgroundImageDescription) {
+          try {
+            const photoPrompt = buildPhotoOnlyPrompt(slideHtmlData.backgroundImageDescription, brandData);
+            const { imageBase64 } = await generateSlideImage(photoPrompt, null); // No ref images for photo-only
+
+            // Resize to 1920x1080 with sharp (photo-only, no logo compositing)
+            const rawBuffer = Buffer.from(imageBase64, 'base64');
+            const processedBuffer = await sharp(rawBuffer)
+              .resize(1920, 1080, { fit: 'cover', position: 'centre', kernel: 'lanczos3' })
+              .jpeg({ quality: 85 }) // JPEG for photos — better compression
+              .toBuffer();
+
+            const randomId = crypto.randomBytes(8).toString('hex');
+            const key = `web-slides/${refId}/${i}-${randomId}.jpg`;
+            backgroundImageUrl = await uploadToR2(processedBuffer, key, 'image/jpeg');
+            console.log(`[WebVersion] Photo uploaded for slide ${i + 1}: ${backgroundImageUrl}`);
+          } catch (imgErr) {
+            console.warn(`[WebVersion] Photo generation failed for slide ${i + 1}:`, imgErr.message);
+          }
+        }
+
+        // Step 3: Save to database
+        await query(
+          `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE html_content = VALUES(html_content), css_content = VALUES(css_content), background_image_url = VALUES(background_image_url), background_image_prompt = VALUES(background_image_prompt), updated_at = NOW()`,
+          [refId, i, slideHtmlData.html, slideHtmlData.css, backgroundImageUrl, slideHtmlData.backgroundImageDescription || '']
+        );
+
+        console.log(`[WebVersion] Slide ${i + 1} saved successfully`);
+      } catch (slideErr) {
+        console.error(`[WebVersion] Failed to generate slide ${i + 1}:`, slideErr.message);
+      }
+
+      // Rate limit between slides
+      if (i < annotations.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+
+    // Mark as completed
+    await query('UPDATE reference_presentations SET web_version_status = ?, web_version_generated_at = NOW() WHERE id = ?', ['completed', refId]);
+    console.log(`[WebVersion] Generation complete for reference ${refId}`);
+
+  } catch (err) {
+    console.error('[WebVersion] Generation failed:', err);
+    await query('UPDATE reference_presentations SET web_version_status = ? WHERE id = ?', ['failed', refId]);
+  }
+}
+
+/**
+ * Use Gemini text model to generate HTML/CSS for a single slide.
+ * Returns { html, css, backgroundImageDescription }
+ */
+async function generateSlideHtml(slide, brandData, slideIndex, totalSlides) {
+  const ai = getGenAIClient();
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+
+  const brandName = brandData.brandName || brandData.brand || '';
+  const brandColorPrimary = brandData.brandColorPrimary || '#0176D3';
+  const brandColorSecondary = brandData.brandColorSecondary || '#032D60';
+
+  const isFirst = slideIndex === 0;
+  const isLast = slideIndex === totalSlides - 1;
+
+  const systemPrompt = `You are an expert web presentation designer. Generate HTML and CSS for a SINGLE presentation slide that will be displayed at 1920x1080 pixels.
+
+SLIDE INFORMATION:
+- Slide ${slideIndex + 1} of ${totalSlides}
+- Name: "${slide.name || ''}"
+- Description: "${slide.description || ''}"
+- Text Content: "${slide.textContent || ''}"
+- Speaker Notes: "${slide.speakerNotes || ''}"
+${isFirst ? '- This is the FIRST slide (title/cover slide)' : ''}
+${isLast ? '- This is the LAST slide (closing/thank you slide)' : ''}
+
+BRAND:
+- Brand Name: "${brandName}"
+- Primary Color: ${brandColorPrimary}
+- Secondary Color: ${brandColorSecondary}
+
+CRITICAL RULES:
+1. The HTML should contain ONLY the text content and layout elements. NO <img> tags for logos or backgrounds — those are added separately.
+2. Use CSS classes, not inline styles. Put all styles in the css field.
+3. The slide viewport is exactly 1920x1080 pixels. Design for this exact size.
+4. Use the brand colors prominently — in headings, accent bars, decorative elements.
+5. Typography: Use large, readable font sizes (titles: 48-72px, headings: 32-48px, body: 24-32px, bullets: 22-28px).
+6. Copy the EXACT text content from the slide — do not rephrase, summarize, or add text.
+7. If the text has bullet points (•), render them as a styled list.
+8. Keep the upper-right corner (roughly 300x60px area) empty for the logo lockup that will be added programmatically.
+9. Text should have good contrast — use white text on dark/photo backgrounds with text-shadow for readability.
+10. Add visual design elements: colored accent bars, gradient overlays, decorative shapes using CSS.
+
+DESIGN STYLE:
+- Clean, modern, corporate presentation design
+- Use the brand's primary color for accent elements, section dividers, and highlights
+- White or very light text works best since a photo background will be added behind the slide
+- Add a semi-transparent overlay (linear gradient or solid color at 60-80% opacity) over the background area to ensure text readability
+- Professional layout with proper spacing and hierarchy
+
+Return ONLY a JSON object (no markdown fences):
+{
+  "html": "<div class='slide-content'>...</div>",
+  "css": ".slide-content { ... }",
+  "backgroundImageDescription": "2-3 sentence description of what the background photo should show. Describe a professional photograph, NOT text or graphics."
+}`;
+
+  // Build content parts — include thumbnail for visual reference
+  const contentParts = [];
+  if (slide.thumbnailBase64) {
+    contentParts.push({ text: 'Here is the original slide thumbnail from the reference presentation. Replicate its general layout structure, text positioning, and design approach — but render it as HTML/CSS:' });
+    contentParts.push({ inlineData: { mimeType: 'image/png', data: slide.thumbnailBase64 } });
+  }
+  contentParts.push({ text: systemPrompt });
+
+  const response = await ai.models.generateContent({
+    model,
+    contents: contentParts,
+    config: { temperature: 0.3, maxOutputTokens: 8192 },
+  });
+
+  const parts = response.candidates?.[0]?.content?.parts || [];
+  let content = parts
+    .filter(p => p.text !== undefined && !p.thought)
+    .map(p => p.text)
+    .join('\n')
+    .trim();
+
+  // Parse JSON
+  let result;
+  try {
+    result = JSON.parse(content);
+  } catch (e) {
+    const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (jsonMatch) {
+      result = JSON.parse(jsonMatch[1].trim());
+    } else {
+      const firstBrace = content.indexOf('{');
+      const lastBrace = content.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace > firstBrace) {
+        result = JSON.parse(content.substring(firstBrace, lastBrace + 1));
+      } else {
+        throw new Error('Failed to parse slide HTML response');
+      }
+    }
+  }
+
+  return {
+    html: result.html || '',
+    css: result.css || '',
+    backgroundImageDescription: result.backgroundImageDescription || ''
+  };
+}
+
 // Public privacy policy page (no auth required — needed for Google OAuth verification)
 app.get('/privacy', (req, res) => {
   res.send(`<!DOCTYPE html>

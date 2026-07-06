@@ -39,6 +39,9 @@ async function migrate() {
         "ALTER TABLE presentations ADD COLUMN sharing_mode ENUM('private', 'salesforce', 'everyone') DEFAULT 'private'",
         "ALTER TABLE presentations ADD COLUMN share_token VARCHAR(64)",
         "ALTER TABLE presentations ADD UNIQUE INDEX idx_share_token (share_token)",
+        "ALTER TABLE reference_presentations ADD COLUMN web_version_status ENUM('none','generating','completed','failed') DEFAULT 'none'",
+        "ALTER TABLE reference_presentations ADD COLUMN web_version_generated_at TIMESTAMP NULL",
+        "ALTER TABLE reference_presentations ADD COLUMN web_version_brand_data JSON",
       ];
 
       const allAlters = [...sharedAlters, ...appAlters];

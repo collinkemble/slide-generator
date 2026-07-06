@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Presentation</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+
+    /* ─── Loading Screen ─── */
+    #loading-screen {
+      position: fixed; inset: 0; z-index: 90;
+      background: #000; color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; gap: 12px;
+    }
+    .spinner {
+      width: 24px; height: 24px; border: 3px solid #333; border-top-color: #0176D3;
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Slide Viewer ─── */
+    #viewer {
+      display: none;
+      position: fixed; inset: 0;
+      background: #000;
+      cursor: none;
+    }
+    #viewer.show-cursor { cursor: default; }
+
+    #slide-container {
+      width: 100%; height: 100%;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+    }
+
+    /* Each slide is 1920x1080 and scaled to fit the viewport */
+    .slide-viewport {
+      width: 1920px;
+      height: 1080px;
+      position: relative;
+      overflow: hidden;
+      transform-origin: center center;
+    }
+
+    /* Background image layer */
+    .slide-bg {
+      position: absolute; inset: 0;
+      background-size: cover;
+      background-position: center;
+      z-index: 1;
+    }
+
+    /* Content layer sits on top of background */
+    .slide-html-content {
+      position: absolute; inset: 0;
+      z-index: 2;
+    }
+
+    /* Logo lockup in upper-right corner */
+    .slide-logo-lockup {
+      position: absolute;
+      top: 30px; right: 30px;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      pointer-events: none;
+    }
+    .slide-logo-lockup img {
+      height: 32px;
+      width: auto;
+      object-fit: contain;
+    }
+    .slide-logo-divider {
+      width: 1px;
+      height: 32px;
+      background: rgba(255, 255, 255, 0.5);
+    }
+
+    /* ─── Controls Overlay ─── */
+    #controls {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      padding: 16px 24px;
+      background: linear-gradient(transparent, rgba(0,0,0,0.7));
+      display: flex; align-items: center; justify-content: space-between;
+      opacity: 0; transition: opacity 0.3s ease;
+      z-index: 100;
+    }
+    #viewer.show-cursor #controls { opacity: 1; }
+
+    #slide-counter {
+      color: rgba(255,255,255,0.7); font-size: 14px; font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .control-btn {
+      background: rgba(255,255,255,0.15); border: none; color: #fff;
+      width: 40px; height: 40px; border-radius: 8px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; transition: background 0.2s;
+    }
+    .control-btn:hover { background: rgba(255,255,255,0.3); }
+
+    #nav-buttons { display: flex; gap: 8px; align-items: center; }
+
+    #fullscreen-btn {
+      background: rgba(255,255,255,0.15); border: none; color: #fff;
+      padding: 8px 16px; border-radius: 8px; cursor: pointer;
+      font-size: 13px; font-weight: 500; transition: background 0.2s;
+    }
+    #fullscreen-btn:hover { background: rgba(255,255,255,0.3); }
+
+    /* ─── Error Screen ─── */
+    #error-screen {
+      display: none; position: fixed; inset: 0; z-index: 80;
+      background: #111; color: #fff;
+      flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+    }
+    #error-screen h2 { font-size: 20px; }
+    #error-screen p { color: #999; font-size: 14px; max-width: 400px; text-align: center; }
+  </style>
+</head>
+<body>
+  <!-- Loading Screen -->
+  <div id="loading-screen">
+    <div class="spinner"></div>
+    <span>Loading presentation...</span>
+  </div>
+
+  <!-- Main Viewer -->
+  <div id="viewer">
+    <div id="slide-container"></div>
+    <div id="controls">
+      <span id="slide-counter">1 / 1</span>
+      <div id="nav-buttons">
+        <button class="control-btn" onclick="prevSlide()" title="Previous slide">◀</button>
+        <button class="control-btn" onclick="nextSlide()" title="Next slide">▶</button>
+      </div>
+      <button id="fullscreen-btn" onclick="toggleFullscreen()">⛶ Fullscreen</button>
+    </div>
+  </div>
+
+  <!-- Error Screen -->
+  <div id="error-screen">
+    <h2 id="error-title">Unable to load presentation</h2>
+    <p id="error-message">Something went wrong.</p>
+  </div>
+
+  <script>
+    let slides = [];
+    let currentSlide = 0;
+    let cursorTimeout = null;
+
+    // Extract refId from URL: /present-web/:refId
+    const refId = window.location.pathname.split('/present-web/')[1]?.split('?')[0]?.split('/')[0];
+
+    async function init() {
+      if (!refId) return showError('Invalid presentation link');
+
+      try {
+        const resp = await fetch(`/api/present-web/${refId}/data`);
+        const data = await resp.json();
+
+        if (!resp.ok) {
+          return showError('Unable to load presentation', data.error || 'Unknown error');
+        }
+
+        slides = data.slides || [];
+        if (slides.length === 0) return showError('No slides', 'This presentation has no generated slides.');
+
+        document.title = data.name || 'Presentation';
+
+        // Inject all slides into the container (hidden except current)
+        const container = document.getElementById('slide-container');
+        container.innerHTML = '';
+
+        slides.forEach((slide, i) => {
+          // Create slide wrapper
+          const wrapper = document.createElement('div');
+          wrapper.className = 'slide-viewport';
+          wrapper.id = `slide-${i}`;
+          wrapper.style.display = i === 0 ? 'block' : 'none';
+
+          // Background image layer
+          const bgDiv = document.createElement('div');
+          bgDiv.className = 'slide-bg';
+          if (slide.backgroundImageUrl) {
+            bgDiv.style.backgroundImage = `url('${slide.backgroundImageUrl}')`;
+          }
+          wrapper.appendChild(bgDiv);
+
+          // HTML content layer
+          const contentDiv = document.createElement('div');
+          contentDiv.className = 'slide-html-content';
+          contentDiv.innerHTML = slide.html || '';
+          wrapper.appendChild(contentDiv);
+
+          // Logo lockup (brand logo + SF logo)
+          const logoLockup = document.createElement('div');
+          logoLockup.className = 'slide-logo-lockup';
+          // Brand logo placeholder — will be set from data
+          if (data.brandLogoUrl) {
+            const brandLogo = document.createElement('img');
+            brandLogo.src = data.brandLogoUrl;
+            brandLogo.alt = 'Brand';
+            logoLockup.appendChild(brandLogo);
+
+            const divider = document.createElement('div');
+            divider.className = 'slide-logo-divider';
+            logoLockup.appendChild(divider);
+          }
+          const sfLogo = document.createElement('img');
+          sfLogo.src = '/sflogo.png';
+          sfLogo.alt = 'Salesforce';
+          logoLockup.appendChild(sfLogo);
+          wrapper.appendChild(logoLockup);
+
+          // Inject per-slide CSS
+          if (slide.css) {
+            const styleTag = document.createElement('style');
+            // Scope CSS to this slide
+            styleTag.textContent = slide.css;
+            wrapper.appendChild(styleTag);
+          }
+
+          container.appendChild(wrapper);
+        });
+
+        // Show viewer
+        document.getElementById('loading-screen').style.display = 'none';
+        document.getElementById('viewer').style.display = 'block';
+        showSlide(0);
+        resizeSlides();
+      } catch (err) {
+        showError('Failed to load', err.message);
+      }
+    }
+
+    function showSlide(index) {
+      if (index < 0 || index >= slides.length) return;
+      // Hide current
+      const current = document.getElementById(`slide-${currentSlide}`);
+      if (current) current.style.display = 'none';
+      // Show target
+      currentSlide = index;
+      const target = document.getElementById(`slide-${index}`);
+      if (target) target.style.display = 'block';
+      document.getElementById('slide-counter').textContent = `${index + 1} / ${slides.length}`;
+    }
+
+    function nextSlide() { showSlide(currentSlide + 1); }
+    function prevSlide() { showSlide(currentSlide - 1); }
+
+    // Scale slides to fit the viewport
+    function resizeSlides() {
+      const container = document.getElementById('slide-container');
+      const viewportW = container.clientWidth;
+      const viewportH = container.clientHeight;
+      const scaleX = viewportW / 1920;
+      const scaleY = viewportH / 1080;
+      const scale = Math.min(scaleX, scaleY);
+
+      document.querySelectorAll('.slide-viewport').forEach(el => {
+        el.style.transform = `scale(${scale})`;
+      });
+    }
+    window.addEventListener('resize', resizeSlides);
+
+    // ─── Keyboard Navigation ───
+    document.addEventListener('keydown', (e) => {
+      switch (e.key) {
+        case 'ArrowRight': case 'ArrowDown': case ' ': case 'PageDown':
+          e.preventDefault(); nextSlide(); break;
+        case 'ArrowLeft': case 'ArrowUp': case 'Backspace': case 'PageUp':
+          e.preventDefault(); prevSlide(); break;
+        case 'Home': e.preventDefault(); showSlide(0); break;
+        case 'End': e.preventDefault(); showSlide(slides.length - 1); break;
+        case 'Escape':
+          if (document.fullscreenElement) document.exitFullscreen();
+          break;
+        case 'f': case 'F':
+          e.preventDefault(); toggleFullscreen(); break;
+      }
+    });
+
+    // ─── Click Navigation ───
+    document.getElementById('slide-container').addEventListener('click', (e) => {
+      if (e.target.closest('#controls')) return;
+      const rect = document.getElementById('slide-container').getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      if (x < rect.width * 0.3) prevSlide();
+      else nextSlide();
+    });
+
+    // ─── Touch/Swipe ───
+    let touchStartX = 0;
+    document.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; }, { passive: true });
+    document.addEventListener('touchend', (e) => {
+      const dx = e.changedTouches[0].clientX - touchStartX;
+      if (Math.abs(dx) > 50) {
+        if (dx < 0) nextSlide();
+        else prevSlide();
+      }
+    }, { passive: true });
+
+    // ─── Cursor auto-hide ───
+    document.addEventListener('mousemove', () => {
+      document.getElementById('viewer').classList.add('show-cursor');
+      clearTimeout(cursorTimeout);
+      cursorTimeout = setTimeout(() => {
+        document.getElementById('viewer').classList.remove('show-cursor');
+      }, 3000);
+    });
+
+    // ─── Fullscreen ───
+    function toggleFullscreen() {
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+    }
+
+    // ─── Error ───
+    function showError(title, msg) {
+      document.getElementById('loading-screen').style.display = 'none';
+      document.getElementById('error-screen').style.display = 'flex';
+      document.getElementById('error-title').textContent = title || 'Unable to load presentation';
+      document.getElementById('error-message').textContent = msg || 'Something went wrong.';
+    }
+
+    // ─── Start ───
+    init();
+  </script>
+</body>
+</html>

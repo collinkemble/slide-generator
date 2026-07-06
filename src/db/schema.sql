@@ -109,6 +109,21 @@ CREATE TABLE IF NOT EXISTS presentation_slides (
   UNIQUE KEY idx_pres_slide (presentation_id, slide_index)
 );
 
+-- Web version slides for reference presentations (HTML-based)
+CREATE TABLE IF NOT EXISTS reference_web_slides (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  reference_id INT NOT NULL,
+  slide_index INT NOT NULL,
+  html_content LONGTEXT,
+  css_content TEXT,
+  background_image_url TEXT,
+  background_image_prompt TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (reference_id) REFERENCES reference_presentations(id) ON DELETE CASCADE,
+  UNIQUE KEY idx_ref_slide (reference_id, slide_index)
+);
+
 -- Shared presentations tracking
 CREATE TABLE IF NOT EXISTS shared_presentations (
   id INT AUTO_INCREMENT PRIMARY KEY,
