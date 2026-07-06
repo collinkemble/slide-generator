@@ -1576,7 +1576,7 @@ async function generateSlideImage(prompt, refImages) {
 
   // Add reference images for style/layout matching (up to 3 to avoid token limits)
   if (refImages && refImages.length > 0) {
-    contentParts.push({ text: 'Here are reference slides from an existing presentation. COPY their exact layout structure, text positioning, design patterns, and visual style. Match the same slide design language — same placement of titles, headings, body text, and decorative elements. The ONLY things that should differ are: background imagery (use new images appropriate for the target brand), and brand name. DO NOT copy any logos — logos will be added separately. DO NOT copy any photographs of people, team members, speakers, or headshots from the references. Everything else — text layout, design elements, color usage patterns, whitespace — should be a near-identical match:' });
+    contentParts.push({ text: 'Here are reference slides from an existing presentation. COPY their exact layout structure, text positioning, design patterns, and visual style. Match the same slide design language — same placement of titles, headings, body text, and decorative elements. The ONLY things that should differ are: background imagery (use new images appropriate for the target brand), and brand name. IMPORTANT: DO NOT reproduce ANY logos from the reference images — no brand logos, no Salesforce logos, no cloud icons, no logo lockups. Leave the upper-right corner empty. Logos are added programmatically afterward and duplicating them causes visual errors. Also DO NOT copy any photographs of people, team members, speakers, or headshots. Everything else — text layout, design elements, color patterns, whitespace — should be a near-identical match:' });
     for (const ref of refImages.slice(0, 3)) {
       contentParts.push({ inlineData: { mimeType: 'image/png', data: ref } });
     }
@@ -1632,12 +1632,15 @@ async function postProcessSlideImage(imageBuffer, brandData) {
   console.log(`[PostProcess] Original image: ${meta.width}x${meta.height}`);
 
   // Resize to fill 1920x1080, then crop to exact size
+  // Use lanczos3 kernel for best quality when upscaling
   img = sharp(imageBuffer)
     .resize(TARGET_W, TARGET_H, {
       fit: 'cover',        // Fill the entire 1920x1080 area
       position: 'centre',  // Center-crop if needed
+      kernel: 'lanczos3',  // Best quality resampling
     })
-    .png();
+    .sharpen({ sigma: 0.5 }) // Mild sharpening to counteract any upscale blur
+    .png({ quality: 100 });
 
   // Step 2: Composite logos in upper-right corner
   const composites = [];
@@ -1751,7 +1754,12 @@ SLIDE CONTENT TO RENDER:`;
   prompt += `\nPresentation topic: "${presentationTopic || ''}"`;
 
   // Logo treatment is handled programmatically via sharp compositing — DO NOT ask the AI to draw logos
-  prompt += `\n\nLOGO NOTE: Do NOT render any logo in the upper-right corner. Leave the upper-right corner empty — logos will be added separately after image generation.`;
+  prompt += `\n\nLOGO PROHIBITION — CRITICAL:
+- DO NOT render ANY logos ANYWHERE on the slide. No brand logos, no Salesforce logos, no company logos, no cloud icons, no logo lockups.
+- Leave the upper-right corner completely empty — no text, no icons, no logos in that area.
+- Logos will be composited onto the image programmatically AFTER generation. If you draw logos, there will be duplicates.
+- This applies to ALL slides — title slides, content slides, section dividers, closing slides.
+- If the reference images show logos, IGNORE those logos entirely. Do not reproduce them.`;
 
   prompt += `\n\nTEXT LAYOUT RULES:`;
   if (layoutType === 'TITLE') {
@@ -1793,7 +1801,18 @@ SLIDE CONTENT TO RENDER:`;
   }
 
   if (brandColors.length > 0) {
-    prompt += `\n\nBRAND COLORS: ${brandColors.join(', ')} — use these as the primary color scheme for backgrounds, accent elements, and design features. Use lighter tints for backgrounds and darker shades for text contrast.`;
+    prompt += `\n\nBRAND COLORS — USE THESE PROMINENTLY:
+- Primary brand colors: ${brandColors.join(', ')}
+- These colors MUST be prominently visible in the slide design — in backgrounds, accent bars, colored shapes, gradients, or overlays
+- DO NOT generate a grayscale, black-and-white, or monochrome slide. The slide MUST feature the brand colors listed above.
+- Use vibrant, saturated versions of these colors for design elements
+- Use lighter tints of the brand colors for backgrounds, and white or light text on top of brand-colored areas
+- The overall slide should feel colorful, modern, and on-brand — NOT gray, NOT muted, NOT desaturated`;
+  } else {
+    prompt += `\n\nCOLOR REQUIREMENTS:
+- DO NOT generate a grayscale, black-and-white, or monochrome slide
+- Use vibrant, professional colors appropriate for a modern business presentation
+- Include colored design elements like accent bars, gradients, or colored backgrounds`;
   }
 
   // Use slide's own image description for background/design direction
@@ -1808,16 +1827,16 @@ SLIDE CONTENT TO RENDER:`;
 - Professional typography with proper kerning, leading, and hierarchy
 - Clean, modern presentation design with proper use of whitespace
 - High contrast between text and background for readability
-- Use design elements like colored shapes, boxes, gradients, or subtle patterns to create visual interest
-- HIGH RESOLUTION — text must be crisp and razor-sharp, suitable for display on a 1080p or higher screen
+- Use vibrant, colorful design elements — colored shapes, boxes, gradients, brand-colored accent bars
+- DO NOT USE GRAYSCALE — the slide must be colorful and vibrant
+- HIGH RESOLUTION — generate the LARGEST, HIGHEST QUALITY image possible. Text must be crisp and razor-sharp at 1080p.
 - NO watermarks, NO AI artifacts, NO "generated by" text
 - NO placeholder text — use ONLY the exact text content provided above
 - The slide should look like it was designed by a professional graphic designer
 - Text must be sharp and legible at full HD presentation resolution
-- DO NOT include any branding or logos from the reference slides — only use "${brandName || 'the target brand'}" branding
+- ZERO LOGOS ANYWHERE — do not render any logos, brand marks, cloud icons, or company symbols anywhere on the slide. Logos are added afterward.
 - DO NOT include any photographs of people, team members, speakers, headshots, or portraits
-- DO NOT include speaker names, titles, or biographical information
-- NO logos in the upper-right corner — that area is reserved for post-processing`;
+- DO NOT include speaker names, titles, or biographical information`;
 
   return prompt;
 }
@@ -1832,7 +1851,25 @@ async function generateAndUploadSlideImage(slide, brandData, presentationTopic, 
     const prompt = buildImagePrompt(slide, brandData, presentationTopic);
     console.log(`Generating complete slide image for slide ${slideIndex + 1} of presentation ${presentationId}...`);
 
-    const { imageBase64, mimeType } = await generateSlideImage(prompt, refImages);
+    // Generate image — retry once if resolution is too low
+    let imageBase64, mimeType;
+    const MIN_WIDTH = 1024; // minimum acceptable raw width before retry
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await generateSlideImage(prompt, refImages);
+      imageBase64 = result.imageBase64;
+      mimeType = result.mimeType;
+
+      // Check raw dimensions
+      const rawBuffer = Buffer.from(imageBase64, 'base64');
+      const rawMeta = await sharp(rawBuffer).metadata();
+      console.log(`[Image Gen] Attempt ${attempt + 1}: raw image ${rawMeta.width}x${rawMeta.height}`);
+
+      if (rawMeta.width >= MIN_WIDTH) break; // good enough
+      if (attempt === 0) {
+        console.log(`[Image Gen] Image too small (${rawMeta.width}px wide < ${MIN_WIDTH}px minimum), retrying...`);
+      }
+    }
+
     const randomId = crypto.randomBytes(8).toString('hex');
     const key = `slides/${presentationId}/${slideIndex}-${randomId}.png`;
 
