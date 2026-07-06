@@ -2786,8 +2786,20 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
 
     // ═══════════════════════════════════════════════════════════════
     // PASS 3: Generate background photos + save everything to DB
+    // Demo Chapter Intro/Closing slides share the same background.
     // ═══════════════════════════════════════════════════════════════
     console.log(`[WebVersion] Pass 3: Generating background photos and saving slides...`);
+
+    // Helper to detect transition slides (Demo Chapter Intros/Closings)
+    function isTransitionSlide(slideAnnotation) {
+      const name = (slideAnnotation.name || '').toLowerCase();
+      const desc = (slideAnnotation.description || '').toLowerCase();
+      return name.includes('demo chapter') || name.includes('chapter intro') || name.includes('chapter closing') ||
+             name.includes('demo closing') || desc.includes('demo chapter') || desc.includes('chapter intro') ||
+             desc.includes('chapter closing');
+    }
+
+    let sharedTransitionBgUrl = null; // reused for all transition slides
 
     for (let i = 0; i < slideHtmlResults.length; i++) {
       const { index, data: slideHtmlData, error } = slideHtmlResults[i];
@@ -2797,11 +2809,19 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
         continue;
       }
 
-      console.log(`[WebVersion] Photo pass — slide ${index + 1}/${annotations.length}`);
+      const slideAnnotation = annotations[index] || {};
+      const isTransition = isTransitionSlide(slideAnnotation) || slideHtmlData.isTransitionSlide;
+
+      console.log(`[WebVersion] Photo pass — slide ${index + 1}/${annotations.length}${isTransition ? ' (transition — shared bg)' : ''}`);
 
       // Generate background photo using the unified style directive
       let backgroundImageUrl = null;
-      if (slideHtmlData.backgroundImageDescription) {
+
+      if (isTransition && sharedTransitionBgUrl) {
+        // Reuse the shared transition background
+        backgroundImageUrl = sharedTransitionBgUrl;
+        console.log(`[WebVersion] Reusing shared transition background for slide ${index + 1}`);
+      } else if (slideHtmlData.backgroundImageDescription) {
         try {
           const photoPrompt = buildPhotoOnlyPrompt(slideHtmlData.backgroundImageDescription, brandData, photoStyleDirective);
           const { imageBase64 } = await generateSlideImage(photoPrompt, null);
@@ -2817,6 +2837,12 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
           const key = `web-slides/${refId}/${index}-${randomId}.jpg`;
           backgroundImageUrl = await uploadToR2(processedBuffer, key, 'image/jpeg');
           console.log(`[WebVersion] Photo uploaded for slide ${index + 1}: ${backgroundImageUrl}`);
+
+          // If this is the first transition slide, save its URL for reuse
+          if (isTransition && !sharedTransitionBgUrl) {
+            sharedTransitionBgUrl = backgroundImageUrl;
+            console.log(`[WebVersion] Saved shared transition background: ${backgroundImageUrl}`);
+          }
         } catch (imgErr) {
           console.warn(`[WebVersion] Photo generation failed for slide ${index + 1}:`, imgErr.message);
         }
@@ -2832,8 +2858,8 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
 
       console.log(`[WebVersion] Slide ${index + 1} saved successfully`);
 
-      // Rate limit between photo generation calls
-      if (i < slideHtmlResults.length - 1) {
+      // Rate limit between photo generation calls (skip if we reused a cached bg)
+      if (i < slideHtmlResults.length - 1 && !(isTransition && backgroundImageUrl === sharedTransitionBgUrl && sharedTransitionBgUrl)) {
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
@@ -2930,6 +2956,13 @@ async function generateSlideHtml(slide, brandData, slideIndex, totalSlides) {
   const isFirst = slideIndex === 0;
   const isLast = slideIndex === totalSlides - 1;
 
+  // Detect slide type from name/description
+  const slideName = (slide.name || '').toLowerCase();
+  const slideDesc = (slide.description || '').toLowerCase();
+  const isDemoChapterIntro = slideName.includes('demo chapter') || slideName.includes('chapter intro') || slideDesc.includes('demo chapter') || slideDesc.includes('chapter intro');
+  const isDemoChapterClosing = slideName.includes('chapter closing') || slideDesc.includes('chapter closing') || slideName.includes('demo closing');
+  const isTransitionSlide = isDemoChapterIntro || isDemoChapterClosing;
+
   const systemPrompt = `You are an expert web presentation designer. Generate HTML and CSS for a SINGLE presentation slide that will be displayed at 1920x1080 pixels.
 
 SLIDE INFORMATION:
@@ -2938,8 +2971,10 @@ SLIDE INFORMATION:
 - Description: "${slide.description || ''}"
 - Text Content: "${slide.textContent || ''}"
 - Speaker Notes: "${slide.speakerNotes || ''}"
-${isFirst ? '- This is the FIRST slide (title/cover slide)' : ''}
+${isFirst ? '- This is the FIRST slide (title/cover slide). The logo lockup will be rendered LARGE and CENTERED on this slide by the system — leave the center area open for it. Do NOT include any logo elements in the HTML.' : ''}
 ${isLast ? '- This is the LAST slide (closing/thank you slide)' : ''}
+${isDemoChapterIntro ? '- This is a DEMO CHAPTER INTRO slide — a transition slide between sections.' : ''}
+${isDemoChapterClosing ? '- This is a DEMO CHAPTER CLOSING slide — a transition slide at the end of a section.' : ''}
 
 BRAND:
 - Brand Name: "${brandName}"
@@ -2954,9 +2989,22 @@ CRITICAL RULES:
 5. Typography: Use large, readable font sizes (titles: 48-72px, headings: 32-48px, body: 24-32px, bullets: 22-28px).
 6. Copy the EXACT text content from the slide — do not rephrase, summarize, or add text.
 7. If the text has bullet points (•), render them as a styled list.
-8. Keep the upper-right corner (roughly 300x60px area) empty for the logo lockup that will be added programmatically.
+${isFirst ? '8. This is the TITLE slide — leave the CENTER of the slide open for the large logo lockup. Place the title/subtitle BELOW center or at the BOTTOM of the slide.' : '8. Keep the upper-right corner (roughly 300x60px area) empty for the logo lockup that will be added programmatically.'}
 9. Text should have good contrast — use white text on dark/photo backgrounds with text-shadow for readability.
 10. Add visual design elements: colored accent bars, gradient overlays, decorative shapes using CSS.
+
+ABSOLUTE PROHIBITIONS — NEVER include these in the HTML:
+- NEVER include "Salesforce Team", "Your Salesforce Team", "Meet the Team", "Our Team" headings or any team-related content.
+- NEVER include circular headshot photos, profile pictures, avatar bubbles, or any person imagery elements.
+- NEVER include team member names, titles, roles, or contact information in grid/card layouts.
+- If the original slide's text contains team-related content, SKIP those elements entirely and only render the non-team parts.
+
+${isDemoChapterIntro || isDemoChapterClosing ? `DEMO CHAPTER TRANSITION SLIDE RULES:
+- If the slide shows chapter titles or navigation items (like "Chapter 1: ...", "Chapter 2: ...", "Chapter 3: ..."), render ALL chapter titles at LARGE size (44-56px font).
+- All chapter titles should be the EXACT SAME SIZE and STYLING.
+- The CURRENT/ACTIVE chapter should be in the brand's primary color (${brandColorPrimary}) — the other chapters should be in a muted/dimmed color (e.g., rgba(255,255,255,0.4) or similar).
+- Center the chapter titles vertically on the slide with generous spacing between them.
+- Keep the design minimal — just the chapter titles, no other decorative elements besides a subtle overlay.` : ''}
 
 DESIGN STYLE:
 - Clean, modern, corporate presentation design
@@ -2969,7 +3017,7 @@ Return ONLY a JSON object (no markdown fences):
 {
   "html": "<div class='slide-content'>...</div>",
   "css": ".slide-content { ... }",
-  "backgroundImageDescription": "2-3 sentence description of what the background photo should show. Describe a professional photograph, NOT text or graphics."
+  "backgroundImageDescription": "2-3 sentence description of what the background photo should show. Describe a professional photograph, NOT text or graphics."${isTransitionSlide ? ',\n  "isTransitionSlide": true' : ''}
 }`;
 
   // Build content parts — include thumbnail for visual reference
@@ -3015,7 +3063,8 @@ Return ONLY a JSON object (no markdown fences):
   return {
     html: result.html || '',
     css: result.css || '',
-    backgroundImageDescription: result.backgroundImageDescription || ''
+    backgroundImageDescription: result.backgroundImageDescription || '',
+    isTransitionSlide: isTransitionSlide || result.isTransitionSlide || false
   };
 }
 

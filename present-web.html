@@ -135,20 +135,37 @@
      * Build a complete HTML document for a single slide.
      * Each slide is its own isolated document inside an iframe,
      * so CSS class names never collide between slides.
+     *
+     * slideIndex === 0: Title slide — large centered logo lockup
+     * All other slides: Small upper-right logo lockup
      */
-    function buildSlideSrcdoc(slide) {
+    function buildSlideSrcdoc(slide, slideIndex) {
       const bgUrl = slide.backgroundImageUrl || '';
       const html = slide.html || '';
       const css = slide.css || '';
+      const isTitleSlide = slideIndex === 0;
 
-      // Logo lockup HTML
-      let logoHtml = '<div style="position:absolute;top:30px;right:30px;z-index:10;display:flex;align-items:center;gap:10px;pointer-events:none;">';
-      if (brandLogoUrl) {
-        logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:32px;width:auto;object-fit:contain;">`;
-        logoHtml += '<div style="width:1px;height:32px;background:rgba(255,255,255,0.5);"></div>';
+      // Logo lockup HTML — different treatment for title slide
+      let logoHtml;
+      if (isTitleSlide) {
+        // TITLE SLIDE: Large centered logo lockup
+        logoHtml = '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:24px;pointer-events:none;">';
+        if (brandLogoUrl) {
+          logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:80px;width:auto;object-fit:contain;">`;
+          logoHtml += '<div style="width:2px;height:80px;background:rgba(255,255,255,0.6);"></div>';
+        }
+        logoHtml += '<img src="/sflogo.png" alt="Salesforce" style="height:80px;width:auto;object-fit:contain;">';
+        logoHtml += '</div>';
+      } else {
+        // ALL OTHER SLIDES: Small upper-right logo lockup
+        logoHtml = '<div style="position:absolute;top:30px;right:30px;z-index:10;display:flex;align-items:center;gap:10px;pointer-events:none;">';
+        if (brandLogoUrl) {
+          logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:32px;width:auto;object-fit:contain;">`;
+          logoHtml += '<div style="width:1px;height:32px;background:rgba(255,255,255,0.5);"></div>';
+        }
+        logoHtml += '<img src="/sflogo.png" alt="Salesforce" style="height:32px;width:auto;object-fit:contain;">';
+        logoHtml += '</div>';
       }
-      logoHtml += '<img src="/sflogo.png" alt="Salesforce" style="height:32px;width:auto;object-fit:contain;">';
-      logoHtml += '</div>';
 
       return `<!DOCTYPE html>
 <html>
@@ -209,7 +226,7 @@ ${logoHtml}
           iframe.setAttribute('sandbox', 'allow-same-origin');
           iframe.setAttribute('scrolling', 'no');
           iframe.setAttribute('frameborder', '0');
-          iframe.srcdoc = buildSlideSrcdoc(slide);
+          iframe.srcdoc = buildSlideSrcdoc(slide, i);
 
           wrapper.appendChild(iframe);
           container.appendChild(wrapper);

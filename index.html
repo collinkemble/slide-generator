@@ -3167,20 +3167,32 @@ let currentWebBrandLogoUrl = ''; // brand logo URL for preview rendering
  * Build an srcdoc HTML string that renders a mini version of the slide
  * exactly as it appears in the web viewer (background + HTML + CSS + logo).
  */
-function buildSlidePreviewSrcdoc(webSlide) {
+function buildSlidePreviewSrcdoc(webSlide, slideIndex) {
   const bgUrl = webSlide.background_image_url || '';
   const html = webSlide.html_content || '';
   const css = webSlide.css_content || '';
   const brandLogo = currentWebBrandLogoUrl || '';
+  const isTitleSlide = slideIndex === 0;
 
-  // Build logo lockup HTML
-  let logoHtml = '<div style="position:absolute;top:15px;right:15px;z-index:10;display:flex;align-items:center;gap:5px;pointer-events:none;">';
-  if (brandLogo) {
-    logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:16px;width:auto;object-fit:contain;">`;
-    logoHtml += '<div style="width:1px;height:16px;background:rgba(255,255,255,0.5);"></div>';
+  // Build logo lockup HTML — title slide gets big centered, others get small upper-right
+  let logoHtml;
+  if (isTitleSlide) {
+    logoHtml = '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:24px;pointer-events:none;">';
+    if (brandLogo) {
+      logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:80px;width:auto;object-fit:contain;">`;
+      logoHtml += '<div style="width:2px;height:80px;background:rgba(255,255,255,0.6);"></div>';
+    }
+    logoHtml += '<img src="/sflogo.png" alt="SF" style="height:80px;width:auto;object-fit:contain;">';
+    logoHtml += '</div>';
+  } else {
+    logoHtml = '<div style="position:absolute;top:30px;right:30px;z-index:10;display:flex;align-items:center;gap:10px;pointer-events:none;">';
+    if (brandLogo) {
+      logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:32px;width:auto;object-fit:contain;">`;
+      logoHtml += '<div style="width:1px;height:32px;background:rgba(255,255,255,0.5);"></div>';
+    }
+    logoHtml += '<img src="/sflogo.png" alt="SF" style="height:32px;width:auto;object-fit:contain;">';
+    logoHtml += '</div>';
   }
-  logoHtml += '<img src="/sflogo.png" alt="SF" style="height:16px;width:auto;object-fit:contain;">';
-  logoHtml += '</div>';
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
 *{margin:0;padding:0;box-sizing:border-box;}
@@ -3238,7 +3250,7 @@ function renderRefDetailThumbnails(annotations) {
             ${hasSlideData
               ? `<iframe id="slide-iframe-${i}" sandbox="allow-same-origin" scrolling="no" frameborder="0"
                   style="position: absolute; top: 0; left: 0; width: 1920px; height: 1080px; transform-origin: top left; border: none; pointer-events: none;"
-                  srcdoc="${buildSlidePreviewSrcdoc(webSlide).replace(/"/g, '&quot;')}"></iframe>`
+                  srcdoc="${buildSlidePreviewSrcdoc(webSlide, i).replace(/"/g, '&quot;')}"></iframe>`
               : `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #f8fafc;">
                   <span class="text-xs text-gray-400">
                     ${hasWebVersion ? 'No slide data' : 'Generate web version first'}
