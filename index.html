@@ -3128,12 +3128,14 @@ async function viewReference(id, skipPush) {
 
     // Fetch web slides if web version is completed
     currentWebSlides = [];
+    currentWebBrandLogoUrl = '';
     if (currentRefData.web_version_status === 'completed') {
       try {
         const wsResp = await fetch(`/api/reference-presentations/${id}/web-slides?email=${encodeURIComponent(email)}`);
         if (wsResp.ok) {
           const wsData = await wsResp.json();
           currentWebSlides = wsData.slides || [];
+          currentWebBrandLogoUrl = wsData.brandLogoUrl || '';
         }
       } catch (e) { /* ignore — just means no web slides to compare */ }
     }
@@ -3159,6 +3161,39 @@ async function viewReference(id, skipPush) {
 }
 
 let currentWebSlides = []; // cached web slides for comparison view
+let currentWebBrandLogoUrl = ''; // brand logo URL for preview rendering
+
+/**
+ * Build an srcdoc HTML string that renders a mini version of the slide
+ * exactly as it appears in the web viewer (background + HTML + CSS + logo).
+ */
+function buildSlidePreviewSrcdoc(webSlide) {
+  const bgUrl = webSlide.background_image_url || '';
+  const html = webSlide.html_content || '';
+  const css = webSlide.css_content || '';
+  const brandLogo = currentWebBrandLogoUrl || '';
+
+  // Build logo lockup HTML
+  let logoHtml = '<div style="position:absolute;top:15px;right:15px;z-index:10;display:flex;align-items:center;gap:5px;pointer-events:none;">';
+  if (brandLogo) {
+    logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:16px;width:auto;object-fit:contain;">`;
+    logoHtml += '<div style="width:1px;height:16px;background:rgba(255,255,255,0.5);"></div>';
+  }
+  logoHtml += '<img src="/sflogo.png" alt="SF" style="height:16px;width:auto;object-fit:contain;">';
+  logoHtml += '</div>';
+
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{width:1920px;height:1080px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
+.slide-bg{position:absolute;inset:0;background-size:cover;background-position:center;z-index:1;${bgUrl ? `background-image:url('${bgUrl}');` : ''}}
+.slide-html-content{position:absolute;inset:0;z-index:2;}
+${css}
+</style></head><body>
+<div class="slide-bg"></div>
+<div class="slide-html-content">${html}</div>
+${logoHtml}
+</body></html>`;
+}
 
 function renderRefDetailThumbnails(annotations) {
   const container = document.getElementById('ref-detail-thumbnails');
@@ -3171,7 +3206,7 @@ function renderRefDetailThumbnails(annotations) {
 
   container.innerHTML = annotations.map((slide, i) => {
     const webSlide = currentWebSlides.find(ws => ws.slide_index === i);
-    const hasBg = webSlide && webSlide.background_image_url;
+    const hasSlideData = webSlide && (webSlide.html_content || webSlide.background_image_url);
 
     return `
     <div class="mb-4 rounded-xl border border-gray-200 overflow-hidden bg-gray-50">
@@ -3199,12 +3234,14 @@ function renderRefDetailThumbnails(annotations) {
         <!-- Web Version -->
         <div>
           <div class="px-3 py-1.5 text-center" style="background: #EEF4FF;"><span class="text-xs font-semibold uppercase tracking-wide" style="color: #0176D3;">Web Version</span></div>
-          <div id="web-slide-preview-${i}">
-            ${hasBg
-              ? `<img src="${esc(webSlide.background_image_url)}" alt="Web Version Slide ${slide.slideNumber}" style="width: 100%; height: auto; display: block;">`
-              : `<div style="width: 100%; padding-top: 56.25%; background: #f8fafc; position: relative;">
-                  <span class="text-xs text-gray-400" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);">
-                    ${hasWebVersion ? 'No background generated' : 'Generate web version first'}
+          <div id="web-slide-preview-${i}" style="position: relative; width: 100%; padding-top: 56.25%; overflow: hidden; background: #000;">
+            ${hasSlideData
+              ? `<iframe id="slide-iframe-${i}" sandbox="allow-same-origin" scrolling="no" frameborder="0"
+                  style="position: absolute; top: 0; left: 0; width: 1920px; height: 1080px; transform-origin: top left; border: none; pointer-events: none;"
+                  srcdoc="${buildSlidePreviewSrcdoc(webSlide).replace(/"/g, '&quot;')}"></iframe>`
+              : `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #f8fafc;">
+                  <span class="text-xs text-gray-400">
+                    ${hasWebVersion ? 'No slide data' : 'Generate web version first'}
                   </span>
                 </div>`}
           </div>
@@ -3212,6 +3249,25 @@ function renderRefDetailThumbnails(annotations) {
       </div>
     </div>`;
   }).join('');
+
+  // Scale the iframes to fit their containers
+  requestAnimationFrame(() => scaleSlidePreviewIframes());
+}
+
+/**
+ * Scale each slide preview iframe (1920x1080) to fit the container width.
+ */
+function scaleSlidePreviewIframes() {
+  currentWebSlides.forEach((ws) => {
+    const iframe = document.getElementById(`slide-iframe-${ws.slide_index}`);
+    if (!iframe) return;
+    const container = iframe.parentElement;
+    if (!container) return;
+    const containerWidth = container.clientWidth;
+    if (containerWidth <= 0) return;
+    const scale = containerWidth / 1920;
+    iframe.style.transform = `scale(${scale})`;
+  });
 }
 
 function renderRefDetailAnnotations(annotations) {
@@ -3440,6 +3496,7 @@ async function refreshWebSlidesComparison() {
     if (wsResp.ok) {
       const wsData = await wsResp.json();
       currentWebSlides = wsData.slides || [];
+      currentWebBrandLogoUrl = wsData.brandLogoUrl || '';
     }
   } catch (e) { /* ignore */ }
   // Also update the ref data status so the render function knows web version exists
@@ -3452,18 +3509,26 @@ async function regenerateSingleSlide(slideIndex) {
 
   const btn = document.getElementById(`regen-slide-btn-${slideIndex}`);
   const previewEl = document.getElementById(`web-slide-preview-${slideIndex}`);
+
+  // Capture the current updated_at BEFORE regeneration starts
+  const cachedSlide = currentWebSlides.find(ws => ws.slide_index === slideIndex);
+  const beforeTimestamp = cachedSlide?.updated_at || null;
+
   if (btn) {
     btn.disabled = true;
     btn.innerHTML = '<span style="display:inline-block;width:12px;height:12px;border:2px solid #0176D3;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;"></span> Regenerating...';
     btn.style.opacity = '0.6';
   }
   if (previewEl) {
-    previewEl.innerHTML = `<div style="width: 100%; padding-top: 56.25%; background: #f8fafc; position: relative;">
-      <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center;">
-        <div style="display:inline-block;width:20px;height:20px;border:2px solid #0176D3;border-top-color:transparent;border-radius:50%;margin-bottom:6px;animation:spin 1s linear infinite;"></div>
-        <div class="text-xs text-gray-400">Regenerating slide...</div>
-      </div>
-    </div>`;
+    previewEl.style.position = 'relative';
+    // Show spinner overlay on top of existing preview
+    const overlay = document.createElement('div');
+    overlay.id = `regen-overlay-${slideIndex}`;
+    overlay.style.cssText = 'position:absolute;inset:0;z-index:5;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;';
+    overlay.innerHTML = `
+      <div style="display:inline-block;width:24px;height:24px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;"></div>
+      <div style="color:#fff;font-size:11px;">Regenerating...</div>`;
+    previewEl.appendChild(overlay);
   }
 
   try {
@@ -3478,9 +3543,9 @@ async function regenerateSingleSlide(slideIndex) {
       throw new Error(errData.error || 'Failed to start regeneration');
     }
 
-    // Poll for this slide to be updated — check every 3s for up to 2 minutes
+    // Poll for this slide to be updated — check every 3s for up to 3 minutes
     let attempts = 0;
-    const maxAttempts = 40;
+    const maxAttempts = 60;
     const pollInterval = setInterval(async () => {
       attempts++;
       try {
@@ -3490,17 +3555,15 @@ async function regenerateSingleSlide(slideIndex) {
         const slides = wsData.slides || [];
         const updatedSlide = slides.find(s => s.slide_index === slideIndex);
 
-        // Check if the slide has been updated (different URL from cached version)
-        const cachedSlide = currentWebSlides.find(ws => ws.slide_index === slideIndex);
+        // Detect change using updated_at timestamp
         const isUpdated = updatedSlide && (
-          !cachedSlide ||
-          updatedSlide.background_image_url !== cachedSlide.background_image_url ||
-          updatedSlide.html_content !== cachedSlide.html_content
+          !beforeTimestamp || updatedSlide.updated_at !== beforeTimestamp
         );
 
         if (isUpdated || attempts >= maxAttempts) {
           clearInterval(pollInterval);
           currentWebSlides = slides;
+          currentWebBrandLogoUrl = wsData.brandLogoUrl || currentWebBrandLogoUrl;
           renderRefDetailThumbnails(currentRefAnnotations);
           if (attempts >= maxAttempts && !isUpdated) {
             console.warn('Single slide regeneration timed out');
@@ -3509,16 +3572,15 @@ async function regenerateSingleSlide(slideIndex) {
       } catch (e) { /* ignore poll errors */ }
     }, 3000);
   } catch (err) {
+    // Remove overlay
+    const overlay = document.getElementById(`regen-overlay-${slideIndex}`);
+    if (overlay) overlay.remove();
     if (btn) {
       btn.disabled = false;
       btn.innerHTML = '🔄 Regenerate';
       btn.style.opacity = '1';
     }
-    if (previewEl) {
-      previewEl.innerHTML = `<div style="width: 100%; padding-top: 56.25%; background: #FEE2E2; position: relative;">
-        <span class="text-xs" style="color: #C23934; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);">${esc(err.message)}</span>
-      </div>`;
-    }
+    alert('Regeneration failed: ' + err.message);
   }
 }
 
@@ -3642,6 +3704,11 @@ async function saveReferenceAnnotations() {
 // ═══════════════════════════════════════════════
 // SHARED: Browser Back/Forward Navigation
 // ═══════════════════════════════════════════════
+// Rescale slide preview iframes on window resize
+window.addEventListener('resize', () => {
+  if (typeof scaleSlidePreviewIframes === 'function') scaleSlidePreviewIframes();
+});
+
 window.addEventListener('popstate', function(e) {
   const state = e.state;
   if (state && state.page === 'item-detail' && state.itemId) {

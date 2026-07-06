@@ -2520,10 +2520,22 @@ app.get('/api/reference-presentations/:id/web-slides', async (req, res) => {
     }
 
     const slides = await query(
-      'SELECT slide_index, html_content, css_content, background_image_url FROM reference_web_slides WHERE reference_id = ? ORDER BY slide_index',
+      'SELECT slide_index, html_content, css_content, background_image_url, updated_at FROM reference_web_slides WHERE reference_id = ? ORDER BY slide_index',
       [req.params.id]
     );
-    res.json({ slides });
+
+    // Also return brand data for preview rendering
+    const refs = await query('SELECT web_version_brand_data FROM reference_presentations WHERE id = ?', [req.params.id]);
+    let brandData = {};
+    if (refs.length > 0) {
+      try {
+        brandData = typeof refs[0].web_version_brand_data === 'string'
+          ? JSON.parse(refs[0].web_version_brand_data)
+          : (refs[0].web_version_brand_data || {});
+      } catch (e) { /* ignore */ }
+    }
+
+    res.json({ slides, brandLogoUrl: brandData.brandLogoUrl || '' });
   } catch (err) {
     console.error('Failed to get web slides:', err);
     res.status(500).json({ error: 'Failed to get web slides' });
