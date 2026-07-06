@@ -51,8 +51,8 @@ async function migrate() {
           await connection.query(stmt);
           console.log(`✓ Applied: ${stmt.substring(0, 60)}...`);
         } catch (e) {
-          if (e.code === 'ER_DUP_FIELDNAME') {
-            // Column already exists — skip
+          if (e.code === 'ER_DUP_FIELDNAME' || e.code === 'ER_DUP_KEYNAME') {
+            // Column or index already exists — skip
           } else {
             throw e;
           }
