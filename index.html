@@ -33,6 +33,9 @@
       0%, 80%, 100% { transform: scale(0); opacity: 0; }
       40% { transform: scale(1); opacity: 1; }
     }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
   </style>
   <style>
     /* Mobile header — hamburger menu */
@@ -861,11 +864,13 @@
         <p id="ref-detail-gen-error" class="hidden text-sm mt-3" style="color: #C23934;"></p>
       </div>
 
-      <!-- Original Thumbnails -->
+      <!-- Slide Comparison: Original vs Web Version -->
       <div class="bg-white rounded-2xl shadow-md p-6 mb-6">
-        <h3 class="text-lg font-bold text-gray-800 mb-1">Original Thumbnails</h3>
-        <p class="text-sm text-gray-500 mb-4">Slides extracted from the source presentation. These are used as the design reference for AI generation.</p>
-        <div id="ref-detail-thumbnails" class="grid gap-4" style="grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));">
+        <div class="flex items-center justify-between mb-1">
+          <h3 class="text-lg font-bold text-gray-800">Slide Comparison</h3>
+        </div>
+        <p class="text-sm text-gray-500 mb-4">Original slides side-by-side with the AI-generated web version. Click 🔄 to regenerate any individual slide.</p>
+        <div id="ref-detail-thumbnails">
           <div class="text-center py-8 text-gray-400 text-sm">Loading...</div>
         </div>
       </div>
@@ -3121,7 +3126,19 @@ async function viewReference(id, skipPush) {
     }
     currentRefAnnotations = annotations || [];
 
-    // Render thumbnails grid
+    // Fetch web slides if web version is completed
+    currentWebSlides = [];
+    if (currentRefData.web_version_status === 'completed') {
+      try {
+        const wsResp = await fetch(`/api/reference-presentations/${id}/web-slides?email=${encodeURIComponent(email)}`);
+        if (wsResp.ok) {
+          const wsData = await wsResp.json();
+          currentWebSlides = wsData.slides || [];
+        }
+      } catch (e) { /* ignore — just means no web slides to compare */ }
+    }
+
+    // Render thumbnails grid (with web version comparison if available)
     renderRefDetailThumbnails(currentRefAnnotations);
 
     // Render annotations list (editable)
@@ -3141,25 +3158,60 @@ async function viewReference(id, skipPush) {
   }
 }
 
+let currentWebSlides = []; // cached web slides for comparison view
+
 function renderRefDetailThumbnails(annotations) {
   const container = document.getElementById('ref-detail-thumbnails');
   if (!annotations || annotations.length === 0) {
     container.innerHTML = '<div class="text-center py-8 text-gray-400 text-sm">No thumbnails available.</div>';
     return;
   }
-  container.innerHTML = annotations.map((slide, i) => `
-    <div class="bg-gray-50 rounded-xl overflow-hidden border border-gray-200">
-      ${slide.thumbnailBase64
-        ? `<img src="data:image/png;base64,${slide.thumbnailBase64}" alt="Slide ${slide.slideNumber}" style="width: 100%; height: auto; display: block;">`
-        : `<div style="width: 100%; padding-top: 56.25%; background: #f3f4f6; position: relative;"><span class="text-xs text-gray-400" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);">No thumbnail</span></div>`}
-      <div class="px-3 py-2">
+
+  const hasWebVersion = currentRefData && currentRefData.web_version_status === 'completed';
+
+  container.innerHTML = annotations.map((slide, i) => {
+    const webSlide = currentWebSlides.find(ws => ws.slide_index === i);
+    const hasBg = webSlide && webSlide.background_image_url;
+
+    return `
+    <div class="mb-4 rounded-xl border border-gray-200 overflow-hidden bg-gray-50">
+      <!-- Slide header -->
+      <div class="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-100">
         <div class="flex items-center gap-2">
-          <span class="flex-shrink-0 flex items-center justify-center text-xs font-bold text-white rounded-full" style="width: 20px; height: 20px; background: #0176D3;">${slide.slideNumber}</span>
-          <span class="text-xs font-medium text-gray-700 truncate">${esc(slide.name || 'Untitled')}</span>
+          <span class="flex-shrink-0 flex items-center justify-center text-xs font-bold text-white rounded-full" style="width: 22px; height: 22px; background: #0176D3;">${slide.slideNumber}</span>
+          <span class="text-sm font-medium text-gray-700">${esc(slide.name || 'Untitled')}</span>
+        </div>
+        ${hasWebVersion ? `
+          <button id="regen-slide-btn-${i}" onclick="regenerateSingleSlide(${i})" class="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg cursor-pointer hover:bg-gray-100 border border-gray-200" style="color: #0176D3;" title="Regenerate this slide">
+            🔄 Regenerate
+          </button>
+        ` : ''}
+      </div>
+      <!-- Side-by-side comparison -->
+      <div class="grid grid-cols-2 gap-0">
+        <!-- Original -->
+        <div class="border-r border-gray-200">
+          <div class="px-3 py-1.5 text-center" style="background: #F4F6F9;"><span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Original</span></div>
+          ${slide.thumbnailBase64
+            ? `<img src="data:image/png;base64,${slide.thumbnailBase64}" alt="Original Slide ${slide.slideNumber}" style="width: 100%; height: auto; display: block;">`
+            : `<div style="width: 100%; padding-top: 56.25%; background: #f3f4f6; position: relative;"><span class="text-xs text-gray-400" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);">No thumbnail</span></div>`}
+        </div>
+        <!-- Web Version -->
+        <div>
+          <div class="px-3 py-1.5 text-center" style="background: #EEF4FF;"><span class="text-xs font-semibold uppercase tracking-wide" style="color: #0176D3;">Web Version</span></div>
+          <div id="web-slide-preview-${i}">
+            ${hasBg
+              ? `<img src="${esc(webSlide.background_image_url)}" alt="Web Version Slide ${slide.slideNumber}" style="width: 100%; height: auto; display: block;">`
+              : `<div style="width: 100%; padding-top: 56.25%; background: #f8fafc; position: relative;">
+                  <span class="text-xs text-gray-400" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);">
+                    ${hasWebVersion ? 'No background generated' : 'Generate web version first'}
+                  </span>
+                </div>`}
+          </div>
         </div>
       </div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 }
 
 function renderRefDetailAnnotations(annotations) {
@@ -3356,6 +3408,8 @@ function startRefDetailGenPolling() {
         document.getElementById('ref-detail-gen-progress').classList.add('hidden');
         updateRefDetailWebStatus('completed');
         document.getElementById('ref-detail-regen-btn').disabled = false;
+        // Refresh web slides for the comparison view
+        await refreshWebSlidesComparison();
       } else if (data.web_version_status === 'failed') {
         clearInterval(refDetailGenPollTimer);
         refDetailGenPollTimer = null;
@@ -3376,6 +3430,96 @@ function startRefDetailGenPolling() {
 function viewWebVersion() {
   if (!currentRefId) return;
   window.open(`/present-web/${currentRefId}`, '_blank');
+}
+
+async function refreshWebSlidesComparison() {
+  if (!currentRefId) return;
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const wsResp = await fetch(`/api/reference-presentations/${currentRefId}/web-slides?email=${encodeURIComponent(email)}`);
+    if (wsResp.ok) {
+      const wsData = await wsResp.json();
+      currentWebSlides = wsData.slides || [];
+    }
+  } catch (e) { /* ignore */ }
+  // Also update the ref data status so the render function knows web version exists
+  if (currentRefData) currentRefData.web_version_status = 'completed';
+  renderRefDetailThumbnails(currentRefAnnotations);
+}
+
+async function regenerateSingleSlide(slideIndex) {
+  if (!currentRefId) return;
+
+  const btn = document.getElementById(`regen-slide-btn-${slideIndex}`);
+  const previewEl = document.getElementById(`web-slide-preview-${slideIndex}`);
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span style="display:inline-block;width:12px;height:12px;border:2px solid #0176D3;border-top-color:transparent;border-radius:50%;animation:spin 1s linear infinite;"></span> Regenerating...';
+    btn.style.opacity = '0.6';
+  }
+  if (previewEl) {
+    previewEl.innerHTML = `<div style="width: 100%; padding-top: 56.25%; background: #f8fafc; position: relative;">
+      <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center;">
+        <div style="display:inline-block;width:20px;height:20px;border:2px solid #0176D3;border-top-color:transparent;border-radius:50%;margin-bottom:6px;animation:spin 1s linear infinite;"></div>
+        <div class="text-xs text-gray-400">Regenerating slide...</div>
+      </div>
+    </div>`;
+  }
+
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch(`/api/reference-presentations/${currentRefId}/regenerate-web-slide/${slideIndex}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, brandData: refDetailBrandKit || {} })
+    });
+    if (!resp.ok) {
+      const errData = await resp.json().catch(() => ({}));
+      throw new Error(errData.error || 'Failed to start regeneration');
+    }
+
+    // Poll for this slide to be updated — check every 3s for up to 2 minutes
+    let attempts = 0;
+    const maxAttempts = 40;
+    const pollInterval = setInterval(async () => {
+      attempts++;
+      try {
+        const wsResp = await fetch(`/api/reference-presentations/${currentRefId}/web-slides?email=${encodeURIComponent(email)}`);
+        if (!wsResp.ok) return;
+        const wsData = await wsResp.json();
+        const slides = wsData.slides || [];
+        const updatedSlide = slides.find(s => s.slide_index === slideIndex);
+
+        // Check if the slide has been updated (different URL from cached version)
+        const cachedSlide = currentWebSlides.find(ws => ws.slide_index === slideIndex);
+        const isUpdated = updatedSlide && (
+          !cachedSlide ||
+          updatedSlide.background_image_url !== cachedSlide.background_image_url ||
+          updatedSlide.html_content !== cachedSlide.html_content
+        );
+
+        if (isUpdated || attempts >= maxAttempts) {
+          clearInterval(pollInterval);
+          currentWebSlides = slides;
+          renderRefDetailThumbnails(currentRefAnnotations);
+          if (attempts >= maxAttempts && !isUpdated) {
+            console.warn('Single slide regeneration timed out');
+          }
+        }
+      } catch (e) { /* ignore poll errors */ }
+    }, 3000);
+  } catch (err) {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '🔄 Regenerate';
+      btn.style.opacity = '1';
+    }
+    if (previewEl) {
+      previewEl.innerHTML = `<div style="width: 100%; padding-top: 56.25%; background: #FEE2E2; position: relative;">
+        <span class="text-xs" style="color: #C23934; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);">${esc(err.message)}</span>
+      </div>`;
+    }
+  }
 }
 
 // View / Edit reference dialog (legacy modal — still available)

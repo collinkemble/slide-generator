@@ -2466,6 +2466,51 @@ app.post('/api/reference-presentations/:id/generate-web-version', async (req, re
   }
 });
 
+// POST /api/reference-presentations/:id/regenerate-web-slide/:slideIndex — regenerate a single slide
+app.post('/api/reference-presentations/:id/regenerate-web-slide/:slideIndex', async (req, res) => {
+  try {
+    const { email, brandData } = req.body;
+    if (!email || !isAdmin(email)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    const refId = parseInt(req.params.id);
+    const slideIndex = parseInt(req.params.slideIndex);
+
+    const refs = await query('SELECT * FROM reference_presentations WHERE id = ?', [refId]);
+    if (refs.length === 0) return res.status(404).json({ error: 'Reference not found' });
+
+    // Parse annotations
+    let annotations = refs[0].slide_annotations;
+    if (typeof annotations === 'string') {
+      try { annotations = JSON.parse(annotations); } catch (e) { annotations = []; }
+    }
+    if (!annotations || slideIndex < 0 || slideIndex >= annotations.length) {
+      return res.status(400).json({ error: 'Invalid slide index' });
+    }
+
+    // Use saved brand data or provided brand data
+    let activeBrandData = brandData || {};
+    if (!brandData || Object.keys(brandData).length === 0) {
+      try {
+        const saved = refs[0].web_version_brand_data;
+        activeBrandData = typeof saved === 'string' ? JSON.parse(saved) : (saved || {});
+      } catch (e) { /* use empty */ }
+    }
+
+    // Respond immediately
+    res.status(202).json({ success: true, message: 'Slide regeneration started' });
+
+    // Regenerate in background
+    regenerateSingleSlideInBackground(refId, slideIndex, annotations, activeBrandData).catch(err => {
+      console.error(`[WebVersion] Single slide regeneration failed:`, err);
+    });
+  } catch (err) {
+    console.error('Failed to start single slide regeneration:', err);
+    res.status(500).json({ error: 'Failed to start regeneration' });
+  }
+});
+
 // GET /api/reference-presentations/:id/web-slides — get generated web slides
 app.get('/api/reference-presentations/:id/web-slides', async (req, res) => {
   try {
@@ -2558,7 +2603,7 @@ app.get('/present-web/:refId', (req, res) => {
  * Build a prompt to generate a PHOTO-ONLY background image.
  * No text, no logos, no typography — just a photograph.
  */
-function buildPhotoOnlyPrompt(description, brandData) {
+function buildPhotoOnlyPrompt(description, brandData, photoStyleDirective) {
   const brandName = brandData.brandName || brandData.brand || '';
   const brandColors = [];
   if (brandData.brandColorPrimary) brandColors.push(brandData.brandColorPrimary);
@@ -2575,6 +2620,13 @@ IMAGE REQUIREMENTS:
 - Use slight blur or darken/lighten effects that make text readable when overlaid
 - HIGH RESOLUTION — crisp, sharp, professional quality`;
 
+  // Unified photo style directive — ensures all slides share a cohesive visual treatment
+  if (photoStyleDirective) {
+    prompt += `\n\nUNIFIED PHOTO STYLE (MANDATORY — apply to THIS and ALL slides):
+${photoStyleDirective}
+You MUST follow this style directive precisely so this photo looks like it belongs in the same presentation as all other slides.`;
+  }
+
   prompt += `\n\nPHOTO DESCRIPTION:\n${description}`;
 
   if (brandName) {
@@ -2589,9 +2641,70 @@ IMAGE REQUIREMENTS:
 - ZERO TEXT in the image — absolutely no words, letters, or numbers
 - ZERO LOGOS — no brand marks or symbols
 - Professional photograph quality — not illustration or clip art (unless the description specifically calls for abstract/geometric design)
-- WIDE LANDSCAPE orientation (width is ~1.78x the height)`;
+- WIDE LANDSCAPE orientation (width is ~1.78x the height)
+- Must visually match the unified style directive above — same color grading, same photographic treatment, same mood`;
 
   return prompt;
+}
+
+/**
+ * Generate a unified photo style directive for the entire presentation.
+ * This ensures all background photos share a consistent visual language.
+ */
+async function generatePhotoStyleDirective(slideDescriptions, brandData) {
+  const ai = getGenAIClient();
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+
+  const brandName = brandData.brandName || brandData.brand || '';
+  const brandColorPrimary = brandData.brandColorPrimary || '#0176D3';
+  const brandColorSecondary = brandData.brandColorSecondary || '#032D60';
+  const brandTone = brandData.brandTone || '';
+  const brandVisualStyle = brandData.brandVisualStyle || '';
+
+  const prompt = `You are an art director for a corporate presentation. I have a ${slideDescriptions.length}-slide presentation and need to generate background photographs for each slide.
+
+ALL PHOTOS must share a consistent, unified visual style so the presentation looks cohesive and professional.
+
+BRAND:
+- Brand Name: "${brandName}"
+- Primary Color: ${brandColorPrimary}
+- Secondary Color: ${brandColorSecondary}
+${brandTone ? `- Tone: ${brandTone}` : ''}
+${brandVisualStyle ? `- Visual Style: ${brandVisualStyle}` : ''}
+
+INDIVIDUAL SLIDE PHOTO DESCRIPTIONS:
+${slideDescriptions.map((desc, i) => `Slide ${i + 1}: ${desc}`).join('\n')}
+
+Based on these slides and the brand, define a SINGLE unified photo style directive that will be applied to ALL photos. The directive should specify:
+
+1. **Color grading**: The overall color temperature, tonal range, and color treatment (e.g., "cool blue tones with desaturated highlights", "warm golden hour light with deep shadows")
+2. **Photographic style**: The shooting style, depth of field, lighting approach (e.g., "soft diffused lighting with shallow depth of field", "dramatic side-lighting with crisp detail")
+3. **Visual treatment**: Post-processing effects that unify the photos (e.g., "slight film grain, subtle vignette, lifted blacks", "clean and sharp, high contrast, no grain")
+4. **Subject approach**: How subjects/scenes should be framed (e.g., "wide establishing shots with lots of negative space for text", "close-up details with bokeh backgrounds")
+5. **Mood/Atmosphere**: The overall emotional feel (e.g., "optimistic and forward-looking", "calm and trustworthy")
+
+Return ONLY the style directive as a plain text paragraph (3-5 sentences). No JSON, no markdown, no headings — just the directive text that will be injected into each photo generation prompt.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: { temperature: 0.4, maxOutputTokens: 1024 },
+    });
+
+    const parts = response.candidates?.[0]?.content?.parts || [];
+    const directive = parts
+      .filter(p => p.text !== undefined && !p.thought)
+      .map(p => p.text)
+      .join('\n')
+      .trim();
+
+    console.log(`[WebVersion] Generated unified photo style directive: ${directive.substring(0, 200)}...`);
+    return directive;
+  } catch (err) {
+    console.warn('[WebVersion] Failed to generate photo style directive, falling back to independent generation:', err.message);
+    return null;
+  }
 }
 
 /**
@@ -2620,52 +2733,95 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
     const brandColorSecondary = brandData.brandColorSecondary || '#032D60';
     const brandLogoUrl = brandData.brandLogoUrl || '';
 
+    // ═══════════════════════════════════════════════════════════════
+    // PASS 1: Generate HTML/CSS for ALL slides first, collect photo descriptions
+    // ═══════════════════════════════════════════════════════════════
+    console.log(`[WebVersion] Pass 1: Generating HTML/CSS for all ${annotations.length} slides...`);
+    const slideHtmlResults = [];
+
     for (let i = 0; i < annotations.length; i++) {
       const slide = annotations[i];
-      console.log(`[WebVersion] Generating slide ${i + 1}/${annotations.length}: "${slide.name}"`);
+      console.log(`[WebVersion] HTML pass — slide ${i + 1}/${annotations.length}: "${slide.name}"`);
 
       try {
-        // Step 1: Use Gemini text model to generate HTML/CSS for this slide
         const slideHtmlData = await generateSlideHtml(slide, brandData, i, annotations.length);
-
-        // Step 2: Generate background photo
-        let backgroundImageUrl = null;
-        if (slideHtmlData.backgroundImageDescription) {
-          try {
-            const photoPrompt = buildPhotoOnlyPrompt(slideHtmlData.backgroundImageDescription, brandData);
-            const { imageBase64 } = await generateSlideImage(photoPrompt, null); // No ref images for photo-only
-
-            // Resize to 1920x1080 with sharp (photo-only, no logo compositing)
-            const rawBuffer = Buffer.from(imageBase64, 'base64');
-            const processedBuffer = await sharp(rawBuffer)
-              .resize(1920, 1080, { fit: 'cover', position: 'centre', kernel: 'lanczos3' })
-              .jpeg({ quality: 85 }) // JPEG for photos — better compression
-              .toBuffer();
-
-            const randomId = crypto.randomBytes(8).toString('hex');
-            const key = `web-slides/${refId}/${i}-${randomId}.jpg`;
-            backgroundImageUrl = await uploadToR2(processedBuffer, key, 'image/jpeg');
-            console.log(`[WebVersion] Photo uploaded for slide ${i + 1}: ${backgroundImageUrl}`);
-          } catch (imgErr) {
-            console.warn(`[WebVersion] Photo generation failed for slide ${i + 1}:`, imgErr.message);
-          }
-        }
-
-        // Step 3: Save to database
-        await query(
-          `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE html_content = VALUES(html_content), css_content = VALUES(css_content), background_image_url = VALUES(background_image_url), background_image_prompt = VALUES(background_image_prompt), updated_at = NOW()`,
-          [refId, i, slideHtmlData.html, slideHtmlData.css, backgroundImageUrl, slideHtmlData.backgroundImageDescription || '']
-        );
-
-        console.log(`[WebVersion] Slide ${i + 1} saved successfully`);
+        slideHtmlResults.push({ index: i, data: slideHtmlData, error: null });
       } catch (slideErr) {
-        console.error(`[WebVersion] Failed to generate slide ${i + 1}:`, slideErr.message);
+        console.error(`[WebVersion] HTML generation failed for slide ${i + 1}:`, slideErr.message);
+        slideHtmlResults.push({ index: i, data: null, error: slideErr.message });
       }
 
-      // Rate limit between slides
+      // Rate limit between Gemini calls
       if (i < annotations.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // PASS 2: Generate a unified photo style directive from ALL descriptions
+    // ═══════════════════════════════════════════════════════════════
+    const photoDescriptions = slideHtmlResults
+      .filter(r => r.data?.backgroundImageDescription)
+      .map(r => r.data.backgroundImageDescription);
+
+    let photoStyleDirective = null;
+    if (photoDescriptions.length >= 2) {
+      console.log(`[WebVersion] Pass 2: Generating unified photo style directive from ${photoDescriptions.length} descriptions...`);
+      photoStyleDirective = await generatePhotoStyleDirective(photoDescriptions, brandData);
+    } else {
+      console.log(`[WebVersion] Only ${photoDescriptions.length} photo descriptions — skipping style directive.`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // PASS 3: Generate background photos + save everything to DB
+    // ═══════════════════════════════════════════════════════════════
+    console.log(`[WebVersion] Pass 3: Generating background photos and saving slides...`);
+
+    for (let i = 0; i < slideHtmlResults.length; i++) {
+      const { index, data: slideHtmlData, error } = slideHtmlResults[i];
+
+      if (error || !slideHtmlData) {
+        console.warn(`[WebVersion] Skipping slide ${index + 1} — HTML generation failed earlier.`);
+        continue;
+      }
+
+      console.log(`[WebVersion] Photo pass — slide ${index + 1}/${annotations.length}`);
+
+      // Generate background photo using the unified style directive
+      let backgroundImageUrl = null;
+      if (slideHtmlData.backgroundImageDescription) {
+        try {
+          const photoPrompt = buildPhotoOnlyPrompt(slideHtmlData.backgroundImageDescription, brandData, photoStyleDirective);
+          const { imageBase64 } = await generateSlideImage(photoPrompt, null);
+
+          // Resize to 1920x1080 with sharp (photo-only, no logo compositing)
+          const rawBuffer = Buffer.from(imageBase64, 'base64');
+          const processedBuffer = await sharp(rawBuffer)
+            .resize(1920, 1080, { fit: 'cover', position: 'centre', kernel: 'lanczos3' })
+            .jpeg({ quality: 85 })
+            .toBuffer();
+
+          const randomId = crypto.randomBytes(8).toString('hex');
+          const key = `web-slides/${refId}/${index}-${randomId}.jpg`;
+          backgroundImageUrl = await uploadToR2(processedBuffer, key, 'image/jpeg');
+          console.log(`[WebVersion] Photo uploaded for slide ${index + 1}: ${backgroundImageUrl}`);
+        } catch (imgErr) {
+          console.warn(`[WebVersion] Photo generation failed for slide ${index + 1}:`, imgErr.message);
+        }
+      }
+
+      // Save to database
+      await query(
+        `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE html_content = VALUES(html_content), css_content = VALUES(css_content), background_image_url = VALUES(background_image_url), background_image_prompt = VALUES(background_image_prompt), updated_at = NOW()`,
+        [refId, index, slideHtmlData.html, slideHtmlData.css, backgroundImageUrl, slideHtmlData.backgroundImageDescription || '']
+      );
+
+      console.log(`[WebVersion] Slide ${index + 1} saved successfully`);
+
+      // Rate limit between photo generation calls
+      if (i < slideHtmlResults.length - 1) {
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
@@ -2677,6 +2833,73 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
   } catch (err) {
     console.error('[WebVersion] Generation failed:', err);
     await query('UPDATE reference_presentations SET web_version_status = ? WHERE id = ?', ['failed', refId]);
+  }
+}
+
+/**
+ * Regenerate a single web slide in the background.
+ * Generates HTML + photo for one slide, preserving the rest.
+ */
+async function regenerateSingleSlideInBackground(refId, slideIndex, annotations, brandData) {
+  try {
+    const slide = annotations[slideIndex];
+    console.log(`[WebVersion] Regenerating single slide ${slideIndex + 1}: "${slide.name}"`);
+
+    // Step 1: Generate HTML/CSS for this slide
+    const slideHtmlData = await generateSlideHtml(slide, brandData, slideIndex, annotations.length);
+
+    // Step 2: Get all existing photo descriptions for the style directive
+    const existingSlides = await query(
+      'SELECT slide_index, background_image_prompt FROM reference_web_slides WHERE reference_id = ? ORDER BY slide_index',
+      [refId]
+    );
+    const allDescriptions = existingSlides.map(s => s.background_image_prompt).filter(Boolean);
+    // Replace the current slide's description with the new one
+    if (slideHtmlData.backgroundImageDescription) {
+      const existingIdx = existingSlides.findIndex(s => s.slide_index === slideIndex);
+      if (existingIdx !== -1) {
+        allDescriptions[existingIdx] = slideHtmlData.backgroundImageDescription;
+      } else {
+        allDescriptions.push(slideHtmlData.backgroundImageDescription);
+      }
+    }
+
+    // Generate style directive from all descriptions for consistency
+    let photoStyleDirective = null;
+    if (allDescriptions.length >= 2) {
+      photoStyleDirective = await generatePhotoStyleDirective(allDescriptions, brandData);
+    }
+
+    // Step 3: Generate background photo
+    let backgroundImageUrl = null;
+    if (slideHtmlData.backgroundImageDescription) {
+      const photoPrompt = buildPhotoOnlyPrompt(slideHtmlData.backgroundImageDescription, brandData, photoStyleDirective);
+      const { imageBase64 } = await generateSlideImage(photoPrompt, null);
+
+      const rawBuffer = Buffer.from(imageBase64, 'base64');
+      const processedBuffer = await sharp(rawBuffer)
+        .resize(1920, 1080, { fit: 'cover', position: 'centre', kernel: 'lanczos3' })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+
+      const randomId = crypto.randomBytes(8).toString('hex');
+      const key = `web-slides/${refId}/${slideIndex}-${randomId}.jpg`;
+      backgroundImageUrl = await uploadToR2(processedBuffer, key, 'image/jpeg');
+      console.log(`[WebVersion] Single-slide photo uploaded: ${backgroundImageUrl}`);
+    }
+
+    // Step 4: Upsert into database
+    await query(
+      `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE html_content = VALUES(html_content), css_content = VALUES(css_content), background_image_url = VALUES(background_image_url), background_image_prompt = VALUES(background_image_prompt), updated_at = NOW()`,
+      [refId, slideIndex, slideHtmlData.html, slideHtmlData.css, backgroundImageUrl, slideHtmlData.backgroundImageDescription || '']
+    );
+
+    console.log(`[WebVersion] Single slide ${slideIndex + 1} regenerated successfully`);
+  } catch (err) {
+    console.error(`[WebVersion] Single slide regeneration failed for slide ${slideIndex + 1}:`, err);
+    throw err;
   }
 }
 
