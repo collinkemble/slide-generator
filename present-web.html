@@ -148,22 +148,22 @@
       // Logo lockup HTML — different treatment for title slide
       let logoHtml;
       if (isTitleSlide) {
-        // TITLE SLIDE: Large centered logo lockup
-        logoHtml = '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:24px;pointer-events:none;">';
+        // TITLE SLIDE: Extra-large centered logo lockup (~3x normal)
+        logoHtml = '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:40px;pointer-events:none;">';
         if (brandLogoUrl) {
-          logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:80px;width:auto;object-fit:contain;">`;
-          logoHtml += '<div style="width:2px;height:80px;background:rgba(255,255,255,0.6);"></div>';
+          logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:200px;width:auto;object-fit:contain;">`;
+          logoHtml += '<div style="width:3px;height:160px;background:rgba(255,255,255,0.6);"></div>';
         }
-        logoHtml += '<img src="/sflogo.png" alt="Salesforce" style="height:80px;width:auto;object-fit:contain;">';
+        logoHtml += '<img src="/sflogo.png" alt="Salesforce" style="height:200px;width:auto;object-fit:contain;">';
         logoHtml += '</div>';
       } else {
-        // ALL OTHER SLIDES: Small upper-right logo lockup
-        logoHtml = '<div style="position:absolute;top:30px;right:30px;z-index:10;display:flex;align-items:center;gap:10px;pointer-events:none;">';
+        // ALL OTHER SLIDES: Upper-right logo lockup
+        logoHtml = '<div style="position:absolute;top:30px;right:30px;z-index:10;display:flex;align-items:center;gap:12px;pointer-events:none;">';
         if (brandLogoUrl) {
-          logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:32px;width:auto;object-fit:contain;">`;
-          logoHtml += '<div style="width:1px;height:32px;background:rgba(255,255,255,0.5);"></div>';
+          logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:48px;width:auto;object-fit:contain;">`;
+          logoHtml += '<div style="width:1px;height:40px;background:rgba(255,255,255,0.5);"></div>';
         }
-        logoHtml += '<img src="/sflogo.png" alt="Salesforce" style="height:32px;width:auto;object-fit:contain;">';
+        logoHtml += '<img src="/sflogo.png" alt="Salesforce" style="height:48px;width:auto;object-fit:contain;">';
         logoHtml += '</div>';
       }
 
@@ -178,7 +178,7 @@ html, body { width: 1920px; height: 1080px; overflow: hidden; font-family: -appl
   position: absolute; inset: 0;
   background-size: cover; background-position: center;
   z-index: 1;
-  ${bgUrl ? `background-image: url('${bgUrl}');` : ''}
+  ${bgUrl ? `background-image: url('${bgUrl}');` : 'background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);'}
 }
 .slide-html-content {
   position: absolute; inset: 0;

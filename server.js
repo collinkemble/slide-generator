@@ -2746,6 +2746,15 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
     const brandLogoUrl = brandData.brandLogoUrl || '';
 
     // ═══════════════════════════════════════════════════════════════
+    // PRE-PASS: Extract chapter titles from Demo Chapter Intro slides
+    // so every transition slide uses the exact same list.
+    // ═══════════════════════════════════════════════════════════════
+    const chapterTitles = extractChapterTitles(annotations);
+    if (chapterTitles.length > 0) {
+      console.log(`[WebVersion] Found ${chapterTitles.length} chapter titles: ${chapterTitles.join(', ')}`);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // PASS 1: Generate HTML/CSS for ALL slides first, collect photo descriptions
     // ═══════════════════════════════════════════════════════════════
     console.log(`[WebVersion] Pass 1: Generating HTML/CSS for all ${annotations.length} slides...`);
@@ -2755,12 +2764,30 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
       const slide = annotations[i];
       console.log(`[WebVersion] HTML pass — slide ${i + 1}/${annotations.length}: "${slide.name}"`);
 
-      try {
-        const slideHtmlData = await generateSlideHtml(slide, brandData, i, annotations.length);
+      let slideHtmlData = null;
+      let lastError = null;
+
+      // Retry up to 2 times on failure
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          slideHtmlData = await generateSlideHtml(slide, brandData, i, annotations.length, chapterTitles);
+          break; // success
+        } catch (slideErr) {
+          lastError = slideErr;
+          console.error(`[WebVersion] HTML generation attempt ${attempt} failed for slide ${i + 1}:`, slideErr.message);
+          if (attempt < 2) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+        }
+      }
+
+      if (slideHtmlData) {
         slideHtmlResults.push({ index: i, data: slideHtmlData, error: null });
-      } catch (slideErr) {
-        console.error(`[WebVersion] HTML generation failed for slide ${i + 1}:`, slideErr.message);
-        slideHtmlResults.push({ index: i, data: null, error: slideErr.message });
+      } else {
+        // Build a fallback slide so every slide is represented
+        const fallbackHtml = buildFallbackSlideHtml(slide, brandData, i, annotations.length);
+        console.warn(`[WebVersion] Using fallback HTML for slide ${i + 1}`);
+        slideHtmlResults.push({ index: i, data: fallbackHtml, error: null });
       }
 
       // Rate limit between Gemini calls
@@ -2883,8 +2910,9 @@ async function regenerateSingleSlideInBackground(refId, slideIndex, annotations,
     const slide = annotations[slideIndex];
     console.log(`[WebVersion] Regenerating single slide ${slideIndex + 1}: "${slide.name}"`);
 
-    // Step 1: Generate HTML/CSS for this slide
-    const slideHtmlData = await generateSlideHtml(slide, brandData, slideIndex, annotations.length);
+    // Step 1: Generate HTML/CSS for this slide (with chapter titles for consistency)
+    const chapterTitles = extractChapterTitles(annotations);
+    const slideHtmlData = await generateSlideHtml(slide, brandData, slideIndex, annotations.length, chapterTitles);
 
     // Step 2: Get all existing photo descriptions for the style directive
     const existingSlides = await query(
@@ -2942,10 +2970,89 @@ async function regenerateSingleSlideInBackground(refId, slideIndex, annotations,
 }
 
 /**
+ * Extract chapter titles from all Demo Chapter Intro slides.
+ * Looks at slide names and text content for chapter numbering patterns.
+ * Returns an ordered array of chapter title strings.
+ */
+function extractChapterTitles(annotations) {
+  const titles = [];
+  for (const slide of annotations) {
+    const name = (slide.name || '').toLowerCase();
+    const desc = (slide.description || '').toLowerCase();
+    const isDemoChapter = name.includes('demo chapter') || name.includes('chapter intro') ||
+                          desc.includes('demo chapter') || desc.includes('chapter intro');
+    if (!isDemoChapter) continue;
+
+    // Try to extract the chapter title from the slide name (e.g. "Demo Chapter Intro: Commerce Cloud")
+    const nameMatch = (slide.name || '').match(/(?:demo\s+chapter\s+intro|chapter\s+intro)\s*[:—–-]\s*(.+)/i);
+    if (nameMatch) {
+      titles.push(nameMatch[1].trim());
+      continue;
+    }
+
+    // Try to extract from description
+    const descMatch = (slide.description || '').match(/(?:chapter|section)\s*(?:\d+)?\s*[:—–-]\s*(.+)/i);
+    if (descMatch) {
+      titles.push(descMatch[1].trim());
+      continue;
+    }
+
+    // Try to extract from text content — look for the main heading
+    const text = slide.textContent || slide.description || slide.name || '';
+    // Look for lines that look like chapter names
+    const lines = text.split(/[\n•]+/).map(l => l.trim()).filter(Boolean);
+    // Usually the transition slide has all chapter names listed; pick the one that seems highlighted
+    // For now, use the slide name as fallback
+    const cleanName = (slide.name || '').replace(/demo\s+chapter\s+intro\s*/i, '').replace(/chapter\s+intro\s*/i, '').replace(/^[:—–-]\s*/, '').trim();
+    if (cleanName) {
+      titles.push(cleanName);
+    } else if (lines.length > 0) {
+      titles.push(lines[0].substring(0, 80));
+    }
+  }
+  return titles;
+}
+
+/**
+ * Build a simple fallback slide when AI generation fails.
+ * Ensures every slide is represented even if Gemini errors out.
+ */
+function buildFallbackSlideHtml(slide, brandData, slideIndex, totalSlides) {
+  const brandColorPrimary = brandData.brandColorPrimary || '#0176D3';
+  const brandName = brandData.brandName || brandData.brand || '';
+  const isFirst = slideIndex === 0;
+  const isLast = slideIndex === totalSlides - 1;
+
+  // Extract meaningful text from the slide
+  const title = slide.name || (isFirst ? `${brandName} + Salesforce` : isLast ? 'Thank You' : `Slide ${slideIndex + 1}`);
+  const body = (slide.textContent || slide.description || '').replace(/[<>]/g, '').substring(0, 500);
+
+  const html = isLast
+    ? `<div class="slide-content"><div class="thank-you-wrap"><h1 class="thank-you-title">Thank You</h1>${body ? `<p class="thank-you-sub">${body.substring(0, 200)}</p>` : ''}</div></div>`
+    : `<div class="slide-content"><div class="fallback-wrap"><h1 class="fallback-title">${title}</h1>${body ? `<p class="fallback-body">${body}</p>` : ''}</div></div>`;
+
+  const css = `.slide-content { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.thank-you-wrap, .fallback-wrap { text-align: center; padding: 80px; max-width: 1400px; }
+.thank-you-title { font-size: 96px; font-weight: 700; color: #fff; text-shadow: 0 4px 20px rgba(0,0,0,0.5); margin-bottom: 30px; }
+.thank-you-sub { font-size: 28px; color: rgba(255,255,255,0.8); line-height: 1.5; }
+.fallback-title { font-size: 56px; font-weight: 700; color: #fff; text-shadow: 0 3px 15px rgba(0,0,0,0.5); margin-bottom: 30px; }
+.fallback-body { font-size: 24px; color: rgba(255,255,255,0.8); line-height: 1.6; }`;
+
+  return {
+    html,
+    css,
+    backgroundImageDescription: isLast
+      ? `Professional abstract background with subtle ${brandColorPrimary} color tones, elegant corporate thank you mood, soft bokeh lights, dark sophisticated atmosphere.`
+      : `Professional corporate background photograph with subtle ${brandColorPrimary} color accents, modern office or technology theme.`,
+    isTransitionSlide: false
+  };
+}
+
+/**
  * Use Gemini text model to generate HTML/CSS for a single slide.
  * Returns { html, css, backgroundImageDescription }
  */
-async function generateSlideHtml(slide, brandData, slideIndex, totalSlides) {
+async function generateSlideHtml(slide, brandData, slideIndex, totalSlides, chapterTitles = []) {
   const ai = getGenAIClient();
   const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
@@ -2963,6 +3070,60 @@ async function generateSlideHtml(slide, brandData, slideIndex, totalSlides) {
   const isDemoChapterClosing = slideName.includes('chapter closing') || slideDesc.includes('chapter closing') || slideName.includes('demo closing');
   const isTransitionSlide = isDemoChapterIntro || isDemoChapterClosing;
 
+  // Build chapter transition HTML if this is a transition slide with known chapters
+  let chapterTransitionPrompt = '';
+  if (isTransitionSlide && chapterTitles.length > 0) {
+    // Determine which chapter is active for this slide based on chapterTitleIndex
+    // The chapterTitles array maps 1:1 to the Demo Chapter Intro slides in order.
+    // We figure out which intro slide this is by its chapterTitleIndex (passed via the title text).
+    let activeChapterIndex = 0;
+    const slideNameClean = (slide.name || '').replace(/demo\s+chapter\s+intro\s*/i, '').replace(/chapter\s+intro\s*/i, '').replace(/chapter\s+closing\s*/i, '').replace(/demo\s+closing\s*/i, '').replace(/^[:—–-]\s*/, '').trim().toLowerCase();
+    for (let ci = 0; ci < chapterTitles.length; ci++) {
+      if (chapterTitles[ci].toLowerCase().includes(slideNameClean) || slideNameClean.includes(chapterTitles[ci].toLowerCase())) {
+        activeChapterIndex = ci;
+        break;
+      }
+    }
+    // Also check text content for a match
+    const textLower = (slide.textContent || '').toLowerCase();
+    for (let ci = 0; ci < chapterTitles.length; ci++) {
+      if (textLower.includes(chapterTitles[ci].toLowerCase())) {
+        // If this chapter title appears highlighted or first in the text, it's likely active
+        const pos = textLower.indexOf(chapterTitles[ci].toLowerCase());
+        if (pos < 100) { activeChapterIndex = ci; break; }
+      }
+    }
+
+    const chapterHtml = chapterTitles.map((t, ci) =>
+      `  <div class="chapter-item${ci === activeChapterIndex ? ' active' : ''}">${t}</div>`
+    ).join('\n');
+
+    chapterTransitionPrompt = `DEMO CHAPTER TRANSITION SLIDE RULES:
+You MUST render the following chapter titles as a vertical list, centered on the slide.
+Use this EXACT HTML structure for the chapter titles (copy it verbatim into your html output):
+
+<div class="chapter-list">
+${chapterHtml}
+</div>
+
+And use this EXACT CSS for the chapter list (include it verbatim in your css output):
+.chapter-list { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 32px; position: absolute; inset: 0; z-index: 5; padding: 120px 200px; }
+.chapter-item { font-size: 48px; font-weight: 600; color: rgba(255,255,255,0.35); text-shadow: 0 2px 10px rgba(0,0,0,0.3); letter-spacing: 0.5px; }
+.chapter-item.active { color: ${brandColorPrimary}; font-weight: 700; text-shadow: 0 2px 15px rgba(0,0,0,0.5); }
+
+Do NOT modify the chapter title text. Do NOT add numbers or prefixes. Do NOT change the font sizes or layout.
+The ONLY difference between active and inactive chapters is the color.
+Include a semi-transparent dark overlay behind the chapter list for readability.
+Do NOT add any other content to this slide besides the chapter list and the overlay.`;
+  } else if (isTransitionSlide) {
+    chapterTransitionPrompt = `DEMO CHAPTER TRANSITION SLIDE RULES:
+- If the slide shows chapter titles, render ALL chapter titles at LARGE size (48px font).
+- All chapter titles should be the EXACT SAME SIZE and STYLING.
+- The CURRENT/ACTIVE chapter should be in the brand's primary color (${brandColorPrimary}) — the other chapters should be in a muted/dimmed color (e.g., rgba(255,255,255,0.35)).
+- Center the chapter titles vertically on the slide with generous spacing between them.
+- Keep the design minimal — just the chapter titles, no other decorative elements besides a subtle overlay.`;
+  }
+
   const systemPrompt = `You are an expert web presentation designer. Generate HTML and CSS for a SINGLE presentation slide that will be displayed at 1920x1080 pixels.
 
 SLIDE INFORMATION:
@@ -2972,7 +3133,7 @@ SLIDE INFORMATION:
 - Text Content: "${slide.textContent || ''}"
 - Speaker Notes: "${slide.speakerNotes || ''}"
 ${isFirst ? '- This is the FIRST slide (title/cover slide). The logo lockup will be rendered LARGE and CENTERED on this slide by the system — leave the center area open for it. Do NOT include any logo elements in the HTML.' : ''}
-${isLast ? '- This is the LAST slide (closing/thank you slide)' : ''}
+${isLast ? '- This is the LAST slide (closing/thank you slide). Show a large "Thank You" heading and any relevant subtitle or contact info (but NOT team member photos, NOT team grids, NOT headshot bubbles). Keep it simple and elegant.' : ''}
 ${isDemoChapterIntro ? '- This is a DEMO CHAPTER INTRO slide — a transition slide between sections.' : ''}
 ${isDemoChapterClosing ? '- This is a DEMO CHAPTER CLOSING slide — a transition slide at the end of a section.' : ''}
 
@@ -2999,12 +3160,7 @@ ABSOLUTE PROHIBITIONS — NEVER include these in the HTML:
 - NEVER include team member names, titles, roles, or contact information in grid/card layouts.
 - If the original slide's text contains team-related content, SKIP those elements entirely and only render the non-team parts.
 
-${isDemoChapterIntro || isDemoChapterClosing ? `DEMO CHAPTER TRANSITION SLIDE RULES:
-- If the slide shows chapter titles or navigation items (like "Chapter 1: ...", "Chapter 2: ...", "Chapter 3: ..."), render ALL chapter titles at LARGE size (44-56px font).
-- All chapter titles should be the EXACT SAME SIZE and STYLING.
-- The CURRENT/ACTIVE chapter should be in the brand's primary color (${brandColorPrimary}) — the other chapters should be in a muted/dimmed color (e.g., rgba(255,255,255,0.4) or similar).
-- Center the chapter titles vertically on the slide with generous spacing between them.
-- Keep the design minimal — just the chapter titles, no other decorative elements besides a subtle overlay.` : ''}
+${chapterTransitionPrompt}
 
 DESIGN STYLE:
 - Clean, modern, corporate presentation design

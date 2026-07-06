@@ -3174,30 +3174,30 @@ function buildSlidePreviewSrcdoc(webSlide, slideIndex) {
   const brandLogo = currentWebBrandLogoUrl || '';
   const isTitleSlide = slideIndex === 0;
 
-  // Build logo lockup HTML — title slide gets big centered, others get small upper-right
+  // Build logo lockup HTML — title slide gets big centered, others get upper-right
   let logoHtml;
   if (isTitleSlide) {
-    logoHtml = '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:24px;pointer-events:none;">';
+    logoHtml = '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:40px;pointer-events:none;">';
     if (brandLogo) {
-      logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:80px;width:auto;object-fit:contain;">`;
-      logoHtml += '<div style="width:2px;height:80px;background:rgba(255,255,255,0.6);"></div>';
+      logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:200px;width:auto;object-fit:contain;">`;
+      logoHtml += '<div style="width:3px;height:160px;background:rgba(255,255,255,0.6);"></div>';
     }
-    logoHtml += '<img src="/sflogo.png" alt="SF" style="height:80px;width:auto;object-fit:contain;">';
+    logoHtml += '<img src="/sflogo.png" alt="SF" style="height:200px;width:auto;object-fit:contain;">';
     logoHtml += '</div>';
   } else {
-    logoHtml = '<div style="position:absolute;top:30px;right:30px;z-index:10;display:flex;align-items:center;gap:10px;pointer-events:none;">';
+    logoHtml = '<div style="position:absolute;top:30px;right:30px;z-index:10;display:flex;align-items:center;gap:12px;pointer-events:none;">';
     if (brandLogo) {
-      logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:32px;width:auto;object-fit:contain;">`;
-      logoHtml += '<div style="width:1px;height:32px;background:rgba(255,255,255,0.5);"></div>';
+      logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:48px;width:auto;object-fit:contain;">`;
+      logoHtml += '<div style="width:1px;height:40px;background:rgba(255,255,255,0.5);"></div>';
     }
-    logoHtml += '<img src="/sflogo.png" alt="SF" style="height:32px;width:auto;object-fit:contain;">';
+    logoHtml += '<img src="/sflogo.png" alt="SF" style="height:48px;width:auto;object-fit:contain;">';
     logoHtml += '</div>';
   }
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
 *{margin:0;padding:0;box-sizing:border-box;}
 html,body{width:1920px;height:1080px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
-.slide-bg{position:absolute;inset:0;background-size:cover;background-position:center;z-index:1;${bgUrl ? `background-image:url('${bgUrl}');` : ''}}
+.slide-bg{position:absolute;inset:0;background-size:cover;background-position:center;z-index:1;${bgUrl ? `background-image:url('${bgUrl}');` : 'background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);'}}
 .slide-html-content{position:absolute;inset:0;z-index:2;}
 ${css}
 </style></head><body>
