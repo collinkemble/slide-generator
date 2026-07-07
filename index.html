@@ -3161,8 +3161,8 @@ let currentWebBrandLogoUrl = ''; // brand logo URL for preview rendering
 function isCoverSlideByName(slideIndex, slideName) {
   if (slideIndex === 0) return true;
   const name = (slideName || '').toLowerCase();
-  // Only match explicit cover/welcome/pov-intro slides, NOT content slides like "POV Themes"
-  if (name.includes('welcome') || name === 'cover' || name === 'title' || name === 'pov intro') return true;
+  // Only match explicit cover/pov-intro slides — NOT welcome (which gets upper-right logos)
+  if (name === 'cover' || name === 'title' || name === 'pov intro') return true;
   return false;
 }
 
@@ -3175,9 +3175,12 @@ function buildSlidePreviewSrcdoc(webSlide, slideIndex) {
   const isTitleSlide = isCoverSlideByName(slideIndex, slideName);
 
   // Build logo lockup HTML — title slide gets big centered, others get upper-right
+  const isPovIntro = (slideName || '').toLowerCase() === 'pov intro';
   let logoHtml;
   if (isTitleSlide) {
-    logoHtml = '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:80px;pointer-events:none;">';
+    // POV Intro: logos positioned higher (30%) to sit above the heading
+    const logoTop = isPovIntro ? '30%' : '50%';
+    logoHtml = `<div style="position:absolute;top:${logoTop};left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:80px;pointer-events:none;">`;
     if (brandLogo) {
       logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:200px;width:auto;object-fit:contain;">`;
       logoHtml += '<div style="width:3px;height:160px;background:rgba(255,255,255,0.6);"></div>';

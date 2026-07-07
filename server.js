@@ -3198,8 +3198,8 @@ async function generateSlideHtml(slide, brandData, slideIndex, totalSlides, chap
   const isDemoChapterClosing = slideName.includes('chapter closing') || slideDesc.includes('chapter closing') || slideName.includes('demo closing');
   const isTransitionSlide = isDemoChapterIntro || isDemoChapterClosing;
   // Detect cover/title-like slides that should get centered logos
-  // Only the FIRST slide (index 0) or explicit welcome/cover/pov-intro slides get centered logos
-  const isCoverSlide = isFirst || slideName.includes('welcome') || slideName === 'cover' || slideName === 'title' || slideName === 'pov intro';
+  // Only the FIRST slide (index 0) or explicit cover/pov-intro slides get centered logos — NOT welcome
+  const isCoverSlide = isFirst || slideName === 'cover' || slideName === 'title' || slideName === 'pov intro';
   const needsCenteredLogos = isCoverSlide;
 
   // Build chapter transition styling rules if this is a transition slide

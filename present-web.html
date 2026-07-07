@@ -142,8 +142,8 @@
     function isCoverSlideByName(slideIndex, slideName) {
       if (slideIndex === 0) return true;
       const name = (slideName || '').toLowerCase();
-      // Only match explicit cover/welcome/pov-intro slides, NOT content slides like "POV Themes"
-      if (name.includes('welcome') || name === 'cover' || name === 'title' || name === 'pov intro') return true;
+      // Only match explicit cover/pov-intro slides — NOT welcome (which gets upper-right logos)
+      if (name === 'cover' || name === 'title' || name === 'pov intro') return true;
       return false;
     }
 
@@ -154,10 +154,15 @@
       const isTitleSlide = isCoverSlideByName(slideIndex, slide.slideName || '');
 
       // Logo lockup HTML — different treatment for title slide
+      const slideName = (slide.slideName || '').toLowerCase();
+      const isPovIntro = slideName === 'pov intro';
       let logoHtml;
       if (isTitleSlide) {
-        // TITLE SLIDE: Extra-large centered logo lockup (~3x normal)
-        logoHtml = '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:80px;pointer-events:none;">';
+        // TITLE SLIDE: Extra-large centered logo lockup
+        // POV Intro: logos positioned higher (top:30%) so they sit above the heading
+        // Other title slides: logos centered (top:50%)
+        const logoTop = isPovIntro ? '30%' : '50%';
+        logoHtml = `<div style="position:absolute;top:${logoTop};left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:80px;pointer-events:none;">`;
         if (brandLogoUrl) {
           logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:200px;width:auto;object-fit:contain;">`;
           logoHtml += '<div style="width:3px;height:160px;background:rgba(255,255,255,0.6);"></div>';
