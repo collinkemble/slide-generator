@@ -10,8 +10,10 @@ const { google } = require('googleapis');
 const { GoogleGenAI } = require('@google/genai');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const sharp = require('sharp');
+const multer = require('multer');
 
 const app = express();
+const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // ─── Salesforce logo buffer (loaded once at startup) ───
 let sfLogoBuffer = null;
@@ -2559,6 +2561,73 @@ app.patch('/api/reference-presentations/:id/web-slides/:slideIndex', async (req,
   } catch (err) {
     console.error('Failed to patch web slide:', err);
     res.status(500).json({ error: 'Failed to update slide' });
+  }
+});
+
+// POST /api/reference-presentations/:id/web-slides/:slideIndex/upload-image — upload background image
+app.post('/api/reference-presentations/:id/web-slides/:slideIndex/upload-image', memUpload.single('image'), async (req, res) => {
+  try {
+    const email = req.body.email || req.query.email;
+    if (!email || !isAdmin(email)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'No image file provided' });
+
+    const refId = parseInt(req.params.id);
+    const slideIndex = parseInt(req.params.slideIndex);
+    const imageType = req.body.type || 'background'; // 'background' or 'icon'
+
+    let processedBuffer, contentType, ext;
+    if (imageType === 'icon') {
+      processedBuffer = await sharp(req.file.buffer).resize(128, 128, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+      contentType = 'image/png';
+      ext = 'png';
+    } else {
+      processedBuffer = await sharp(req.file.buffer).resize(1920, 1080, { fit: 'cover' }).jpeg({ quality: 85 }).toBuffer();
+      contentType = 'image/jpeg';
+      ext = 'jpg';
+    }
+
+    const hash = crypto.randomBytes(8).toString('hex');
+    const key = imageType === 'icon'
+      ? `icons/${hash}.${ext}`
+      : `web-slides/${refId}/${imageType}-${slideIndex}-${hash}.${ext}`;
+
+    const publicUrl = await uploadToR2(processedBuffer, key, contentType);
+
+    // If background, also update the database
+    if (imageType === 'background') {
+      await query(
+        'UPDATE reference_web_slides SET background_image_url = ?, updated_at = NOW() WHERE reference_id = ? AND slide_index = ?',
+        [publicUrl, refId, slideIndex]
+      );
+    }
+
+    res.json({ url: publicUrl });
+  } catch (err) {
+    console.error('Image upload failed:', err);
+    res.status(500).json({ error: 'Failed to upload image' });
+  }
+});
+
+// POST /api/upload-slide-icon — upload a custom icon (not slide-specific)
+app.post('/api/upload-slide-icon', memUpload.single('icon'), async (req, res) => {
+  try {
+    const email = req.body.email || req.query.email;
+    if (!email || !isAdmin(email)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'No icon file provided' });
+
+    const processedBuffer = await sharp(req.file.buffer).resize(128, 128, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+    const hash = crypto.randomBytes(8).toString('hex');
+    const key = `icons/${hash}.png`;
+    const publicUrl = await uploadToR2(processedBuffer, key, 'image/png');
+
+    res.json({ url: publicUrl });
+  } catch (err) {
+    console.error('Icon upload failed:', err);
+    res.status(500).json({ error: 'Failed to upload icon' });
   }
 });
 

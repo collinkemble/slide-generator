@@ -3285,6 +3285,21 @@ function renderRefDetailThumbnails(annotations) {
         </div>
         ${slide.speakerNotes ? `<div class="mt-2"><label class="block text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Speaker Notes</label><p class="text-xs text-gray-500 truncate" title="${esc(slide.speakerNotes)}">${esc(slide.speakerNotes.substring(0, 200))}${slide.speakerNotes.length > 200 ? '...' : ''}</p></div>` : ''}
       </div>
+      ${hasSlideData ? `
+      <!-- Structured Editor Panel -->
+      <div class="border-t border-gray-100">
+        <button onclick="toggleSlideEditor(${i})" class="w-full px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide hover:bg-gray-50 flex items-center gap-1 cursor-pointer" style="color:#0176D3;background:none;border:none;">
+          ✏️ Edit Content
+          <span id="se-toggle-arrow-${i}" class="ml-auto text-gray-400">▼</span>
+        </button>
+        <div id="se-panel-${i}" style="display:none;" class="px-4 pb-4">
+          ${(() => {
+            const sType = detectSlideType(slide.name, i, annotations.length);
+            const sFields = extractSlideFields(webSlide ? webSlide.html_content : '', sType);
+            return buildSlideEditorHtml(i, sType, sFields, webSlide);
+          })()}
+        </div>
+      </div>` : ''}
     </div>`;
   }).join('');
 
@@ -3306,6 +3321,758 @@ function scaleSlidePreviewIframes() {
     const scale = containerWidth / 1920;
     iframe.style.transform = `scale(${scale})`;
   });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STRUCTURED SLIDE EDITOR — Core Logic
+// ═══════════════════════════════════════════════════════════════
+
+const SLIDE_ICON_PRESETS = ['🔍','✨','🌐','💡','🎯','🚀','⚡','🔒','📊','🤖','💎','🏆','♻️','🔗','📱','💬','🛡️','📈','🧠','⭐'];
+
+/**
+ * Detect slide type from name and index.
+ */
+function detectSlideType(slideName, slideIndex, totalSlides) {
+  const name = (slideName || '').toLowerCase().trim();
+  if (slideIndex === 0) return 'intro';
+  if (name.includes('thank you') || name === 'thankyou' || name.includes('thankyou')) return 'thank-you';
+  if (name.includes('forward looking') || name.includes('forward-looking')) return 'forward-looking';
+  if (name === 'pov intro') return 'pov-intro';
+  if (name === 'pov themes' || name.includes('pov theme')) return 'pov-themes';
+  if (name.includes('agenda')) return 'agenda';
+  if ((name.includes('chapter') || name.includes('demo chapter')) && name.includes('closing')) return 'demo-chapter-closing';
+  if ((name.includes('chapter') || name.includes('demo chapter')) && (name.includes('intro') || !name.includes('closing'))) return 'demo-chapter-intro';
+  if (name === 'welcome' || name === 'demo intro' || name.includes('optional section') || name.includes('our path')) return 'simple-heading';
+  if (name.includes('voice of')) return 'content';
+  return 'content';
+}
+
+/**
+ * Convert HTML innerHTML to editable textarea text: <br> → \n, strip tags.
+ */
+function htmlToEditableText(html) {
+  if (!html) return '';
+  return html.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim();
+}
+
+/**
+ * Convert textarea text back to HTML-safe text: \n → <br>, escape &<>
+ */
+function editableTextToHtml(text) {
+  if (!text) return '';
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+}
+
+/**
+ * Extract structured field values from existing slide HTML based on type.
+ */
+function extractSlideFields(htmlString, slideType) {
+  if (!htmlString) return {};
+  const tmp = document.createElement('div');
+  tmp.innerHTML = htmlString;
+
+  switch (slideType) {
+    case 'intro': {
+      const heading = tmp.querySelector('.main-heading');
+      return { heading: heading ? htmlToEditableText(heading.innerHTML) : '' };
+    }
+    case 'simple-heading': {
+      const heading = tmp.querySelector('.main-title');
+      return { heading: heading ? htmlToEditableText(heading.innerHTML) : '' };
+    }
+    case 'thank-you': {
+      const heading = tmp.querySelector('.main-thank-you');
+      return { heading: heading ? htmlToEditableText(heading.innerHTML) : '' };
+    }
+    case 'forward-looking': {
+      const heading = tmp.querySelector('.slide-title');
+      const body = tmp.querySelector('.body-text');
+      return {
+        heading: heading ? htmlToEditableText(heading.innerHTML) : '',
+        bodyText: body ? htmlToEditableText(body.innerHTML) : ''
+      };
+    }
+    case 'pov-intro': {
+      const heading = tmp.querySelector('.slide-title');
+      const body = tmp.querySelector('.slide-body-text');
+      return {
+        heading: heading ? htmlToEditableText(heading.innerHTML) : '',
+        bodyText: body ? htmlToEditableText(body.innerHTML) : ''
+      };
+    }
+    case 'pov-themes': {
+      const heading = tmp.querySelector('.main-title');
+      const cards = tmp.querySelectorAll('.pillar-card');
+      const povItems = Array.from(cards).map(card => ({
+        number: (card.querySelector('.pillar-number') || {}).textContent || '',
+        title: htmlToEditableText((card.querySelector('.pillar-heading') || {}).innerHTML || ''),
+        description: htmlToEditableText((card.querySelector('.pillar-text') || {}).innerHTML || '')
+      }));
+      return {
+        heading: heading ? htmlToEditableText(heading.innerHTML) : '',
+        povItems: povItems.length > 0 ? povItems : [{number:'1',title:'',description:''},{number:'2',title:'',description:''},{number:'3',title:'',description:''}]
+      };
+    }
+    case 'demo-chapter-intro': {
+      const blocks = tmp.querySelectorAll('.chapter-block');
+      const chapters = Array.from(blocks).map(block => ({
+        number: (block.querySelector('.chapter-number') || {}).textContent || '',
+        title: htmlToEditableText((block.querySelector('.chapter-text') || {}).innerHTML || ''),
+        active: block.classList.contains('active')
+      }));
+      return { chapters: chapters.length > 0 ? chapters : [{number:'1',title:'',active:true}] };
+    }
+    case 'demo-chapter-closing': {
+      const chapterTitleBox = tmp.querySelector('.chapter-title-box');
+      // BVS Stats — check both naming conventions
+      const statItems = tmp.querySelectorAll('.stat-item, .metric-block');
+      const bvsStats = Array.from(statItems).map(item => ({
+        value: (item.querySelector('.stat-percentage, .metric-value') || {}).textContent || '',
+        description: htmlToEditableText((item.querySelector('.stat-description, .metric-description') || {}).innerHTML || '')
+      }));
+      // Capabilities — check both naming conventions
+      const capCards = tmp.querySelectorAll('.agent-box, .card');
+      // If .agent-box is the parent container for a single capability, handle differently
+      let capabilities = [];
+      if (tmp.querySelector('.cards-row')) {
+        // Multiple cards inside a cards-row
+        const cards = tmp.querySelectorAll('.cards-row .card');
+        capabilities = Array.from(cards).map(card => ({
+          icon: (card.querySelector('.card-icon') || {}).innerHTML || '',
+          title: htmlToEditableText((card.querySelector('.card-text') || {}).innerHTML || ''),
+          description: ''
+        }));
+      } else {
+        // Single agent-box style
+        const agentBox = tmp.querySelector('.agent-box');
+        if (agentBox) {
+          capabilities = [{
+            icon: (agentBox.querySelector('.agent-icon') || {}).innerHTML || '',
+            title: htmlToEditableText((agentBox.querySelector('.agent-text') || {}).innerHTML || ''),
+            description: ''
+          }];
+        }
+      }
+      return {
+        chapterTitle: chapterTitleBox ? chapterTitleBox.textContent.trim() : '',
+        bvsStats: bvsStats.length > 0 ? bvsStats : [{value:'',description:''}],
+        capabilities: capabilities.length > 0 ? capabilities : [{icon:'🔍',title:'',description:''}]
+      };
+    }
+    case 'agenda': {
+      const heading = tmp.querySelector('.agenda-title, h1');
+      const items = tmp.querySelectorAll('.agenda-item');
+      const bodyText = Array.from(items).map(el => el.textContent.trim()).join('\n');
+      return {
+        heading: heading ? htmlToEditableText(heading.innerHTML) : '',
+        bodyText: bodyText
+      };
+    }
+    case 'content':
+    default: {
+      const heading = tmp.querySelector('.slide-title, .content-title, h1, h2');
+      const body = tmp.querySelector('.slide-body, .body-text, .content-text, p');
+      return {
+        heading: heading ? htmlToEditableText(heading.innerHTML) : '',
+        bodyText: body ? htmlToEditableText(body.innerHTML) : ''
+      };
+    }
+  }
+}
+
+/**
+ * Reconstruct slide HTML from original HTML + updated field values.
+ * Preserves all CSS class names and wrapper structure.
+ */
+function reconstructSlideHtml(originalHtml, slideType, newFields) {
+  if (!originalHtml) return originalHtml;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = originalHtml;
+
+  switch (slideType) {
+    case 'intro': {
+      const el = tmp.querySelector('.main-heading');
+      if (el) el.innerHTML = editableTextToHtml(newFields.heading || '');
+      break;
+    }
+    case 'simple-heading': {
+      const el = tmp.querySelector('.main-title');
+      if (el) el.innerHTML = editableTextToHtml(newFields.heading || '');
+      break;
+    }
+    case 'thank-you': {
+      const el = tmp.querySelector('.main-thank-you');
+      if (el) el.innerHTML = editableTextToHtml(newFields.heading || '');
+      break;
+    }
+    case 'forward-looking': {
+      const titleEl = tmp.querySelector('.slide-title');
+      const bodyEl = tmp.querySelector('.body-text');
+      if (titleEl) titleEl.innerHTML = editableTextToHtml(newFields.heading || '');
+      if (bodyEl) bodyEl.innerHTML = editableTextToHtml(newFields.bodyText || '');
+      break;
+    }
+    case 'pov-intro': {
+      const titleEl = tmp.querySelector('.slide-title');
+      const bodyEl = tmp.querySelector('.slide-body-text');
+      if (titleEl) titleEl.innerHTML = editableTextToHtml(newFields.heading || '');
+      if (bodyEl) bodyEl.innerHTML = editableTextToHtml(newFields.bodyText || '');
+      break;
+    }
+    case 'pov-themes': {
+      const headingEl = tmp.querySelector('.main-title');
+      if (headingEl) headingEl.innerHTML = editableTextToHtml(newFields.heading || '');
+      const cards = tmp.querySelectorAll('.pillar-card');
+      (newFields.povItems || []).forEach((item, idx) => {
+        if (cards[idx]) {
+          const h = cards[idx].querySelector('.pillar-heading');
+          const p = cards[idx].querySelector('.pillar-text');
+          if (h) h.innerHTML = editableTextToHtml(item.title || '');
+          if (p) p.innerHTML = editableTextToHtml(item.description || '');
+        }
+      });
+      break;
+    }
+    case 'demo-chapter-intro': {
+      const blocks = tmp.querySelectorAll('.chapter-block');
+      (newFields.chapters || []).forEach((ch, idx) => {
+        if (blocks[idx]) {
+          const txt = blocks[idx].querySelector('.chapter-text');
+          if (txt) txt.innerHTML = editableTextToHtml(ch.title || '');
+        }
+      });
+      break;
+    }
+    case 'demo-chapter-closing': {
+      // Chapter title
+      const titleBox = tmp.querySelector('.chapter-title-box');
+      if (titleBox) titleBox.textContent = newFields.chapterTitle || '';
+
+      // BVS Stats — rebuild the stats container
+      const statsContainer = tmp.querySelector('.stats-container, .metrics-row');
+      if (statsContainer && newFields.bvsStats) {
+        const isMetrics = statsContainer.classList.contains('metrics-row');
+        const itemClass = isMetrics ? 'metric-block' : 'stat-item';
+        const valueClass = isMetrics ? 'metric-value' : 'stat-percentage';
+        const descClass = isMetrics ? 'metric-description' : 'stat-description';
+        const dividerClass = isMetrics ? 'metric-divider' : 'stat-divider';
+        let statsHtml = '';
+        newFields.bvsStats.forEach((stat, idx) => {
+          if (idx > 0) statsHtml += `<div class='${dividerClass}'></div>`;
+          statsHtml += `<div class='${itemClass}'><div class='${valueClass}'>${esc(stat.value || '')}</div><div class='${descClass}'>${editableTextToHtml(stat.description || '')}</div></div>`;
+        });
+        statsContainer.innerHTML = statsHtml;
+      }
+
+      // Capabilities — rebuild
+      const cardsRow = tmp.querySelector('.cards-row');
+      const agentBox = !cardsRow ? tmp.querySelector('.agent-box') : null;
+      if (newFields.capabilities && newFields.capabilities.length > 0) {
+        if (newFields.capabilities.length === 1 && agentBox) {
+          // Single capability — update agent-box
+          const iconEl = agentBox.querySelector('.agent-icon');
+          const textEl = agentBox.querySelector('.agent-text');
+          if (iconEl) iconEl.innerHTML = newFields.capabilities[0].icon || '🔍';
+          if (textEl) textEl.innerHTML = editableTextToHtml(newFields.capabilities[0].title || '');
+        } else if (newFields.capabilities.length > 1 || cardsRow) {
+          // Multiple capabilities — rebuild cards-row
+          const container = cardsRow || agentBox;
+          if (container) {
+            container.className = 'cards-row';
+            let cardsHtml = '';
+            newFields.capabilities.forEach(cap => {
+              cardsHtml += `<div class='card'><div class='card-icon'>${cap.icon || '🔍'}</div><div class='card-divider'></div><div class='card-text'>${editableTextToHtml(cap.title || '')}</div></div>`;
+            });
+            container.innerHTML = cardsHtml;
+          }
+        }
+      }
+      break;
+    }
+    case 'content':
+    default: {
+      const heading = tmp.querySelector('.slide-title, .content-title, h1, h2');
+      const body = tmp.querySelector('.slide-body, .body-text, .content-text, p');
+      if (heading) heading.innerHTML = editableTextToHtml(newFields.heading || '');
+      if (body && newFields.bodyText !== undefined) body.innerHTML = editableTextToHtml(newFields.bodyText);
+      break;
+    }
+  }
+  return tmp.innerHTML;
+}
+
+/**
+ * Collect field values from the editor DOM for a given slide index.
+ */
+function collectSlideEditorFields(slideIndex, slideType) {
+  const val = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
+
+  switch (slideType) {
+    case 'intro':
+    case 'simple-heading':
+    case 'thank-you':
+      return { heading: val(`se-heading-${slideIndex}`) };
+    case 'forward-looking':
+    case 'pov-intro':
+    case 'content':
+      return { heading: val(`se-heading-${slideIndex}`), bodyText: val(`se-body-${slideIndex}`) };
+    case 'agenda':
+      return { heading: val(`se-heading-${slideIndex}`), bodyText: val(`se-body-${slideIndex}`) };
+    case 'pov-themes': {
+      const povItems = [];
+      for (let n = 1; n <= 3; n++) {
+        povItems.push({
+          number: String(n),
+          title: val(`se-pov-${n}-title-${slideIndex}`),
+          description: val(`se-pov-${n}-desc-${slideIndex}`)
+        });
+      }
+      return { heading: val(`se-heading-${slideIndex}`), povItems };
+    }
+    case 'demo-chapter-intro': {
+      const chapters = [];
+      const container = document.getElementById(`se-chapters-${slideIndex}`);
+      if (container) {
+        const rows = container.querySelectorAll('.se-chapter-row');
+        rows.forEach((row, idx) => {
+          const inp = row.querySelector('input');
+          chapters.push({
+            number: String(idx + 1),
+            title: inp ? inp.value : '',
+            active: row.dataset.active === 'true'
+          });
+        });
+      }
+      return { chapters };
+    }
+    case 'demo-chapter-closing': {
+      const bvsStats = [];
+      const bvsContainer = document.getElementById(`se-bvs-${slideIndex}`);
+      if (bvsContainer) {
+        const rows = bvsContainer.querySelectorAll('.se-bvs-row');
+        rows.forEach((row, idx) => {
+          bvsStats.push({
+            value: val(`se-bvs-value-${idx}-${slideIndex}`),
+            description: val(`se-bvs-desc-${idx}-${slideIndex}`)
+          });
+        });
+      }
+      const capabilities = [];
+      const capContainer = document.getElementById(`se-caps-${slideIndex}`);
+      if (capContainer) {
+        const rows = capContainer.querySelectorAll('.se-cap-row');
+        rows.forEach((row, idx) => {
+          const iconEl = row.querySelector('.se-cap-icon-preview');
+          capabilities.push({
+            icon: iconEl ? iconEl.textContent.trim() : '🔍',
+            title: val(`se-cap-title-${idx}-${slideIndex}`),
+            description: val(`se-cap-desc-${idx}-${slideIndex}`)
+          });
+        });
+      }
+      return { chapterTitle: val(`se-chapter-title-${slideIndex}`), bvsStats, capabilities };
+    }
+    default:
+      return { heading: val(`se-heading-${slideIndex}`) };
+  }
+}
+
+/**
+ * Build editor fields HTML for a slide.
+ */
+function buildSlideEditorHtml(slideIndex, slideType, fields, webSlide) {
+  const textareaClass = 'w-full px-2 py-1.5 rounded border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm text-gray-700 resize-y';
+  const inputClass = 'w-full px-2 py-1.5 rounded border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm text-gray-700';
+  const labelClass = 'block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 mt-3';
+  const btnSmClass = 'px-2 py-1 text-xs font-medium rounded cursor-pointer border border-gray-200 hover:bg-gray-100';
+
+  let fieldsHtml = '';
+
+  // === Heading (most types) ===
+  if (['intro','simple-heading','thank-you','forward-looking','pov-intro','pov-themes','agenda','content'].includes(slideType)) {
+    fieldsHtml += `<label class="${labelClass}" style="margin-top:0">Heading</label>`;
+    fieldsHtml += `<textarea id="se-heading-${slideIndex}" class="${textareaClass}" rows="2">${esc(fields.heading || '')}</textarea>`;
+  }
+
+  // === Body Text ===
+  if (['forward-looking','pov-intro','agenda','content'].includes(slideType)) {
+    fieldsHtml += `<label class="${labelClass}">Body Text</label>`;
+    fieldsHtml += `<textarea id="se-body-${slideIndex}" class="${textareaClass}" rows="${slideType === 'forward-looking' ? 6 : 3}">${esc(fields.bodyText || '')}</textarea>`;
+  }
+
+  // === POV Themes ===
+  if (slideType === 'pov-themes') {
+    const items = fields.povItems || [{number:'1',title:'',description:''},{number:'2',title:'',description:''},{number:'3',title:'',description:''}];
+    items.forEach((item, n) => {
+      fieldsHtml += `<div class="mt-3 p-3 rounded-lg" style="background:#f8fafc;border:1px solid #e2e8f0;">`;
+      fieldsHtml += `<span class="text-xs font-bold text-gray-400">POV ${n+1}</span>`;
+      fieldsHtml += `<label class="${labelClass}">Title</label>`;
+      fieldsHtml += `<textarea id="se-pov-${n+1}-title-${slideIndex}" class="${textareaClass}" rows="2">${esc(item.title || '')}</textarea>`;
+      fieldsHtml += `<label class="${labelClass}">Description</label>`;
+      fieldsHtml += `<textarea id="se-pov-${n+1}-desc-${slideIndex}" class="${textareaClass}" rows="2">${esc(item.description || '')}</textarea>`;
+      fieldsHtml += `</div>`;
+    });
+  }
+
+  // === Demo Chapter Intro ===
+  if (slideType === 'demo-chapter-intro') {
+    const chapters = fields.chapters || [{number:'1',title:'',active:true}];
+    fieldsHtml += `<div id="se-chapters-${slideIndex}">`;
+    chapters.forEach((ch, idx) => {
+      fieldsHtml += `<div class="se-chapter-row flex items-center gap-2 mt-2" data-active="${ch.active}">`;
+      fieldsHtml += `<span class="flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded ${ch.active ? 'text-white' : 'text-gray-400'}" style="${ch.active ? 'background:#0176D3;' : 'background:#f1f5f9;'}">Ch ${ch.number}</span>`;
+      fieldsHtml += `<input type="text" class="${inputClass}" value="${esc(ch.title || '')}" placeholder="Chapter title...">`;
+      fieldsHtml += `</div>`;
+    });
+    fieldsHtml += `</div>`;
+  }
+
+  // === Demo Chapter Closing ===
+  if (slideType === 'demo-chapter-closing') {
+    fieldsHtml += `<label class="${labelClass}" style="margin-top:0">Chapter Title</label>`;
+    fieldsHtml += `<input type="text" id="se-chapter-title-${slideIndex}" class="${inputClass}" value="${esc(fields.chapterTitle || '')}" placeholder="e.g. CHAPTER 1: AI POWERED CX">`;
+
+    // BVS Stats
+    fieldsHtml += `<div class="flex items-center justify-between mt-4"><span class="text-xs font-bold text-gray-500 uppercase">BVS Stats</span>`;
+    fieldsHtml += `<button class="${btnSmClass}" onclick="addBvsStatRow(${slideIndex})" id="se-add-bvs-${slideIndex}">+ Add Stat</button></div>`;
+    fieldsHtml += `<div id="se-bvs-${slideIndex}">`;
+    (fields.bvsStats || [{value:'',description:''}]).forEach((stat, idx) => {
+      fieldsHtml += buildBvsStatRowHtml(slideIndex, idx, stat);
+    });
+    fieldsHtml += `</div>`;
+
+    // Capabilities
+    fieldsHtml += `<div class="flex items-center justify-between mt-4"><span class="text-xs font-bold text-gray-500 uppercase">Capabilities</span>`;
+    fieldsHtml += `<button class="${btnSmClass}" onclick="addCapabilityRow(${slideIndex})" id="se-add-cap-${slideIndex}">+ Add Capability</button></div>`;
+    fieldsHtml += `<div id="se-caps-${slideIndex}">`;
+    (fields.capabilities || [{icon:'🔍',title:'',description:''}]).forEach((cap, idx) => {
+      fieldsHtml += buildCapabilityRowHtml(slideIndex, idx, cap);
+    });
+    fieldsHtml += `</div>`;
+  }
+
+  // === Background Image Controls ===
+  const bgUrl = webSlide ? (webSlide.background_image_url || '') : '';
+  fieldsHtml += `<div class="mt-4 pt-3 border-t border-gray-200">`;
+  fieldsHtml += `<label class="${labelClass}" style="margin-top:0">Background Image</label>`;
+  fieldsHtml += `<div class="flex items-center gap-2">`;
+  fieldsHtml += `<input type="text" id="se-bg-url-${slideIndex}" class="${inputClass}" value="${esc(bgUrl)}" placeholder="Paste image URL..." style="flex:1;">`;
+  fieldsHtml += `<button onclick="applySlideBgUrl(${slideIndex})" class="${btnSmClass}" style="color:#0176D3;">Apply</button>`;
+  fieldsHtml += `</div>`;
+  fieldsHtml += `<div class="flex items-center gap-2 mt-2">`;
+  fieldsHtml += `<button onclick="regenerateSlideBgOnly(${slideIndex})" class="${btnSmClass}" style="color:#0176D3;">🔄 AI Generate</button>`;
+  fieldsHtml += `<label class="${btnSmClass} cursor-pointer" style="color:#0176D3;">📁 Upload<input type="file" accept="image/*" onchange="uploadSlideBgImage(${slideIndex}, this)" hidden></label>`;
+  fieldsHtml += `</div></div>`;
+
+  // === Save Button ===
+  fieldsHtml += `<div class="mt-4 flex items-center gap-3">`;
+  fieldsHtml += `<button onclick="saveSlideContent(${slideIndex})" class="px-4 py-2 text-sm font-semibold rounded-lg cursor-pointer border-none text-white" style="background:#0176D3;">💾 Save Changes</button>`;
+  fieldsHtml += `<span id="se-status-${slideIndex}" class="text-xs text-gray-400"></span>`;
+  fieldsHtml += `</div>`;
+
+  return fieldsHtml;
+}
+
+function buildBvsStatRowHtml(slideIndex, idx, stat) {
+  const inputClass = 'w-full px-2 py-1.5 rounded border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm text-gray-700';
+  const labelClass = 'block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 mt-2';
+  let html = `<div class="se-bvs-row mt-2 p-3 rounded-lg relative" style="background:#f8fafc;border:1px solid #e2e8f0;">`;
+  html += `<button onclick="removeBvsStatRow(${slideIndex}, this)" class="absolute top-1 right-1 text-xs text-gray-300 hover:text-red-500 cursor-pointer" title="Remove" style="background:none;border:none;">✕</button>`;
+  html += `<span class="text-xs font-bold text-gray-400">Stat ${idx + 1}</span>`;
+  html += `<label class="${labelClass}">Value</label>`;
+  html += `<input type="text" id="se-bvs-value-${idx}-${slideIndex}" class="${inputClass}" value="${esc(stat.value || '')}" placeholder="e.g. 2.5x, 40%, 30X">`;
+  html += `<label class="${labelClass}">Description</label>`;
+  html += `<textarea id="se-bvs-desc-${idx}-${slideIndex}" class="${inputClass} resize-y" rows="2">${esc(stat.description || '')}</textarea>`;
+  html += `</div>`;
+  return html;
+}
+
+function buildCapabilityRowHtml(slideIndex, idx, cap) {
+  const inputClass = 'w-full px-2 py-1.5 rounded border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm text-gray-700';
+  const labelClass = 'block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 mt-2';
+  const icon = cap.icon || '🔍';
+  let html = `<div class="se-cap-row mt-2 p-3 rounded-lg relative" style="background:#f8fafc;border:1px solid #e2e8f0;">`;
+  html += `<button onclick="removeCapabilityRow(${slideIndex}, this)" class="absolute top-1 right-1 text-xs text-gray-300 hover:text-red-500 cursor-pointer" title="Remove" style="background:none;border:none;">✕</button>`;
+  html += `<span class="text-xs font-bold text-gray-400">Capability ${idx + 1}</span>`;
+  html += `<label class="${labelClass}">Icon</label>`;
+  html += `<div class="flex items-center gap-2">`;
+  html += `<span class="se-cap-icon-preview text-2xl cursor-pointer px-2 py-1 rounded border border-gray-200 hover:bg-gray-100" onclick="toggleIconPicker(${slideIndex}, ${idx})">${icon}</span>`;
+  html += `<div id="se-icon-picker-${idx}-${slideIndex}" class="hidden flex flex-wrap gap-1 p-2 rounded-lg border border-gray-200 bg-white shadow-lg" style="max-width: 280px;">`;
+  SLIDE_ICON_PRESETS.forEach(ic => {
+    html += `<span class="text-xl cursor-pointer px-1.5 py-1 rounded hover:bg-blue-50" onclick="selectIcon(${slideIndex}, ${idx}, this, '${ic}')">${ic}</span>`;
+  });
+  html += `<label class="text-xs text-blue-500 cursor-pointer px-2 py-1 rounded hover:bg-blue-50 flex items-center gap-1">📁 Custom<input type="file" accept="image/*" onchange="uploadCustomIcon(${slideIndex}, ${idx}, this)" hidden></label>`;
+  html += `</div></div>`;
+  html += `<label class="${labelClass}">Title</label>`;
+  html += `<textarea id="se-cap-title-${idx}-${slideIndex}" class="${inputClass} resize-y" rows="2">${esc(cap.title || '')}</textarea>`;
+  html += `<label class="${labelClass}">Description</label>`;
+  html += `<textarea id="se-cap-desc-${idx}-${slideIndex}" class="${inputClass} resize-y" rows="2">${esc(cap.description || '')}</textarea>`;
+  html += `</div>`;
+  return html;
+}
+
+function toggleIconPicker(slideIndex, capIdx) {
+  const picker = document.getElementById(`se-icon-picker-${capIdx}-${slideIndex}`);
+  if (picker) picker.classList.toggle('hidden');
+}
+
+function selectIcon(slideIndex, capIdx, el, icon) {
+  const row = el.closest('.se-cap-row');
+  const preview = row.querySelector('.se-cap-icon-preview');
+  if (preview) preview.textContent = icon;
+  toggleIconPicker(slideIndex, capIdx);
+}
+
+function addBvsStatRow(slideIndex) {
+  const container = document.getElementById(`se-bvs-${slideIndex}`);
+  if (!container) return;
+  const count = container.querySelectorAll('.se-bvs-row').length;
+  if (count >= 2) return; // max 2
+  const div = document.createElement('div');
+  div.innerHTML = buildBvsStatRowHtml(slideIndex, count, {value:'', description:''});
+  container.appendChild(div.firstElementChild);
+  // Re-index IDs
+  reindexBvsRows(slideIndex);
+}
+
+function removeBvsStatRow(slideIndex, btn) {
+  const container = document.getElementById(`se-bvs-${slideIndex}`);
+  if (!container) return;
+  if (container.querySelectorAll('.se-bvs-row').length <= 1) return; // min 1
+  btn.closest('.se-bvs-row').remove();
+  reindexBvsRows(slideIndex);
+}
+
+function reindexBvsRows(slideIndex) {
+  const container = document.getElementById(`se-bvs-${slideIndex}`);
+  if (!container) return;
+  container.querySelectorAll('.se-bvs-row').forEach((row, idx) => {
+    row.querySelector('span').textContent = `Stat ${idx + 1}`;
+    const valInput = row.querySelector('input[id^="se-bvs-value"]');
+    if (valInput) valInput.id = `se-bvs-value-${idx}-${slideIndex}`;
+    const descInput = row.querySelector('textarea[id^="se-bvs-desc"]');
+    if (descInput) descInput.id = `se-bvs-desc-${idx}-${slideIndex}`;
+  });
+}
+
+function addCapabilityRow(slideIndex) {
+  const container = document.getElementById(`se-caps-${slideIndex}`);
+  if (!container) return;
+  const count = container.querySelectorAll('.se-cap-row').length;
+  if (count >= 3) return; // max 3
+  const div = document.createElement('div');
+  div.innerHTML = buildCapabilityRowHtml(slideIndex, count, {icon:'🔍', title:'', description:''});
+  container.appendChild(div.firstElementChild);
+  reindexCapRows(slideIndex);
+}
+
+function removeCapabilityRow(slideIndex, btn) {
+  const container = document.getElementById(`se-caps-${slideIndex}`);
+  if (!container) return;
+  if (container.querySelectorAll('.se-cap-row').length <= 1) return; // min 1
+  btn.closest('.se-cap-row').remove();
+  reindexCapRows(slideIndex);
+}
+
+function reindexCapRows(slideIndex) {
+  const container = document.getElementById(`se-caps-${slideIndex}`);
+  if (!container) return;
+  container.querySelectorAll('.se-cap-row').forEach((row, idx) => {
+    row.querySelector('span').textContent = `Capability ${idx + 1}`;
+    const titleEl = row.querySelector('textarea[id^="se-cap-title"]');
+    if (titleEl) titleEl.id = `se-cap-title-${idx}-${slideIndex}`;
+    const descEl = row.querySelector('textarea[id^="se-cap-desc"]');
+    if (descEl) descEl.id = `se-cap-desc-${idx}-${slideIndex}`;
+  });
+}
+
+function toggleSlideEditor(slideIndex) {
+  const editor = document.getElementById(`se-panel-${slideIndex}`);
+  if (editor) editor.style.display = editor.style.display === 'none' ? 'block' : 'none';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STRUCTURED SLIDE EDITOR — Save, Upload, Refresh
+// ═══════════════════════════════════════════════════════════════
+
+async function saveSlideContent(slideIndex) {
+  const statusEl = document.getElementById(`se-status-${slideIndex}`);
+  if (statusEl) { statusEl.textContent = 'Saving...'; statusEl.style.color = '#6b7280'; }
+
+  const webSlide = currentWebSlides.find(ws => ws.slide_index === slideIndex);
+  if (!webSlide) { if (statusEl) statusEl.textContent = 'Error: no slide data'; return; }
+
+  const ann = currentRefAnnotations[slideIndex] || {};
+  const slideType = detectSlideType(ann.name, slideIndex, currentRefAnnotations.length);
+  const fields = collectSlideEditorFields(slideIndex, slideType);
+  const newHtml = reconstructSlideHtml(webSlide.html_content, slideType, fields);
+
+  try {
+    const resp = await fetch(`/api/reference-presentations/${currentRefId}/web-slides/${slideIndex}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: currentUser, html: newHtml })
+    });
+    const result = await resp.json();
+    if (!resp.ok) throw new Error(result.error || 'Failed');
+
+    // Update local cache
+    webSlide.html_content = newHtml;
+
+    // Refresh iframe preview
+    refreshSlidePreview(slideIndex);
+
+    if (statusEl) { statusEl.textContent = '✓ Saved'; statusEl.style.color = '#22c55e'; }
+    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+  } catch (err) {
+    console.error('Save failed:', err);
+    if (statusEl) { statusEl.textContent = '✕ ' + err.message; statusEl.style.color = '#ef4444'; }
+  }
+}
+
+function refreshSlidePreview(slideIndex) {
+  const webSlide = currentWebSlides.find(ws => ws.slide_index === slideIndex);
+  if (!webSlide) return;
+  const iframe = document.getElementById(`slide-iframe-${slideIndex}`);
+  if (!iframe) return;
+  iframe.srcdoc = buildSlidePreviewSrcdoc(webSlide, slideIndex);
+  requestAnimationFrame(() => scaleSlidePreviewIframes());
+}
+
+async function applySlideBgUrl(slideIndex) {
+  const urlInput = document.getElementById(`se-bg-url-${slideIndex}`);
+  if (!urlInput) return;
+  const url = urlInput.value.trim();
+  if (!url) return;
+
+  try {
+    const resp = await fetch(`/api/reference-presentations/${currentRefId}/web-slides/${slideIndex}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: currentUser, backgroundImageUrl: url })
+    });
+    if (!resp.ok) throw new Error('Failed to update');
+
+    const webSlide = currentWebSlides.find(ws => ws.slide_index === slideIndex);
+    if (webSlide) webSlide.background_image_url = url;
+    refreshSlidePreview(slideIndex);
+  } catch (err) {
+    console.error('Apply BG URL failed:', err);
+    alert('Failed to apply background URL: ' + err.message);
+  }
+}
+
+async function uploadSlideBgImage(slideIndex, fileInput) {
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  const statusEl = document.getElementById(`se-status-${slideIndex}`);
+  if (statusEl) { statusEl.textContent = 'Uploading...'; statusEl.style.color = '#6b7280'; }
+
+  const formData = new FormData();
+  formData.append('image', file);
+  formData.append('email', currentUser);
+  formData.append('type', 'background');
+
+  try {
+    const resp = await fetch(`/api/reference-presentations/${currentRefId}/web-slides/${slideIndex}/upload-image`, {
+      method: 'POST',
+      body: formData
+    });
+    const result = await resp.json();
+    if (!resp.ok) throw new Error(result.error || 'Upload failed');
+
+    // Update URL input and cache
+    const urlInput = document.getElementById(`se-bg-url-${slideIndex}`);
+    if (urlInput) urlInput.value = result.url;
+    const webSlide = currentWebSlides.find(ws => ws.slide_index === slideIndex);
+    if (webSlide) webSlide.background_image_url = result.url;
+    refreshSlidePreview(slideIndex);
+
+    if (statusEl) { statusEl.textContent = '✓ Uploaded'; statusEl.style.color = '#22c55e'; }
+    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+  } catch (err) {
+    console.error('Upload failed:', err);
+    if (statusEl) { statusEl.textContent = '✕ Upload failed'; statusEl.style.color = '#ef4444'; }
+  }
+  fileInput.value = '';
+}
+
+async function uploadCustomIcon(slideIndex, capIdx, fileInput) {
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  const formData = new FormData();
+  formData.append('icon', file);
+  formData.append('email', currentUser);
+
+  try {
+    const resp = await fetch('/api/upload-slide-icon', { method: 'POST', body: formData });
+    const result = await resp.json();
+    if (!resp.ok) throw new Error(result.error || 'Upload failed');
+
+    // Set the icon preview to an <img> tag with the uploaded URL
+    const row = document.getElementById(`se-caps-${slideIndex}`).querySelectorAll('.se-cap-row')[capIdx];
+    if (row) {
+      const preview = row.querySelector('.se-cap-icon-preview');
+      if (preview) preview.innerHTML = `<img src="${result.url}" style="width:28px;height:28px;object-fit:contain;">`;
+    }
+    toggleIconPicker(slideIndex, capIdx);
+  } catch (err) {
+    console.error('Icon upload failed:', err);
+    alert('Failed to upload icon: ' + err.message);
+  }
+  fileInput.value = '';
+}
+
+async function regenerateSlideBgOnly(slideIndex) {
+  const statusEl = document.getElementById(`se-status-${slideIndex}`);
+  if (statusEl) { statusEl.textContent = 'Generating background...'; statusEl.style.color = '#6b7280'; }
+
+  try {
+    const resp = await fetch(`/api/reference-presentations/${currentRefId}/regenerate-web-slide/${slideIndex}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: currentUser,
+        userInstructions: 'ONLY regenerate the background image. Keep the EXACT SAME HTML and CSS layout — do NOT change any text, structure, or styling. Only generate a new on-brand professional background photo.',
+        brandData: refDetailBrandKit || {}
+      })
+    });
+    if (!resp.ok) throw new Error('Failed to start regeneration');
+
+    // Poll for completion
+    const pollInterval = setInterval(async () => {
+      try {
+        const pollResp = await fetch(`/api/reference-presentations/${currentRefId}/web-slides`);
+        const slides = await pollResp.json();
+        const updated = slides.find(s => s.slide_index === slideIndex);
+        const cached = currentWebSlides.find(ws => ws.slide_index === slideIndex);
+        if (updated && cached && updated.updated_at !== cached.updated_at) {
+          clearInterval(pollInterval);
+          // Update cache
+          Object.assign(cached, { html_content: updated.html_content, css_content: updated.css_content, background_image_url: updated.background_image_url, updated_at: updated.updated_at });
+          const urlInput = document.getElementById(`se-bg-url-${slideIndex}`);
+          if (urlInput) urlInput.value = updated.background_image_url || '';
+          refreshSlidePreview(slideIndex);
+          if (statusEl) { statusEl.textContent = '✓ Background updated'; statusEl.style.color = '#22c55e'; }
+          setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+        }
+      } catch (e) { /* keep polling */ }
+    }, 3000);
+
+    // Timeout after 3 minutes
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      if (statusEl && statusEl.textContent.includes('Generating')) {
+        statusEl.textContent = 'Timed out — check back later';
+        statusEl.style.color = '#f59e0b';
+      }
+    }, 180000);
+  } catch (err) {
+    console.error('Regen failed:', err);
+    if (statusEl) { statusEl.textContent = '✕ ' + err.message; statusEl.style.color = '#ef4444'; }
+  }
 }
 
 function renderRefDetailAnnotations(annotations) {
