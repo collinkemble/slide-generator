@@ -3222,8 +3222,9 @@ ABSOLUTE PROHIBITIONS — NEVER include these in the HTML:
 - NEVER include circular headshot photos, profile pictures, avatar bubbles, or any person imagery elements.
 - NEVER include team member names, titles, roles, or contact information in grid/card layouts.
 - NEVER include placeholder text like "Speaker Name", "Speaker Title", "Your Name", "Your Title", "[Name]", or "[Title]". If the original has these placeholders, OMIT them entirely.
-- NEVER include <img> tags of any kind. All visual elements (backgrounds, photos) are handled separately by the system. If you see an image in the original slide, describe it in backgroundImageDescription instead.
-- NEVER include gray placeholder rectangles, empty boxes, or mock image containers. Use CSS decorative elements (gradients, shapes, borders) instead.
+- NEVER include <img> tags of any kind — not for photos, logos, icons, or illustrations. The system adds a full-bleed background photo behind your HTML automatically using the backgroundImageDescription you provide. Your HTML is a transparent overlay on top of that photo.
+- NEVER include gray rectangles, colored placeholder boxes, empty containers, or any div/element that visually represents "where an image would go." There is NO concept of an inline image in this system — the ONLY image is the full-slide background photo.
+- If the original slide has an image/photo area, DO NOT try to recreate it as a box in HTML. Instead, describe that image in backgroundImageDescription and let the background photo system handle it. Arrange your text content to work well with a full-bleed background photo behind it.
 - If the original slide's text contains team-related content, SKIP those elements entirely and only render the non-team parts.
 
 ${chapterTransitionPrompt}
@@ -3241,9 +3242,14 @@ BACKGROUND IMAGE (REQUIRED for every slide):
 - If the slide is text-only, describe an appropriate professional background that would complement the content.
 - The description should be 2-3 sentences describing a professional photograph, NOT text or graphics.
 
-${userInstructions ? `USER INSTRUCTIONS (IMPORTANT — follow these carefully):
-The user has provided specific instructions for this slide regeneration. Apply them:
+${userInstructions ? `USER INSTRUCTIONS (HIGHEST PRIORITY — follow these carefully):
+The user has provided specific instructions for regenerating this slide. Apply them:
 "${userInstructions}"
+
+IMPORTANT CONTEXT for interpreting user instructions:
+- If the user mentions wanting a "photo", "image", or "picture" on the slide: You CANNOT add <img> tags. Instead, describe the desired photo in backgroundImageDescription — a full-bleed background photo will be generated and placed behind your HTML automatically. Arrange your text layout to look good on top of that photo (use semi-transparent overlays for readability).
+- If the user mentions removing a "gray box" or "placeholder": Remove any div/element with a gray/neutral background that looks like an image placeholder. The background photo system replaces these.
+- Your HTML is rendered as a transparent overlay on top of a full-bleed 1920x1080 background photo. Design accordingly.
 ` : ''}Return ONLY a JSON object (no markdown fences):
 {
   "html": "<div class='slide-content'>...</div>",
@@ -3291,9 +3297,19 @@ The user has provided specific instructions for this slide regeneration. Apply t
     }
   }
 
+  // Post-process: strip gray placeholder boxes and <img> tags that the AI may still generate
+  let cleanHtml = (result.html || '');
+  // Remove any <img> tags
+  cleanHtml = cleanHtml.replace(/<img\b[^>]*\/?>/gi, '');
+  // Remove divs that are styled as gray placeholder boxes (inline background-color: #ccc, #ddd, #eee, #e5e7eb, #f3f4f6, gray, etc.)
+  cleanHtml = cleanHtml.replace(/<div\b[^>]*style="[^"]*background(?:-color)?:\s*(?:#[cdef][cdef][cdef][cdef]?[cdef]?[cdef]?|#e5e7eb|#f3f4f6|#d1d5db|gray|lightgray|darkgray|silver)[^"]*"[^>]*>(?:\s*(?:Image|Photo|Placeholder|placeholder)[^<]*)?<\/div>/gi, '');
+
+  // Also remove CSS classes that look like image placeholders (e.g. .image-placeholder, .photo-area)
+  let cleanCss = (result.css || '');
+
   return {
-    html: result.html || '',
-    css: result.css || '',
+    html: cleanHtml,
+    css: cleanCss,
     backgroundImageDescription: result.backgroundImageDescription || '',
     isTransitionSlide: isTransitionSlide || result.isTransitionSlide || false,
     needsCenteredLogos: needsCenteredLogos || false
