@@ -867,26 +867,17 @@
       <!-- Slide Comparison: Original vs Web Version -->
       <div class="bg-white rounded-2xl shadow-md p-6 mb-6">
         <div class="flex items-center justify-between mb-1">
-          <h3 class="text-lg font-bold text-gray-800">Slide Comparison</h3>
+          <h3 class="text-lg font-bold text-gray-800">Slides</h3>
         </div>
-        <p class="text-sm text-gray-500 mb-4">Original slides side-by-side with the AI-generated web version. Click 🔄 to regenerate any individual slide.</p>
+        <p class="text-sm text-gray-500 mb-2">Original slides side-by-side with the AI-generated web version. Edit annotations inline and click Save. Click 🔄 to regenerate any slide.</p>
+        <div class="flex items-center gap-3 mb-4">
+          <button id="ref-detail-save-btn" onclick="saveRefDetailAnnotations()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Save Annotations</button>
+          <p id="ref-detail-save-error" class="hidden text-sm" style="color: #C23934;"></p>
+          <p id="ref-detail-save-success" class="hidden text-sm" style="color: #2E844A;"></p>
+        </div>
         <div id="ref-detail-thumbnails">
           <div class="text-center py-8 text-gray-400 text-sm">Loading...</div>
         </div>
-      </div>
-
-      <!-- Slide Annotations (editable) -->
-      <div class="bg-white rounded-2xl shadow-md p-6 mb-6">
-        <div class="flex items-center justify-between mb-4">
-          <div>
-            <h3 class="text-lg font-bold text-gray-800">Slide Annotations</h3>
-            <p class="text-sm text-gray-500">Edit slide names and descriptions for AI grounding context.</p>
-          </div>
-          <button id="ref-detail-save-btn" onclick="saveRefDetailAnnotations()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Save Changes</button>
-        </div>
-        <p id="ref-detail-save-error" class="hidden text-sm mb-3" style="color: #C23934;"></p>
-        <p id="ref-detail-save-success" class="hidden text-sm mb-3" style="color: #2E844A;"></p>
-        <div id="ref-detail-annotations-list" style="border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden;"></div>
       </div>
     </div>
 
@@ -3094,7 +3085,7 @@ async function viewReference(id, skipPush) {
   document.getElementById('ref-detail-synopsis').textContent = '';
   document.getElementById('ref-detail-synopsis-wrap').classList.add('hidden');
   document.getElementById('ref-detail-thumbnails').innerHTML = '<div class="text-center py-8 text-gray-400 text-sm">Loading...</div>';
-  document.getElementById('ref-detail-annotations-list').innerHTML = '';
+  // ref-detail-annotations-list removed — annotations are now inline in comparison cards
   document.getElementById('ref-detail-save-error').classList.add('hidden');
   document.getElementById('ref-detail-save-success').classList.add('hidden');
   document.getElementById('ref-detail-gen-error').classList.add('hidden');
@@ -3140,11 +3131,8 @@ async function viewReference(id, skipPush) {
       } catch (e) { /* ignore — just means no web slides to compare */ }
     }
 
-    // Render thumbnails grid (with web version comparison if available)
+    // Render thumbnails grid (with web version comparison and inline annotations)
     renderRefDetailThumbnails(currentRefAnnotations);
-
-    // Render annotations list (editable)
-    renderRefDetailAnnotations(currentRefAnnotations);
 
     // Update web version status
     updateRefDetailWebStatus(currentRefData.web_version_status || 'none');
@@ -3168,10 +3156,11 @@ let currentWebBrandLogoUrl = ''; // brand logo URL for preview rendering
  * exactly as it appears in the web viewer (background + HTML + CSS + logo).
  */
 function isCoverSlideByName(slideIndex, slideName) {
+  if (slideIndex === 0) return true;
   const name = (slideName || '').toLowerCase();
-  return slideIndex === 0 || name.includes('pov') || name.includes('point of view') ||
-    name.includes('welcome') || name.includes('cover') ||
-    (name.includes('intro') && !name.includes('demo chapter') && !name.includes('chapter intro') && slideIndex <= 2);
+  // Only match explicit cover/welcome slides, NOT content slides with "POV" in the name
+  if (name.includes('welcome') || name === 'cover' || name === 'title') return true;
+  return false;
 }
 
 function buildSlidePreviewSrcdoc(webSlide, slideIndex) {
@@ -3234,7 +3223,7 @@ function renderRefDetailThumbnails(annotations) {
       <div class="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-100">
         <div class="flex items-center gap-2">
           <span class="flex-shrink-0 flex items-center justify-center text-xs font-bold text-white rounded-full" style="width: 22px; height: 22px; background: #0176D3;">${slide.slideNumber}</span>
-          <span class="text-sm font-medium text-gray-700">${esc(slide.name || 'Untitled')}</span>
+          <input type="text" data-refdetail-idx="${i}" data-refdetail-field="name" value="${esc(slide.name || '')}" placeholder="Slide name..." class="flex-1 px-2 py-1 rounded border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm font-medium text-gray-700" style="max-width: 400px;">
         </div>
         ${hasWebVersion ? `
           <button id="regen-slide-btn-${i}" onclick="regenerateSingleSlide(${i})" class="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg cursor-pointer hover:bg-gray-100 border border-gray-200" style="color: #0176D3;" title="Regenerate this slide">
@@ -3305,7 +3294,9 @@ function scaleSlidePreviewIframes() {
 }
 
 function renderRefDetailAnnotations(annotations) {
+  // Annotations are now inline in the comparison cards — this function is a no-op
   const container = document.getElementById('ref-detail-annotations-list');
+  if (!container) return;
   if (!annotations || annotations.length === 0) {
     container.innerHTML = '<div class="text-center py-8 text-gray-400 text-sm">No slide data available.</div>';
     return;

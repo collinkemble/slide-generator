@@ -2812,7 +2812,16 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
         const fallbackHtml = buildFallbackSlideHtml(slide, brandData, i, annotations.length);
         console.warn(`[WebVersion] Using fallback HTML for slide ${i + 1}`);
         slideHtmlResults.push({ index: i, data: fallbackHtml, error: null });
+        slideHtmlData = fallbackHtml;
       }
+
+      // Save HTML immediately so the progress counter updates in real time
+      await query(
+        `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
+         VALUES (?, ?, ?, ?, NULL, ?)
+         ON DUPLICATE KEY UPDATE html_content = VALUES(html_content), css_content = VALUES(css_content), background_image_prompt = VALUES(background_image_prompt), updated_at = NOW()`,
+        [refId, i, slideHtmlData.html, slideHtmlData.css, slideHtmlData.backgroundImageDescription || '']
+      );
 
       // Rate limit between Gemini calls
       if (i < annotations.length - 1) {
@@ -3137,28 +3146,28 @@ async function generateSlideHtml(slide, brandData, slideIndex, totalSlides, chap
   const isDemoChapterIntro = slideName.includes('demo chapter') || slideName.includes('chapter intro') || slideDesc.includes('demo chapter') || slideDesc.includes('chapter intro');
   const isDemoChapterClosing = slideName.includes('chapter closing') || slideDesc.includes('chapter closing') || slideName.includes('demo closing');
   const isTransitionSlide = isDemoChapterIntro || isDemoChapterClosing;
-  // Detect cover/title-like slides that should get centered logos (POV intro, welcome, title, etc.)
-  const isCoverSlide = isFirst || slideName.includes('pov') || slideName.includes('point of view') ||
-    (slideName.includes('intro') && !isDemoChapterIntro && slideIndex <= 2) ||
-    slideName.includes('welcome') || slideName.includes('cover');
-  // Flag for the logo placement system — this gets returned with the result
+  // Detect cover/title-like slides that should get centered logos
+  // Only the FIRST slide (index 0) or explicit welcome/cover slides get centered logos
+  const isCoverSlide = isFirst || slideName.includes('welcome') || slideName === 'cover' || slideName === 'title';
   const needsCenteredLogos = isCoverSlide;
 
   // Build chapter transition styling rules if this is a transition slide
   let chapterTransitionPrompt = '';
   if (isTransitionSlide) {
-    chapterTransitionPrompt = `DEMO CHAPTER TRANSITION SLIDE RULES:
-- This is a chapter transition slide. Replicate the LAYOUT and TEXT from the original slide thumbnail as closely as possible.
-- Render the chapter/section titles exactly as they appear on the original slide.
-- The CURRENT/ACTIVE chapter should be highlighted in the brand's primary color (${brandColorPrimary}).
-- Inactive chapters should be in a muted/dimmed color (rgba(255,255,255,0.35)).
-- ALL chapter titles must use the EXACT SAME font-size (48px), font-weight (600), and styling.
-- Use these CSS class names for consistency across all transition slides:
-  .chapter-list { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 32px; position: absolute; inset: 0; z-index: 5; padding: 120px 200px; }
-  .chapter-item { font-size: 48px; font-weight: 600; color: rgba(255,255,255,0.35); text-shadow: 0 2px 10px rgba(0,0,0,0.3); letter-spacing: 0.5px; }
-  .chapter-item.active { color: ${brandColorPrimary}; font-weight: 700; text-shadow: 0 2px 15px rgba(0,0,0,0.5); }
-- Include a semi-transparent dark overlay behind the content for readability.
-- Keep the design minimal and clean.`;
+    chapterTransitionPrompt = `DEMO CHAPTER TRANSITION SLIDE — CRITICAL RULES:
+- This is a chapter transition slide. You MUST replicate the EXACT LAYOUT from the original slide thumbnail.
+- Look at the original thumbnail carefully — it shows multiple chapter/section titles arranged in a specific layout.
+- If the original shows 3 sections stacked vertically, YOU MUST render 3 sections stacked vertically.
+- If the original shows sections with text descriptions under each title, include those descriptions.
+- The CURRENT/ACTIVE chapter/section should be highlighted in the brand's primary color (${brandColorPrimary}) with full opacity.
+- The OTHER chapters/sections should be dimmed (rgba(255,255,255,0.35) or similar muted color).
+- Replicate the STRUCTURE of the original — if it has boxes, cards, or sections with borders, recreate them.
+- ALL sections must use the SAME HTML structure and CSS — only the color differs for the active one.
+- Use these CSS class names for consistency:
+  .chapter-item { font-size: 36px; font-weight: 600; color: rgba(255,255,255,0.35); text-shadow: 0 2px 10px rgba(0,0,0,0.3); }
+  .chapter-item.active { color: ${brandColorPrimary}; font-weight: 700; }
+- Include a semi-transparent dark overlay for readability.
+- DO NOT simplify the layout to just a single title. Render ALL sections/chapters visible.`;
   }
 
   const systemPrompt = `You are an expert web presentation designer. Generate HTML and CSS for a SINGLE presentation slide that will be displayed at 1920x1080 pixels.
@@ -3209,11 +3218,17 @@ DESIGN STYLE:
 - Add a semi-transparent overlay (linear gradient or solid color at 60-80% opacity) over the background area to ensure text readability
 - Professional layout with proper spacing and hierarchy
 
+BACKGROUND IMAGE (REQUIRED for every slide):
+- You MUST always provide a backgroundImageDescription. Every slide needs a background photo.
+- If the original slide contains an image or photo, describe what that image shows so we can generate a similar one.
+- If the slide is text-only, describe an appropriate professional background that would complement the content.
+- The description should be 2-3 sentences describing a professional photograph, NOT text or graphics.
+
 Return ONLY a JSON object (no markdown fences):
 {
   "html": "<div class='slide-content'>...</div>",
   "css": ".slide-content { ... }",
-  "backgroundImageDescription": "2-3 sentence description of what the background photo should show. Describe a professional photograph, NOT text or graphics."${isTransitionSlide ? ',\n  "isTransitionSlide": true' : ''}
+  "backgroundImageDescription": "REQUIRED: 2-3 sentence description of the background photo to generate."${isTransitionSlide ? ',\n  "isTransitionSlide": true' : ''}
 }`;
 
   // Build content parts — include thumbnail for visual reference

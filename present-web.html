@@ -140,10 +140,11 @@
      * All other slides: Small upper-right logo lockup
      */
     function isCoverSlideByName(slideIndex, slideName) {
+      if (slideIndex === 0) return true;
       const name = (slideName || '').toLowerCase();
-      return slideIndex === 0 || name.includes('pov') || name.includes('point of view') ||
-        name.includes('welcome') || name.includes('cover') ||
-        (name.includes('intro') && !name.includes('demo chapter') && !name.includes('chapter intro') && slideIndex <= 2);
+      // Only match explicit cover/welcome slides, NOT content slides with "POV" in the name
+      if (name.includes('welcome') || name === 'cover' || name === 'title') return true;
+      return false;
     }
 
     function buildSlideSrcdoc(slide, slideIndex) {
