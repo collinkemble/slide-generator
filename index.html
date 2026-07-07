@@ -3131,6 +3131,9 @@ async function viewReference(id, skipPush) {
       } catch (e) { /* ignore — just means no web slides to compare */ }
     }
 
+    // Restore saved brand kit from database
+    restoreRefDetailBrandKit(currentRefData);
+
     // Render thumbnails grid (with web version comparison and inline annotations)
     renderRefDetailThumbnails(currentRefAnnotations);
 
@@ -3386,6 +3389,25 @@ function updateRefDetailWebStatus(status) {
 }
 
 // Brand Kit picker for reference detail page
+function restoreRefDetailBrandKit(refData) {
+  const nameEl = document.getElementById('ref-detail-brandkit-name');
+  refDetailBrandKit = null;
+  if (nameEl) { nameEl.textContent = ''; nameEl.style.color = ''; }
+
+  if (!refData) return;
+  let saved = refData.web_version_brand_data;
+  if (typeof saved === 'string') {
+    try { saved = JSON.parse(saved); } catch (e) { saved = null; }
+  }
+  if (!saved || !saved.brandName) return;
+
+  refDetailBrandKit = saved;
+  if (nameEl) {
+    nameEl.textContent = '✓ ' + (saved.brandName || 'Brand kit applied');
+    nameEl.style.color = '#2E844A';
+  }
+}
+
 async function toggleRefDetailBrandKitPicker() {
   const picker = document.getElementById('ref-detail-brandkit-picker');
   if (!picker.classList.contains('hidden')) {
@@ -3446,6 +3468,15 @@ async function selectRefDetailBrandKit(kitId) {
 
     nameEl.textContent = '✓ ' + (refDetailBrandKit.brandName || 'Brand kit applied');
     nameEl.style.color = '#2E844A';
+
+    // Persist to database immediately
+    if (currentRefId) {
+      fetch(`/api/reference-presentations/${currentRefId}/brand-data`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, brandData: refDetailBrandKit })
+      }).catch(e => console.warn('Failed to save brand kit selection:', e));
+    }
   } catch (err) {
     nameEl.textContent = 'Failed to load brand kit';
     nameEl.style.color = '#C23934';

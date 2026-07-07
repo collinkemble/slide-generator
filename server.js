@@ -2437,6 +2437,23 @@ app.delete('/api/reference-presentations/:id', async (req, res) => {
 // Web Version Generation for Reference Presentations
 // ═══════════════════════════════════════════════
 
+// PUT /api/reference-presentations/:id/brand-data — save brand kit selection
+app.put('/api/reference-presentations/:id/brand-data', async (req, res) => {
+  try {
+    const { email, brandData } = req.body;
+    if (!email || !isAdmin(email)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    const refId = parseInt(req.params.id);
+    await query('UPDATE reference_presentations SET web_version_brand_data = ? WHERE id = ?',
+      [JSON.stringify(brandData || {}), refId]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to save brand data:', err);
+    res.status(500).json({ error: 'Failed to save brand data' });
+  }
+});
+
 // POST /api/reference-presentations/:id/generate-web-version — start generating HTML web version
 app.post('/api/reference-presentations/:id/generate-web-version', async (req, res) => {
   try {
