@@ -2528,6 +2528,40 @@ app.post('/api/reference-presentations/:id/regenerate-web-slide/:slideIndex', as
   }
 });
 
+// PATCH /api/reference-presentations/:id/web-slides/:slideIndex — directly update slide HTML/CSS/bg
+app.patch('/api/reference-presentations/:id/web-slides/:slideIndex', async (req, res) => {
+  try {
+    const email = req.body.email || req.query.email;
+    if (!email || !isAdmin(email)) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    const refId = parseInt(req.params.id);
+    const slideIndex = parseInt(req.params.slideIndex);
+    const { html, css, backgroundImageUrl, backgroundImagePrompt } = req.body;
+
+    // Build dynamic SET clause — only update provided fields
+    const updates = [];
+    const params = [];
+    if (html !== undefined) { updates.push('html_content = ?'); params.push(html); }
+    if (css !== undefined) { updates.push('css_content = ?'); params.push(css); }
+    if (backgroundImageUrl !== undefined) { updates.push('background_image_url = ?'); params.push(backgroundImageUrl); }
+    if (backgroundImagePrompt !== undefined) { updates.push('background_image_prompt = ?'); params.push(backgroundImagePrompt); }
+    if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+
+    updates.push('updated_at = NOW()');
+    params.push(refId, slideIndex);
+
+    await query(
+      `UPDATE reference_web_slides SET ${updates.join(', ')} WHERE reference_id = ? AND slide_index = ?`,
+      params
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to patch web slide:', err);
+    res.status(500).json({ error: 'Failed to update slide' });
+  }
+});
+
 // GET /api/reference-presentations/:id/web-slides — get generated web slides
 app.get('/api/reference-presentations/:id/web-slides', async (req, res) => {
   try {
