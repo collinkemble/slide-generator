@@ -3217,14 +3217,25 @@ ${isCoverSlide ? '8. This is a COVER/TITLE slide — leave the CENTER of the sli
 9. Text should have good contrast — use white text on dark/photo backgrounds with text-shadow for readability.
 10. Add visual design elements: colored accent bars, gradient overlays, decorative shapes using CSS.
 
+CRITICAL ARCHITECTURE — READ THIS FIRST:
+Your HTML will be rendered as a TRANSPARENT LAYER on top of a full-bleed 1920x1080 AI-generated background photo.
+The background photo is generated separately from your backgroundImageDescription.
+Your HTML should contain ONLY text elements (headings, paragraphs, lists, decorative CSS shapes/lines).
+There is NO mechanism for inline images in this system. The only visual imagery comes from the background photo behind your HTML.
+
+LAYOUT APPROACH:
+- If the original slide has a split layout (text on one side, image on the other): IGNORE the image side entirely. Make your text content fill the full slide width or position it attractively for a full-bleed photo background. Do NOT create a two-column layout where one column is an empty box.
+- If the original slide has a photo/image area: DO NOT represent it in HTML at all. Describe what that image shows in backgroundImageDescription instead.
+- Every slide should use a full-width or asymmetric text layout designed to sit on top of a background photo.
+
 ABSOLUTE PROHIBITIONS — NEVER include these in the HTML:
 - NEVER include "Salesforce Team", "Your Salesforce Team", "Meet the Team", "Our Team" headings or any team-related content.
 - NEVER include circular headshot photos, profile pictures, avatar bubbles, or any person imagery elements.
 - NEVER include team member names, titles, roles, or contact information in grid/card layouts.
 - NEVER include placeholder text like "Speaker Name", "Speaker Title", "Your Name", "Your Title", "[Name]", or "[Title]". If the original has these placeholders, OMIT them entirely.
-- NEVER include <img> tags of any kind — not for photos, logos, icons, or illustrations. The system adds a full-bleed background photo behind your HTML automatically using the backgroundImageDescription you provide. Your HTML is a transparent overlay on top of that photo.
-- NEVER include gray rectangles, colored placeholder boxes, empty containers, or any div/element that visually represents "where an image would go." There is NO concept of an inline image in this system — the ONLY image is the full-slide background photo.
-- If the original slide has an image/photo area, DO NOT try to recreate it as a box in HTML. Instead, describe that image in backgroundImageDescription and let the background photo system handle it. Arrange your text content to work well with a full-bleed background photo behind it.
+- NEVER include <img> tags of any kind.
+- NEVER create any div, section, or element that acts as an image placeholder, image container, or visual representation of "where a photo goes" — regardless of its color (gray, black, gradient, transparent, or any other color). There are NO inline images in this system.
+- NEVER use a two-column or split layout where one column is empty or contains only a background color/gradient meant to represent an image area.
 - If the original slide's text contains team-related content, SKIP those elements entirely and only render the non-team parts.
 
 ${chapterTransitionPrompt}
@@ -3260,7 +3271,7 @@ IMPORTANT CONTEXT for interpreting user instructions:
   // Build content parts — include thumbnail for visual reference
   const contentParts = [];
   if (slide.thumbnailBase64) {
-    contentParts.push({ text: 'Here is the original slide thumbnail from the reference presentation. Replicate its general layout structure, text positioning, and design approach — but render it as HTML/CSS:' });
+    contentParts.push({ text: 'Here is the original slide thumbnail for reference. Use it to understand the TEXT CONTENT and general text positioning — but DO NOT replicate any image/photo areas as boxes or containers. If the original has an image area, ignore it in your HTML and describe the image in backgroundImageDescription instead. Your HTML should only contain text elements on a transparent layer:' });
     contentParts.push({ inlineData: { mimeType: 'image/png', data: slide.thumbnailBase64 } });
   }
   contentParts.push({ text: systemPrompt });
@@ -3297,15 +3308,18 @@ IMPORTANT CONTEXT for interpreting user instructions:
     }
   }
 
-  // Post-process: strip gray placeholder boxes and <img> tags that the AI may still generate
+  // Post-process: strip placeholder boxes and <img> tags that the AI may still generate
   let cleanHtml = (result.html || '');
   // Remove any <img> tags
   cleanHtml = cleanHtml.replace(/<img\b[^>]*\/?>/gi, '');
-  // Remove divs that are styled as gray placeholder boxes (inline background-color: #ccc, #ddd, #eee, #e5e7eb, #f3f4f6, gray, etc.)
-  cleanHtml = cleanHtml.replace(/<div\b[^>]*style="[^"]*background(?:-color)?:\s*(?:#[cdef][cdef][cdef][cdef]?[cdef]?[cdef]?|#e5e7eb|#f3f4f6|#d1d5db|gray|lightgray|darkgray|silver)[^"]*"[^>]*>(?:\s*(?:Image|Photo|Placeholder|placeholder)[^<]*)?<\/div>/gi, '');
+  // Remove empty divs that are image placeholders — any div whose only content is whitespace, "Image", "Photo", "Placeholder" text, or nothing
+  cleanHtml = cleanHtml.replace(/<div\b[^>]*class="[^"]*(?:image|photo|placeholder|media|visual|hero-image|slide-image|content-image|img)[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
+  // Remove self-closing-style empty divs with suspiciously large dimensions in inline styles (width/height > 300px and no text)
+  cleanHtml = cleanHtml.replace(/<div\b[^>]*style="[^"]*(?:width|height)\s*:\s*(?:[3-9]\d{2}|1\d{3})px[^"]*"[^>]*>\s*<\/div>/gi, '');
 
-  // Also remove CSS classes that look like image placeholders (e.g. .image-placeholder, .photo-area)
   let cleanCss = (result.css || '');
+  // Remove CSS rules for image placeholder classes
+  cleanCss = cleanCss.replace(/\.(?:image|photo|placeholder|media|visual|hero-image|slide-image|content-image|img)[-\w]*\s*\{[^}]*\}/gi, '');
 
   return {
     html: cleanHtml,
