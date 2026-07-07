@@ -142,8 +142,8 @@
     function isCoverSlideByName(slideIndex, slideName) {
       if (slideIndex === 0) return true;
       const name = (slideName || '').toLowerCase();
-      // Only match explicit cover/welcome slides, NOT content slides with "POV" in the name
-      if (name.includes('welcome') || name === 'cover' || name === 'title') return true;
+      // Only match explicit cover/welcome/pov-intro slides, NOT content slides like "POV Themes"
+      if (name.includes('welcome') || name === 'cover' || name === 'title' || name === 'pov intro') return true;
       return false;
     }
 
