@@ -2469,7 +2469,7 @@ app.post('/api/reference-presentations/:id/generate-web-version', async (req, re
 // POST /api/reference-presentations/:id/regenerate-web-slide/:slideIndex — regenerate a single slide
 app.post('/api/reference-presentations/:id/regenerate-web-slide/:slideIndex', async (req, res) => {
   try {
-    const { email, brandData } = req.body;
+    const { email, brandData, userInstructions } = req.body;
     if (!email || !isAdmin(email)) {
       return res.status(403).json({ error: 'Admin access required' });
     }
@@ -2502,7 +2502,7 @@ app.post('/api/reference-presentations/:id/regenerate-web-slide/:slideIndex', as
     res.status(202).json({ success: true, message: 'Slide regeneration started' });
 
     // Regenerate in background
-    regenerateSingleSlideInBackground(refId, slideIndex, annotations, activeBrandData).catch(err => {
+    regenerateSingleSlideInBackground(refId, slideIndex, annotations, activeBrandData, userInstructions || '').catch(err => {
       console.error(`[WebVersion] Single slide regeneration failed:`, err);
     });
   } catch (err) {
@@ -2982,14 +2982,14 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
  * Regenerate a single web slide in the background.
  * Generates HTML + photo for one slide, preserving the rest.
  */
-async function regenerateSingleSlideInBackground(refId, slideIndex, annotations, brandData) {
+async function regenerateSingleSlideInBackground(refId, slideIndex, annotations, brandData, userInstructions = '') {
   try {
     const slide = annotations[slideIndex];
-    console.log(`[WebVersion] Regenerating single slide ${slideIndex + 1}: "${slide.name}"`);
+    console.log(`[WebVersion] Regenerating single slide ${slideIndex + 1}: "${slide.name}"${userInstructions ? ` with instructions: "${userInstructions}"` : ''}`);
 
     // Step 1: Generate HTML/CSS for this slide (with chapter titles for consistency)
     const chapterTitles = extractChapterTitles(annotations);
-    const slideHtmlData = await generateSlideHtml(slide, brandData, slideIndex, annotations.length, chapterTitles);
+    const slideHtmlData = await generateSlideHtml(slide, brandData, slideIndex, annotations.length, chapterTitles, userInstructions);
 
     // Step 2: Get all existing photo descriptions for the style directive
     const existingSlides = await query(
@@ -3129,7 +3129,7 @@ function buildFallbackSlideHtml(slide, brandData, slideIndex, totalSlides) {
  * Use Gemini text model to generate HTML/CSS for a single slide.
  * Returns { html, css, backgroundImageDescription }
  */
-async function generateSlideHtml(slide, brandData, slideIndex, totalSlides, chapterTitles = []) {
+async function generateSlideHtml(slide, brandData, slideIndex, totalSlides, chapterTitles = [], userInstructions = '') {
   const ai = getGenAIClient();
   const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
@@ -3224,7 +3224,10 @@ BACKGROUND IMAGE (REQUIRED for every slide):
 - If the slide is text-only, describe an appropriate professional background that would complement the content.
 - The description should be 2-3 sentences describing a professional photograph, NOT text or graphics.
 
-Return ONLY a JSON object (no markdown fences):
+${userInstructions ? `USER INSTRUCTIONS (IMPORTANT — follow these carefully):
+The user has provided specific instructions for this slide regeneration. Apply them:
+"${userInstructions}"
+` : ''}Return ONLY a JSON object (no markdown fences):
 {
   "html": "<div class='slide-content'>...</div>",
   "css": ".slide-content { ... }",

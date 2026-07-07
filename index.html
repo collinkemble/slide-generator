@@ -3226,9 +3226,16 @@ function renderRefDetailThumbnails(annotations) {
           <input type="text" data-refdetail-idx="${i}" data-refdetail-field="name" value="${esc(slide.name || '')}" placeholder="Slide name..." class="flex-1 px-2 py-1 rounded border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm font-medium text-gray-700" style="max-width: 400px;">
         </div>
         ${hasWebVersion ? `
-          <button id="regen-slide-btn-${i}" onclick="regenerateSingleSlide(${i})" class="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg cursor-pointer hover:bg-gray-100 border border-gray-200" style="color: #0176D3;" title="Regenerate this slide">
-            🔄 Regenerate
-          </button>
+          <div class="flex items-center gap-2">
+            <div id="regen-instructions-wrapper-${i}" style="display:none;" class="flex items-center gap-1.5">
+              <input type="text" id="regen-instructions-${i}" placeholder="Optional: instructions for AI (e.g. make the title bigger, use darker background...)" class="px-2 py-1 rounded border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-xs text-gray-600" style="width: 360px;" onkeydown="if(event.key==='Enter'){regenerateSingleSlide(${i});}" />
+              <button onclick="regenerateSingleSlide(${i})" class="flex-shrink-0 px-2.5 py-1 text-xs font-semibold rounded-lg cursor-pointer border-none text-white" style="background:#0176D3;" title="Start regeneration">Go</button>
+              <button onclick="toggleRegenInstructions(${i},false)" class="flex-shrink-0 px-1.5 py-1 text-xs rounded-lg cursor-pointer hover:bg-gray-100 border border-gray-200 text-gray-400" title="Cancel">✕</button>
+            </div>
+            <button id="regen-slide-btn-${i}" onclick="toggleRegenInstructions(${i},true)" class="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg cursor-pointer hover:bg-gray-100 border border-gray-200" style="color: #0176D3;" title="Regenerate this slide">
+              🔄 Regenerate
+            </button>
+          </div>
         ` : ''}
       </div>
       <!-- Side-by-side comparison -->
@@ -3529,8 +3536,23 @@ async function refreshWebSlidesComparison() {
   renderRefDetailThumbnails(currentRefAnnotations);
 }
 
+function toggleRegenInstructions(slideIndex, show) {
+  const wrapper = document.getElementById(`regen-instructions-wrapper-${slideIndex}`);
+  const btn = document.getElementById(`regen-slide-btn-${slideIndex}`);
+  if (wrapper) wrapper.style.display = show ? 'flex' : 'none';
+  if (btn) btn.style.display = show ? 'none' : '';
+  if (show) {
+    const input = document.getElementById(`regen-instructions-${slideIndex}`);
+    if (input) setTimeout(() => input.focus(), 50);
+  }
+}
+
 async function regenerateSingleSlide(slideIndex) {
   if (!currentRefId) return;
+
+  const userInstructions = document.getElementById(`regen-instructions-${slideIndex}`)?.value?.trim() || '';
+  // Hide the instructions input, show the button (in disabled state)
+  toggleRegenInstructions(slideIndex, false);
 
   const btn = document.getElementById(`regen-slide-btn-${slideIndex}`);
   const previewEl = document.getElementById(`web-slide-preview-${slideIndex}`);
@@ -3561,7 +3583,7 @@ async function regenerateSingleSlide(slideIndex) {
     const resp = await fetch(`/api/reference-presentations/${currentRefId}/regenerate-web-slide/${slideIndex}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, brandData: refDetailBrandKit || {} })
+      body: JSON.stringify({ email, brandData: refDetailBrandKit || {}, userInstructions })
     });
     if (!resp.ok) {
       const errData = await resp.json().catch(() => ({}));
