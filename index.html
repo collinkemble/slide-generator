@@ -3176,10 +3176,12 @@ function buildSlidePreviewSrcdoc(webSlide, slideIndex) {
 
   // Build logo lockup HTML — title slide gets big centered, others get upper-right
   const isPovIntro = (slideName || '').toLowerCase() === 'pov intro';
+  const isIntroSlide = slideIndex === 0;
   let logoHtml;
   if (isTitleSlide) {
     // POV Intro: logos positioned higher (30%) to sit above the heading
-    const logoTop = isPovIntro ? '30%' : '50%';
+    // Intro slide (index 0): logos at 35% so they sit above the bottom heading
+    const logoTop = isPovIntro ? '30%' : isIntroSlide ? '35%' : '50%';
     logoHtml = `<div style="position:absolute;top:${logoTop};left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:80px;pointer-events:none;">`;
     if (brandLogo) {
       logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:200px;width:auto;object-fit:contain;">`;
