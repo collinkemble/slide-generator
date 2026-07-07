@@ -139,17 +139,24 @@
      * slideIndex === 0: Title slide — large centered logo lockup
      * All other slides: Small upper-right logo lockup
      */
+    function isCoverSlideByName(slideIndex, slideName) {
+      const name = (slideName || '').toLowerCase();
+      return slideIndex === 0 || name.includes('pov') || name.includes('point of view') ||
+        name.includes('welcome') || name.includes('cover') ||
+        (name.includes('intro') && !name.includes('demo chapter') && !name.includes('chapter intro') && slideIndex <= 2);
+    }
+
     function buildSlideSrcdoc(slide, slideIndex) {
       const bgUrl = slide.backgroundImageUrl || '';
       const html = slide.html || '';
       const css = slide.css || '';
-      const isTitleSlide = slideIndex === 0;
+      const isTitleSlide = isCoverSlideByName(slideIndex, slide.slideName || '');
 
       // Logo lockup HTML — different treatment for title slide
       let logoHtml;
       if (isTitleSlide) {
         // TITLE SLIDE: Extra-large centered logo lockup (~3x normal)
-        logoHtml = '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:40px;pointer-events:none;">';
+        logoHtml = '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:80px;pointer-events:none;">';
         if (brandLogoUrl) {
           logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:200px;width:auto;object-fit:contain;">`;
           logoHtml += '<div style="width:3px;height:160px;background:rgba(255,255,255,0.6);"></div>';

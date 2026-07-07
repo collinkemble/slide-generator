@@ -2524,18 +2524,30 @@ app.get('/api/reference-presentations/:id/web-slides', async (req, res) => {
       [req.params.id]
     );
 
-    // Also return brand data for preview rendering
-    const refs = await query('SELECT web_version_brand_data FROM reference_presentations WHERE id = ?', [req.params.id]);
+    // Also return brand data and annotations for preview rendering
+    const refs = await query('SELECT web_version_brand_data, slide_annotations FROM reference_presentations WHERE id = ?', [req.params.id]);
     let brandData = {};
+    let annotations = [];
     if (refs.length > 0) {
       try {
         brandData = typeof refs[0].web_version_brand_data === 'string'
           ? JSON.parse(refs[0].web_version_brand_data)
           : (refs[0].web_version_brand_data || {});
       } catch (e) { /* ignore */ }
+      try {
+        annotations = typeof refs[0].slide_annotations === 'string'
+          ? JSON.parse(refs[0].slide_annotations)
+          : (refs[0].slide_annotations || []);
+      } catch (e) { /* ignore */ }
     }
 
-    res.json({ slides, brandLogoUrl: brandData.brandLogoUrl || '' });
+    // Attach slide names to each slide for logo placement detection
+    const slidesWithNames = slides.map(s => ({
+      ...s,
+      slide_name: (annotations[s.slide_index] || {}).name || ''
+    }));
+
+    res.json({ slides: slidesWithNames, brandLogoUrl: brandData.brandLogoUrl || '' });
   } catch (err) {
     console.error('Failed to get web slides:', err);
     res.status(500).json({ error: 'Failed to get web slides' });
@@ -2572,7 +2584,7 @@ app.get('/api/reference-presentations/:id/status', async (req, res) => {
 app.get('/api/present-web/:refId/data', async (req, res) => {
   try {
     const refId = parseInt(req.params.refId);
-    const refs = await query('SELECT id, name, web_version_status, web_version_brand_data FROM reference_presentations WHERE id = ?', [refId]);
+    const refs = await query('SELECT id, name, web_version_status, web_version_brand_data, slide_annotations FROM reference_presentations WHERE id = ?', [refId]);
     if (refs.length === 0) return res.status(404).json({ error: 'Reference not found' });
     if (refs[0].web_version_status !== 'completed') return res.status(400).json({ error: 'Web version not generated yet' });
 
@@ -2589,16 +2601,28 @@ app.get('/api/present-web/:refId/data', async (req, res) => {
         : (refs[0].web_version_brand_data || {});
     } catch (e) { /* ignore */ }
 
+    // Parse annotations for slide names (used for logo placement detection)
+    let annotations = [];
+    try {
+      annotations = typeof refs[0].slide_annotations === 'string'
+        ? JSON.parse(refs[0].slide_annotations)
+        : (refs[0].slide_annotations || []);
+    } catch (e) { /* ignore */ }
+
     res.json({
       name: refs[0].name,
       brandLogoUrl: brandData.brandLogoUrl || '',
       brandName: brandData.brandName || '',
-      slides: slides.map(s => ({
-        slideIndex: s.slide_index,
-        html: s.html_content,
-        css: s.css_content,
-        backgroundImageUrl: s.background_image_url
-      }))
+      slides: slides.map(s => {
+        const ann = annotations[s.slide_index] || {};
+        return {
+          slideIndex: s.slide_index,
+          html: s.html_content,
+          css: s.css_content,
+          backgroundImageUrl: s.background_image_url,
+          slideName: ann.name || ''
+        };
+      })
     });
   } catch (err) {
     console.error('Failed to get present-web data:', err);
@@ -2828,6 +2852,17 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
 
     let sharedTransitionBgUrl = null; // reused for all transition slides
 
+    // Track duplicate slides (e.g., Thank You at positions #2 and #18)
+    // Key: normalized slide name, Value: { html, css, bgUrl, bgPrompt }
+    const duplicateSlideCache = {};
+
+    function getSlideFingerprint(annotation) {
+      const name = (annotation.name || '').toLowerCase().trim();
+      // Normalize names for matching: "Thank You" should match regardless of position
+      if (name.includes('thank you') || name.includes('thankyou')) return 'thank-you';
+      return null; // Only cache specific known duplicates
+    }
+
     for (let i = 0; i < slideHtmlResults.length; i++) {
       const { index, data: slideHtmlData, error } = slideHtmlResults[i];
 
@@ -2838,6 +2873,21 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
 
       const slideAnnotation = annotations[index] || {};
       const isTransition = isTransitionSlide(slideAnnotation) || slideHtmlData.isTransitionSlide;
+      const fingerprint = getSlideFingerprint(slideAnnotation);
+
+      // Check if this is a duplicate of a previously generated slide
+      if (fingerprint && duplicateSlideCache[fingerprint]) {
+        const cached = duplicateSlideCache[fingerprint];
+        console.log(`[WebVersion] Slide ${index + 1} is duplicate of cached "${fingerprint}" — reusing HTML + photo`);
+        await query(
+          `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE html_content = VALUES(html_content), css_content = VALUES(css_content), background_image_url = VALUES(background_image_url), background_image_prompt = VALUES(background_image_prompt), updated_at = NOW()`,
+          [refId, index, cached.html, cached.css, cached.bgUrl, cached.bgPrompt]
+        );
+        console.log(`[WebVersion] Slide ${index + 1} saved (duplicate) successfully`);
+        continue;
+      }
 
       console.log(`[WebVersion] Photo pass — slide ${index + 1}/${annotations.length}${isTransition ? ' (transition — shared bg)' : ''}`);
 
@@ -2849,29 +2899,36 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
         backgroundImageUrl = sharedTransitionBgUrl;
         console.log(`[WebVersion] Reusing shared transition background for slide ${index + 1}`);
       } else if (slideHtmlData.backgroundImageDescription) {
-        try {
-          const photoPrompt = buildPhotoOnlyPrompt(slideHtmlData.backgroundImageDescription, brandData, photoStyleDirective);
-          const { imageBase64 } = await generateSlideImage(photoPrompt, null);
+        // Retry photo generation up to 2 times
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            const photoPrompt = buildPhotoOnlyPrompt(slideHtmlData.backgroundImageDescription, brandData, photoStyleDirective);
+            const { imageBase64 } = await generateSlideImage(photoPrompt, null);
 
-          // Resize to 1920x1080 with sharp (photo-only, no logo compositing)
-          const rawBuffer = Buffer.from(imageBase64, 'base64');
-          const processedBuffer = await sharp(rawBuffer)
-            .resize(1920, 1080, { fit: 'cover', position: 'centre', kernel: 'lanczos3' })
-            .jpeg({ quality: 85 })
-            .toBuffer();
+            // Resize to 1920x1080 with sharp (photo-only, no logo compositing)
+            const rawBuffer = Buffer.from(imageBase64, 'base64');
+            const processedBuffer = await sharp(rawBuffer)
+              .resize(1920, 1080, { fit: 'cover', position: 'centre', kernel: 'lanczos3' })
+              .jpeg({ quality: 85 })
+              .toBuffer();
 
-          const randomId = crypto.randomBytes(8).toString('hex');
-          const key = `web-slides/${refId}/${index}-${randomId}.jpg`;
-          backgroundImageUrl = await uploadToR2(processedBuffer, key, 'image/jpeg');
-          console.log(`[WebVersion] Photo uploaded for slide ${index + 1}: ${backgroundImageUrl}`);
+            const randomId = crypto.randomBytes(8).toString('hex');
+            const key = `web-slides/${refId}/${index}-${randomId}.jpg`;
+            backgroundImageUrl = await uploadToR2(processedBuffer, key, 'image/jpeg');
+            console.log(`[WebVersion] Photo uploaded for slide ${index + 1}: ${backgroundImageUrl}`);
 
-          // If this is the first transition slide, save its URL for reuse
-          if (isTransition && !sharedTransitionBgUrl) {
-            sharedTransitionBgUrl = backgroundImageUrl;
-            console.log(`[WebVersion] Saved shared transition background: ${backgroundImageUrl}`);
+            // If this is the first transition slide, save its URL for reuse
+            if (isTransition && !sharedTransitionBgUrl) {
+              sharedTransitionBgUrl = backgroundImageUrl;
+              console.log(`[WebVersion] Saved shared transition background: ${backgroundImageUrl}`);
+            }
+            break; // success
+          } catch (imgErr) {
+            console.warn(`[WebVersion] Photo generation attempt ${attempt} failed for slide ${index + 1}:`, imgErr.message);
+            if (attempt < 2) {
+              await new Promise(resolve => setTimeout(resolve, 3000));
+            }
           }
-        } catch (imgErr) {
-          console.warn(`[WebVersion] Photo generation failed for slide ${index + 1}:`, imgErr.message);
         }
       }
 
@@ -2884,6 +2941,17 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
       );
 
       console.log(`[WebVersion] Slide ${index + 1} saved successfully`);
+
+      // Cache this slide if it has a fingerprint (for duplicate detection)
+      if (fingerprint && !duplicateSlideCache[fingerprint]) {
+        duplicateSlideCache[fingerprint] = {
+          html: slideHtmlData.html,
+          css: slideHtmlData.css,
+          bgUrl: backgroundImageUrl,
+          bgPrompt: slideHtmlData.backgroundImageDescription || ''
+        };
+        console.log(`[WebVersion] Cached slide "${fingerprint}" for duplicate reuse`);
+      }
 
       // Rate limit between photo generation calls (skip if we reused a cached bg)
       if (i < slideHtmlResults.length - 1 && !(isTransition && backgroundImageUrl === sharedTransitionBgUrl && sharedTransitionBgUrl)) {
@@ -3069,59 +3137,28 @@ async function generateSlideHtml(slide, brandData, slideIndex, totalSlides, chap
   const isDemoChapterIntro = slideName.includes('demo chapter') || slideName.includes('chapter intro') || slideDesc.includes('demo chapter') || slideDesc.includes('chapter intro');
   const isDemoChapterClosing = slideName.includes('chapter closing') || slideDesc.includes('chapter closing') || slideName.includes('demo closing');
   const isTransitionSlide = isDemoChapterIntro || isDemoChapterClosing;
+  // Detect cover/title-like slides that should get centered logos (POV intro, welcome, title, etc.)
+  const isCoverSlide = isFirst || slideName.includes('pov') || slideName.includes('point of view') ||
+    (slideName.includes('intro') && !isDemoChapterIntro && slideIndex <= 2) ||
+    slideName.includes('welcome') || slideName.includes('cover');
+  // Flag for the logo placement system — this gets returned with the result
+  const needsCenteredLogos = isCoverSlide;
 
-  // Build chapter transition HTML if this is a transition slide with known chapters
+  // Build chapter transition styling rules if this is a transition slide
   let chapterTransitionPrompt = '';
-  if (isTransitionSlide && chapterTitles.length > 0) {
-    // Determine which chapter is active for this slide based on chapterTitleIndex
-    // The chapterTitles array maps 1:1 to the Demo Chapter Intro slides in order.
-    // We figure out which intro slide this is by its chapterTitleIndex (passed via the title text).
-    let activeChapterIndex = 0;
-    const slideNameClean = (slide.name || '').replace(/demo\s+chapter\s+intro\s*/i, '').replace(/chapter\s+intro\s*/i, '').replace(/chapter\s+closing\s*/i, '').replace(/demo\s+closing\s*/i, '').replace(/^[:—–-]\s*/, '').trim().toLowerCase();
-    for (let ci = 0; ci < chapterTitles.length; ci++) {
-      if (chapterTitles[ci].toLowerCase().includes(slideNameClean) || slideNameClean.includes(chapterTitles[ci].toLowerCase())) {
-        activeChapterIndex = ci;
-        break;
-      }
-    }
-    // Also check text content for a match
-    const textLower = (slide.textContent || '').toLowerCase();
-    for (let ci = 0; ci < chapterTitles.length; ci++) {
-      if (textLower.includes(chapterTitles[ci].toLowerCase())) {
-        // If this chapter title appears highlighted or first in the text, it's likely active
-        const pos = textLower.indexOf(chapterTitles[ci].toLowerCase());
-        if (pos < 100) { activeChapterIndex = ci; break; }
-      }
-    }
-
-    const chapterHtml = chapterTitles.map((t, ci) =>
-      `  <div class="chapter-item${ci === activeChapterIndex ? ' active' : ''}">${t}</div>`
-    ).join('\n');
-
+  if (isTransitionSlide) {
     chapterTransitionPrompt = `DEMO CHAPTER TRANSITION SLIDE RULES:
-You MUST render the following chapter titles as a vertical list, centered on the slide.
-Use this EXACT HTML structure for the chapter titles (copy it verbatim into your html output):
-
-<div class="chapter-list">
-${chapterHtml}
-</div>
-
-And use this EXACT CSS for the chapter list (include it verbatim in your css output):
-.chapter-list { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 32px; position: absolute; inset: 0; z-index: 5; padding: 120px 200px; }
-.chapter-item { font-size: 48px; font-weight: 600; color: rgba(255,255,255,0.35); text-shadow: 0 2px 10px rgba(0,0,0,0.3); letter-spacing: 0.5px; }
-.chapter-item.active { color: ${brandColorPrimary}; font-weight: 700; text-shadow: 0 2px 15px rgba(0,0,0,0.5); }
-
-Do NOT modify the chapter title text. Do NOT add numbers or prefixes. Do NOT change the font sizes or layout.
-The ONLY difference between active and inactive chapters is the color.
-Include a semi-transparent dark overlay behind the chapter list for readability.
-Do NOT add any other content to this slide besides the chapter list and the overlay.`;
-  } else if (isTransitionSlide) {
-    chapterTransitionPrompt = `DEMO CHAPTER TRANSITION SLIDE RULES:
-- If the slide shows chapter titles, render ALL chapter titles at LARGE size (48px font).
-- All chapter titles should be the EXACT SAME SIZE and STYLING.
-- The CURRENT/ACTIVE chapter should be in the brand's primary color (${brandColorPrimary}) — the other chapters should be in a muted/dimmed color (e.g., rgba(255,255,255,0.35)).
-- Center the chapter titles vertically on the slide with generous spacing between them.
-- Keep the design minimal — just the chapter titles, no other decorative elements besides a subtle overlay.`;
+- This is a chapter transition slide. Replicate the LAYOUT and TEXT from the original slide thumbnail as closely as possible.
+- Render the chapter/section titles exactly as they appear on the original slide.
+- The CURRENT/ACTIVE chapter should be highlighted in the brand's primary color (${brandColorPrimary}).
+- Inactive chapters should be in a muted/dimmed color (rgba(255,255,255,0.35)).
+- ALL chapter titles must use the EXACT SAME font-size (48px), font-weight (600), and styling.
+- Use these CSS class names for consistency across all transition slides:
+  .chapter-list { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 32px; position: absolute; inset: 0; z-index: 5; padding: 120px 200px; }
+  .chapter-item { font-size: 48px; font-weight: 600; color: rgba(255,255,255,0.35); text-shadow: 0 2px 10px rgba(0,0,0,0.3); letter-spacing: 0.5px; }
+  .chapter-item.active { color: ${brandColorPrimary}; font-weight: 700; text-shadow: 0 2px 15px rgba(0,0,0,0.5); }
+- Include a semi-transparent dark overlay behind the content for readability.
+- Keep the design minimal and clean.`;
   }
 
   const systemPrompt = `You are an expert web presentation designer. Generate HTML and CSS for a SINGLE presentation slide that will be displayed at 1920x1080 pixels.
@@ -3132,7 +3169,7 @@ SLIDE INFORMATION:
 - Description: "${slide.description || ''}"
 - Text Content: "${slide.textContent || ''}"
 - Speaker Notes: "${slide.speakerNotes || ''}"
-${isFirst ? '- This is the FIRST slide (title/cover slide). The logo lockup will be rendered LARGE and CENTERED on this slide by the system — leave the center area open for it. Do NOT include any logo elements in the HTML.' : ''}
+${isCoverSlide ? '- This is a COVER/TITLE slide. The logo lockup will be rendered LARGE and CENTERED on this slide by the system — leave the center area open for it. Do NOT include any logo elements in the HTML. Place the title/subtitle BELOW center or at the BOTTOM of the slide.' : ''}
 ${isLast ? '- This is the LAST slide (closing/thank you slide). Show a large "Thank You" heading and any relevant subtitle or contact info (but NOT team member photos, NOT team grids, NOT headshot bubbles). Keep it simple and elegant.' : ''}
 ${isDemoChapterIntro ? '- This is a DEMO CHAPTER INTRO slide — a transition slide between sections.' : ''}
 ${isDemoChapterClosing ? '- This is a DEMO CHAPTER CLOSING slide — a transition slide at the end of a section.' : ''}
@@ -3150,7 +3187,7 @@ CRITICAL RULES:
 5. Typography: Use large, readable font sizes (titles: 48-72px, headings: 32-48px, body: 24-32px, bullets: 22-28px).
 6. Copy the EXACT text content from the slide — do not rephrase, summarize, or add text.
 7. If the text has bullet points (•), render them as a styled list.
-${isFirst ? '8. This is the TITLE slide — leave the CENTER of the slide open for the large logo lockup. Place the title/subtitle BELOW center or at the BOTTOM of the slide.' : '8. Keep the upper-right corner (roughly 300x60px area) empty for the logo lockup that will be added programmatically.'}
+${isCoverSlide ? '8. This is a COVER/TITLE slide — leave the CENTER of the slide open for the large logo lockup. Place the title/subtitle BELOW center or at the BOTTOM of the slide.' : '8. Keep the upper-right corner (roughly 300x60px area) empty for the logo lockup that will be added programmatically.'}
 9. Text should have good contrast — use white text on dark/photo backgrounds with text-shadow for readability.
 10. Add visual design elements: colored accent bars, gradient overlays, decorative shapes using CSS.
 
@@ -3158,6 +3195,9 @@ ABSOLUTE PROHIBITIONS — NEVER include these in the HTML:
 - NEVER include "Salesforce Team", "Your Salesforce Team", "Meet the Team", "Our Team" headings or any team-related content.
 - NEVER include circular headshot photos, profile pictures, avatar bubbles, or any person imagery elements.
 - NEVER include team member names, titles, roles, or contact information in grid/card layouts.
+- NEVER include placeholder text like "Speaker Name", "Speaker Title", "Your Name", "Your Title", "[Name]", or "[Title]". If the original has these placeholders, OMIT them entirely.
+- NEVER include <img> tags of any kind. All visual elements (backgrounds, photos) are handled separately by the system. If you see an image in the original slide, describe it in backgroundImageDescription instead.
+- NEVER include gray placeholder rectangles, empty boxes, or mock image containers. Use CSS decorative elements (gradients, shapes, borders) instead.
 - If the original slide's text contains team-related content, SKIP those elements entirely and only render the non-team parts.
 
 ${chapterTransitionPrompt}
@@ -3220,7 +3260,8 @@ Return ONLY a JSON object (no markdown fences):
     html: result.html || '',
     css: result.css || '',
     backgroundImageDescription: result.backgroundImageDescription || '',
-    isTransitionSlide: isTransitionSlide || result.isTransitionSlide || false
+    isTransitionSlide: isTransitionSlide || result.isTransitionSlide || false,
+    needsCenteredLogos: needsCenteredLogos || false
   };
 }
 
