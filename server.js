@@ -1129,12 +1129,36 @@ async function generateUserBackgroundsInBackground(presentationId, brandData) {
       return;
     }
 
-    // 2. Collect photo descriptions for style directive
+    // 2. Recontextualize background prompts for the target brand
+    //    The template bg_image_prompts were written for the reference brand — rewrite them
+    //    so photos match the target brand's industry and identity.
+    const brandName = (brandData && brandData.brandName) || '';
+    const brandDescription = (brandData && brandData.brandDescription) || '';
+    if (brandName) {
+      try {
+        console.log(`[WebBG] Recontextualizing ${slides.length} background prompts for "${brandName}"...`);
+        const recontextualized = await recontextualizeBackgroundPrompts(slides, brandData);
+        // Apply recontextualized prompts back to the slides array
+        for (const slide of slides) {
+          if (recontextualized[slide.slide_index] !== undefined) {
+            slide.bg_image_prompt = recontextualized[slide.slide_index];
+            // Also update the DB so the prompt is saved for future single-slide regeneration
+            await query('UPDATE presentation_slides SET bg_image_prompt = ? WHERE presentation_id = ? AND slide_index = ?',
+              [slide.bg_image_prompt, presentationId, slide.slide_index]);
+          }
+        }
+        console.log(`[WebBG] Recontextualized prompts for "${brandName}" successfully`);
+      } catch (err) {
+        console.warn('[WebBG] Failed to recontextualize prompts, using originals:', err.message);
+      }
+    }
+
+    // 3. Collect photo descriptions for style directive
     const photoDescriptions = slides
       .filter(s => s.bg_image_prompt && s.bg_image_prompt.trim())
       .map(s => s.bg_image_prompt);
 
-    // 3. Generate unified photo style directive
+    // 4. Generate unified photo style directive
     let photoStyleDirective = '';
     if (photoDescriptions.length >= 2) {
       try {
@@ -1145,7 +1169,7 @@ async function generateUserBackgroundsInBackground(presentationId, brandData) {
       }
     }
 
-    // 4. Generate background images for each slide
+    // 5. Generate background images for each slide
     let sharedTransitionBgUrl = null;
     const duplicateCache = {}; // Cache for duplicate slides (e.g., "Thank You")
 
@@ -1211,7 +1235,7 @@ async function generateUserBackgroundsInBackground(presentationId, brandData) {
       }
     }
 
-    // 5. Mark as completed
+    // 6. Mark as completed
     await query('UPDATE presentations SET status = ? WHERE id = ?', ['completed', presentationId]);
     console.log(`[WebBG] Background generation completed for presentation ${presentationId}`);
   } catch (err) {
@@ -3257,6 +3281,94 @@ app.get('/api/present-web/item/:presId/data', async (req, res) => {
 });
 
 /**
+ * Recontextualize background image prompts from the master template for a target brand.
+ * The template's bg_image_prompts were written for the reference brand (e.g., a running shoe company).
+ * This function rewrites them so photos match the target brand's industry and identity.
+ * Returns an object mapping slide_index → rewritten prompt.
+ */
+async function recontextualizeBackgroundPrompts(slides, brandData) {
+  const ai = getGenAIClient();
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+
+  const brandName = brandData.brandName || brandData.brand || '';
+  const brandDescription = brandData.brandDescription || '';
+  const brandTone = brandData.brandTone || '';
+  const brandVisualStyle = brandData.brandVisualStyle || '';
+  const brandColorPrimary = brandData.brandColorPrimary || '';
+  const brandColorSecondary = brandData.brandColorSecondary || '';
+
+  // Build the slide list for the prompt
+  const slideEntries = slides
+    .filter(s => s.bg_image_prompt && s.bg_image_prompt.trim())
+    .map(s => ({
+      slideIndex: s.slide_index,
+      slideName: s.slide_name || '',
+      originalPrompt: s.bg_image_prompt
+    }));
+
+  if (slideEntries.length === 0) return {};
+
+  const prompt = `You are a creative director adapting a presentation template for a new brand.
+
+TARGET BRAND:
+- Name: "${brandName}"
+${brandDescription ? `- Description: ${brandDescription}` : ''}
+${brandTone ? `- Tone: ${brandTone}` : ''}
+${brandVisualStyle ? `- Visual Style: ${brandVisualStyle}` : ''}
+${brandColorPrimary ? `- Primary Color: ${brandColorPrimary}` : ''}
+${brandColorSecondary ? `- Secondary Color: ${brandColorSecondary}` : ''}
+
+The following background image descriptions were written for a DIFFERENT brand/company. You need to REWRITE each one so the photos are relevant to "${brandName}" and its industry/products.
+
+RULES:
+1. Keep the same SLIDE PURPOSE (e.g., if the original is for a "cover" slide, keep it as a cover-worthy image)
+2. Keep a similar COMPOSITION and MOOD (e.g., if original uses "close-up product shot", keep it as a close-up but of ${brandName}'s products)
+3. COMPLETELY REPLACE any product/industry references with ${brandName}'s actual products, services, or industry
+4. Keep the "no text, no logos" instructions — these are background photos only
+5. Keep descriptions concise (2-4 sentences each)
+6. Make the photos feel authentic to ${brandName}'s brand identity and industry
+
+SLIDES TO REWRITE:
+${slideEntries.map(s => `[Slide ${s.slideIndex}] "${s.slideName}": ${s.originalPrompt}`).join('\n\n')}
+
+Return ONLY valid JSON — an array of objects with "slideIndex" (number) and "prompt" (string).
+Example: [{"slideIndex": 0, "prompt": "A luxurious close-up of..."}, {"slideIndex": 1, "prompt": "..."}]
+No markdown, no code fences, no explanation — just the JSON array.`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: { temperature: 0.7, maxOutputTokens: 4096 },
+    });
+
+    const parts = response.candidates?.[0]?.content?.parts || [];
+    let text = parts
+      .filter(p => p.text !== undefined && !p.thought)
+      .map(p => p.text)
+      .join('\n')
+      .trim();
+
+    // Strip markdown code fences if present
+    text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+    const parsed = JSON.parse(text);
+    const result = {};
+    for (const item of parsed) {
+      if (typeof item.slideIndex === 'number' && typeof item.prompt === 'string') {
+        result[item.slideIndex] = item.prompt;
+      }
+    }
+
+    console.log(`[WebBG] Recontextualized ${Object.keys(result).length} prompts for "${brandName}"`);
+    return result;
+  } catch (err) {
+    console.error('[WebBG] Failed to recontextualize prompts:', err.message);
+    throw err;
+  }
+}
+
+/**
  * Build a prompt to generate a PHOTO-ONLY background image.
  * No text, no logos, no typography — just a photograph.
  */
@@ -3287,7 +3399,13 @@ You MUST follow this style directive precisely so this photo looks like it belon
   prompt += `\n\nPHOTO DESCRIPTION:\n${description}`;
 
   if (brandName) {
-    prompt += `\n\nBRAND CONTEXT: This is for "${brandName}". The photo should evoke the brand's visual identity and industry.`;
+    const brandDescription = brandData.brandDescription || '';
+    const brandTone = brandData.brandTone || '';
+    prompt += `\n\nBRAND CONTEXT (CRITICAL — the photo MUST reflect this brand):
+- Brand: "${brandName}"`;
+    if (brandDescription) prompt += `\n- About: ${brandDescription}`;
+    if (brandTone) prompt += `\n- Tone: ${brandTone}`;
+    prompt += `\nThe photo MUST be relevant to "${brandName}" and its industry/products. Do NOT show products or imagery from other industries.`;
   }
 
   if (brandColors.length > 0) {
