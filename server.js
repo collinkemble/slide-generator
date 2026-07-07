@@ -1189,7 +1189,7 @@ async function generateUserBackgroundsInBackground(presentationId, brandData) {
           // Upload to R2
           const hash = crypto.createHash('md5').update(resized).digest('hex').substring(0, 14);
           const r2Key = `user-slides/${presentationId}/${slide.slide_index}-${hash}.png`;
-          const publicUrl = await uploadToR2(r2Key, resized, 'image/png');
+          const publicUrl = await uploadToR2(resized, r2Key, 'image/png');
 
           // Update database
           await query('UPDATE presentation_slides SET bg_image_url = ? WHERE presentation_id = ? AND slide_index = ?',
@@ -1571,7 +1571,7 @@ app.post('/api/presentations/:id/web-slides/:slideIndex/upload-image', memUpload
     const r2Key = type === 'icon'
       ? `user-slide-icons/${req.params.id}/${slideIndex}-${hash}.png`
       : `user-slides/${req.params.id}/${slideIndex}-${hash}.png`;
-    const publicUrl = await uploadToR2(r2Key, processed, 'image/png');
+    const publicUrl = await uploadToR2(processed, r2Key, 'image/png');
 
     if (type !== 'icon') {
       await query('UPDATE presentation_slides SET bg_image_url = ? WHERE presentation_id = ? AND slide_index = ?',
@@ -1617,7 +1617,7 @@ app.post('/api/presentations/:id/web-slides/:slideIndex/regenerate-background', 
           const resized = await sharp(imageBuffer).resize(1920, 1080, { fit: 'cover', position: 'center' }).png().toBuffer();
           const hash = crypto.createHash('md5').update(resized).digest('hex').substring(0, 14);
           const r2Key = `user-slides/${req.params.id}/${slideIndex}-${hash}.png`;
-          const publicUrl = await uploadToR2(r2Key, resized, 'image/png');
+          const publicUrl = await uploadToR2(resized, r2Key, 'image/png');
           await query('UPDATE presentation_slides SET bg_image_url = ?, updated_at = NOW() WHERE presentation_id = ? AND slide_index = ?',
             [publicUrl, req.params.id, slideIndex]);
           console.log(`[WebBG] Regenerated background for pres ${req.params.id} slide ${slideIndex}`);
