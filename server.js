@@ -3308,18 +3308,34 @@ IMPORTANT CONTEXT for interpreting user instructions:
     }
   }
 
-  // Post-process: strip placeholder boxes and <img> tags that the AI may still generate
+  // Post-process: aggressively strip placeholder boxes and <img> tags that the AI may still generate
   let cleanHtml = (result.html || '');
   // Remove any <img> tags
   cleanHtml = cleanHtml.replace(/<img\b[^>]*\/?>/gi, '');
-  // Remove empty divs that are image placeholders — any div whose only content is whitespace, "Image", "Photo", "Placeholder" text, or nothing
-  cleanHtml = cleanHtml.replace(/<div\b[^>]*class="[^"]*(?:image|photo|placeholder|media|visual|hero-image|slide-image|content-image|img)[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
-  // Remove self-closing-style empty divs with suspiciously large dimensions in inline styles (width/height > 300px and no text)
-  cleanHtml = cleanHtml.replace(/<div\b[^>]*style="[^"]*(?:width|height)\s*:\s*(?:[3-9]\d{2}|1\d{3})px[^"]*"[^>]*>\s*<\/div>/gi, '');
+
+  // Strategy: Parse out any element (div, section, figure, aside, span) that looks like an image placeholder.
+  // These are elements that have image/photo/placeholder/visual/hero class names OR
+  // have no meaningful text content (just whitespace) and have large background styling.
+
+  // 1. Remove elements with image-related class names (any tag type)
+  cleanHtml = cleanHtml.replace(/<(?:div|section|figure|aside|span)\b[^>]*class="[^"]*\b(?:image|photo|placeholder|media|visual|hero-image|slide-image|content-image|img-container|img-wrapper|image-area|photo-area|image-section|visual-area|banner|feature-image|bg-image|thumbnail|picture)\b[^"]*"[^>]*>[\s\S]*?<\/(?:div|section|figure|aside|span)>/gi, '');
+
+  // 2. Remove empty divs with large inline dimensions (width or height > 200px and no text)
+  cleanHtml = cleanHtml.replace(/<div\b[^>]*style="[^"]*(?:width|height)\s*:\s*(?:[2-9]\d{2}|1\d{3})px[^"]*"[^>]*>\s*<\/div>/gi, '');
+
+  // 3. Remove divs with background-color or background (not background-image from user CSS) that contain no text
+  // This catches the gray/black gradient boxes the AI keeps generating
+  cleanHtml = cleanHtml.replace(/<div\b[^>]*style="[^"]*background(?:-color)?\s*:[^"]*"[^>]*>\s*<\/div>/gi, '');
+
+  // 4. Remove any element whose class contains "box" or "container" and has no text content inside
+  cleanHtml = cleanHtml.replace(/<div\b[^>]*class="[^"]*\b(?:image-box|photo-box|media-box|visual-box|img-box|content-box|feature-box)\b[^"]*"[^>]*>[\s\S]*?<\/div>/gi, '');
+
+  // 5. Remove figure elements entirely (these are almost always image containers)
+  cleanHtml = cleanHtml.replace(/<figure\b[^>]*>[\s\S]*?<\/figure>/gi, '');
 
   let cleanCss = (result.css || '');
-  // Remove CSS rules for image placeholder classes
-  cleanCss = cleanCss.replace(/\.(?:image|photo|placeholder|media|visual|hero-image|slide-image|content-image|img)[-\w]*\s*\{[^}]*\}/gi, '');
+  // Remove CSS rules for image placeholder classes — broader matching
+  cleanCss = cleanCss.replace(/\.(?:image|photo|placeholder|media|visual|hero-image|slide-image|content-image|img|banner|feature-image|bg-image|thumbnail|picture|image-area|photo-area|image-section|visual-area|image-box|photo-box|media-box)[-\w]*\s*\{[^}]*\}/gi, '');
 
   return {
     html: cleanHtml,
