@@ -3442,7 +3442,7 @@ function extractSlideFields(htmlString, slideType) {
     }
     case 'demo-chapter-closing': {
       const chapterTitleBox = tmp.querySelector('.chapter-title-box');
-      // BVS Stats — check both naming conventions
+      // Business Value Stats — check both naming conventions
       const statItems = tmp.querySelectorAll('.stat-item, .metric-block');
       const bvsStats = Array.from(statItems).map(item => ({
         value: (item.querySelector('.stat-percentage, .metric-value') || {}).textContent || '',
@@ -3566,7 +3566,7 @@ function reconstructSlideHtml(originalHtml, slideType, newFields) {
       const titleBox = tmp.querySelector('.chapter-title-box');
       if (titleBox) titleBox.textContent = newFields.chapterTitle || '';
 
-      // BVS Stats — rebuild the stats container
+      // Business Value Stats — rebuild the stats container
       const statsContainer = tmp.querySelector('.stats-container, .metrics-row');
       if (statsContainer && newFields.bvsStats) {
         const isMetrics = statsContainer.classList.contains('metrics-row');
@@ -3750,20 +3750,22 @@ function buildSlideEditorHtml(slideIndex, slideType, fields, webSlide) {
     fieldsHtml += `<label class="${labelClass}" style="margin-top:0">Chapter Title</label>`;
     fieldsHtml += `<input type="text" id="se-chapter-title-${slideIndex}" class="${inputClass}" value="${esc(fields.chapterTitle || '')}" placeholder="e.g. CHAPTER 1: AI POWERED CX">`;
 
-    // BVS Stats
-    fieldsHtml += `<div class="flex items-center justify-between mt-4"><span class="text-xs font-bold text-gray-500 uppercase">BVS Stats</span>`;
-    fieldsHtml += `<button class="${btnSmClass}" onclick="addBvsStatRow(${slideIndex})" id="se-add-bvs-${slideIndex}">+ Add Stat</button></div>`;
+    // Business Value Stats (max 2)
+    const bvsItems = fields.bvsStats || [{value:'',description:''}];
+    fieldsHtml += `<div class="flex items-center justify-between mt-4"><span class="text-xs font-bold text-gray-500 uppercase">Business Value Stats</span>`;
+    fieldsHtml += `<button class="${btnSmClass}" onclick="addBvsStatRow(${slideIndex})" id="se-add-bvs-${slideIndex}"${bvsItems.length >= 2 ? ' style="display:none;"' : ''}>+ Add Stat</button></div>`;
     fieldsHtml += `<div id="se-bvs-${slideIndex}">`;
-    (fields.bvsStats || [{value:'',description:''}]).forEach((stat, idx) => {
+    bvsItems.forEach((stat, idx) => {
       fieldsHtml += buildBvsStatRowHtml(slideIndex, idx, stat);
     });
     fieldsHtml += `</div>`;
 
-    // Capabilities
+    // Capabilities (max 3)
+    const capItems = fields.capabilities || [{icon:'🔍',title:'',description:''}];
     fieldsHtml += `<div class="flex items-center justify-between mt-4"><span class="text-xs font-bold text-gray-500 uppercase">Capabilities</span>`;
-    fieldsHtml += `<button class="${btnSmClass}" onclick="addCapabilityRow(${slideIndex})" id="se-add-cap-${slideIndex}">+ Add Capability</button></div>`;
+    fieldsHtml += `<button class="${btnSmClass}" onclick="addCapabilityRow(${slideIndex})" id="se-add-cap-${slideIndex}"${capItems.length >= 3 ? ' style="display:none;"' : ''}>+ Add Capability</button></div>`;
     fieldsHtml += `<div id="se-caps-${slideIndex}">`;
-    (fields.capabilities || [{icon:'🔍',title:'',description:''}]).forEach((cap, idx) => {
+    capItems.forEach((cap, idx) => {
       fieldsHtml += buildCapabilityRowHtml(slideIndex, idx, cap);
     });
     fieldsHtml += `</div>`;
@@ -3849,8 +3851,8 @@ function addBvsStatRow(slideIndex) {
   const div = document.createElement('div');
   div.innerHTML = buildBvsStatRowHtml(slideIndex, count, {value:'', description:''});
   container.appendChild(div.firstElementChild);
-  // Re-index IDs
   reindexBvsRows(slideIndex);
+  updateBvsAddButton(slideIndex);
 }
 
 function removeBvsStatRow(slideIndex, btn) {
@@ -3859,6 +3861,15 @@ function removeBvsStatRow(slideIndex, btn) {
   if (container.querySelectorAll('.se-bvs-row').length <= 1) return; // min 1
   btn.closest('.se-bvs-row').remove();
   reindexBvsRows(slideIndex);
+  updateBvsAddButton(slideIndex);
+}
+
+function updateBvsAddButton(slideIndex) {
+  const container = document.getElementById(`se-bvs-${slideIndex}`);
+  const addBtn = document.getElementById(`se-add-bvs-${slideIndex}`);
+  if (!container || !addBtn) return;
+  const count = container.querySelectorAll('.se-bvs-row').length;
+  addBtn.style.display = count >= 2 ? 'none' : '';
 }
 
 function reindexBvsRows(slideIndex) {
@@ -3881,6 +3892,7 @@ function addCapabilityRow(slideIndex) {
   const div = document.createElement('div');
   div.innerHTML = buildCapabilityRowHtml(slideIndex, count, {icon:'🔍', title:'', description:''});
   container.appendChild(div.firstElementChild);
+  updateCapAddButton(slideIndex);
   reindexCapRows(slideIndex);
 }
 
@@ -3890,6 +3902,15 @@ function removeCapabilityRow(slideIndex, btn) {
   if (container.querySelectorAll('.se-cap-row').length <= 1) return; // min 1
   btn.closest('.se-cap-row').remove();
   reindexCapRows(slideIndex);
+  updateCapAddButton(slideIndex);
+}
+
+function updateCapAddButton(slideIndex) {
+  const container = document.getElementById(`se-caps-${slideIndex}`);
+  const addBtn = document.getElementById(`se-add-cap-${slideIndex}`);
+  if (!container || !addBtn) return;
+  const count = container.querySelectorAll('.se-cap-row').length;
+  addBtn.style.display = count >= 3 ? 'none' : '';
 }
 
 function reindexCapRows(slideIndex) {
