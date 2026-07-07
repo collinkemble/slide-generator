@@ -15,6 +15,9 @@ const multer = require('multer');
 const app = express();
 const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
+// Master template reference ID — all new web presentations start as a copy of this reference
+const MASTER_TEMPLATE_REF_ID = parseInt(process.env.MASTER_TEMPLATE_REF_ID || '4');
+
 // ─── Salesforce logo buffer (loaded once at startup) ───
 let sfLogoBuffer = null;
 async function getSfLogoBuffer() {
@@ -798,16 +801,53 @@ app.post('/api/presentations', async (req, res) => {
     }
 
     const user = await getOrCreateUser(email);
+    const parsedData = data || {};
+    const useWebTemplate = parsedData.useWebTemplate === true;
+
+    // Build brand data from the request for web template presentations
+    const brandData = useWebTemplate ? {
+      brandName: parsedData.brandName || '',
+      brandColorPrimary: parsedData.brandColorPrimary || '',
+      brandColorSecondary: parsedData.brandColorSecondary || '',
+      brandTone: parsedData.brandTone || '',
+      brandVisualStyle: parsedData.brandVisualStyle || '',
+      brandLogoUrl: parsedData.brandLogoUrl || '',
+      brandDescription: parsedData.brandDescription || '',
+    } : null;
+
     const result = await query(
-      'INSERT INTO presentations (user_id, name, data) VALUES (?, ?, ?)',
-      [user.id, name.trim(), data ? JSON.stringify(data) : null]
+      'INSERT INTO presentations (user_id, name, data, is_web_slides, web_brand_data, status) VALUES (?, ?, ?, ?, ?, ?)',
+      [user.id, name.trim(), data ? JSON.stringify(data) : null, useWebTemplate, brandData ? JSON.stringify(brandData) : null, useWebTemplate ? 'generating' : 'draft']
     );
+
+    const presId = result.insertId;
+
+    // Generate a share_token
+    const shareToken = crypto.randomBytes(16).toString('hex');
+    await query('UPDATE presentations SET share_token = ? WHERE id = ?', [shareToken, presId]);
+
+    // If using web template, copy slides from master template and start background generation
+    if (useWebTemplate) {
+      try {
+        await copyTemplateSlides(presId, brandData);
+        console.log(`[WebTemplate] Copied template slides to presentation ${presId}`);
+        // Start background image generation
+        generateUserBackgroundsInBackground(presId, brandData).catch(err => {
+          console.error(`[WebTemplate] Background generation failed for presentation ${presId}:`, err);
+        });
+      } catch (copyErr) {
+        console.error(`[WebTemplate] Failed to copy template slides:`, copyErr);
+        await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presId]);
+      }
+    }
 
     res.status(201).json({
       presentation: {
-        id: result.insertId,
+        id: presId,
         name: name.trim(),
-        status: 'draft',
+        status: useWebTemplate ? 'generating' : 'draft',
+        is_web_slides: useWebTemplate,
+        share_token: shareToken,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }
@@ -1010,6 +1050,175 @@ app.post('/api/presentations/:id/share/confirm', async (req, res) => {
     res.status(500).json({ error: 'Failed to complete share action' });
   }
 });
+
+// ═══════════════════════════════════════════════
+// WEB TEMPLATE — Copy-on-Create + Background Gen
+// ═══════════════════════════════════════════════
+
+/**
+ * Copy all web slides from the master template (reference #4) into a user's presentation.
+ * Performs brand-name substitution in the HTML content.
+ */
+async function copyTemplateSlides(presentationId, brandData) {
+  // 1. Get the reference template's web slides
+  const refSlides = await query(
+    'SELECT slide_index, html_content, css_content, background_image_url, background_image_prompt FROM reference_web_slides WHERE reference_id = ? ORDER BY slide_index',
+    [MASTER_TEMPLATE_REF_ID]
+  );
+
+  if (refSlides.length === 0) {
+    throw new Error(`No web slides found for master template ref ${MASTER_TEMPLATE_REF_ID}`);
+  }
+
+  // 2. Get slide annotations for names and template types
+  const refRows = await query('SELECT slide_annotations, web_version_brand_data FROM reference_presentations WHERE id = ?', [MASTER_TEMPLATE_REF_ID]);
+  if (refRows.length === 0) throw new Error(`Master template ref ${MASTER_TEMPLATE_REF_ID} not found`);
+
+  let annotations = refRows[0].slide_annotations;
+  if (typeof annotations === 'string') { try { annotations = JSON.parse(annotations); } catch(e) { annotations = []; } }
+  annotations = annotations || [];
+
+  // Get reference brand name for substitution
+  let refBrandData = refRows[0].web_version_brand_data;
+  if (typeof refBrandData === 'string') { try { refBrandData = JSON.parse(refBrandData); } catch(e) { refBrandData = {}; } }
+  const refBrandName = (refBrandData && refBrandData.brandName) || '';
+  const targetBrandName = (brandData && brandData.brandName) || '';
+
+  // 3. Insert each slide into presentation_slides
+  for (const slide of refSlides) {
+    const ann = annotations[slide.slide_index] || {};
+    let html = slide.html_content || '';
+    let css = slide.css_content || '';
+
+    // Brand name substitution in HTML and CSS
+    if (refBrandName && targetBrandName && refBrandName !== targetBrandName) {
+      html = html.replace(new RegExp(escapeRegex(refBrandName), 'gi'), targetBrandName);
+      css = css.replace(new RegExp(escapeRegex(refBrandName), 'gi'), targetBrandName);
+    }
+
+    await query(
+      `INSERT INTO presentation_slides (presentation_id, slide_index, html_content, css_content, bg_image_url, bg_image_prompt, template_type, slide_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE html_content=VALUES(html_content), css_content=VALUES(css_content), bg_image_url=VALUES(bg_image_url), bg_image_prompt=VALUES(bg_image_prompt), template_type=VALUES(template_type), slide_name=VALUES(slide_name)`,
+      [presentationId, slide.slide_index, html, css, slide.background_image_url, slide.background_image_prompt, ann.templateType || '', ann.name || '']
+    );
+  }
+}
+
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Generate branded background images for a user's web-template presentation.
+ * Reuses the same three-pass approach as reference web version generation,
+ * but skips HTML generation (already copied from template).
+ */
+async function generateUserBackgroundsInBackground(presentationId, brandData) {
+  try {
+    console.log(`[WebBG] Starting background generation for presentation ${presentationId}`);
+
+    // 1. Get all slides with their background prompts
+    const slides = await query(
+      'SELECT slide_index, bg_image_prompt, slide_name FROM presentation_slides WHERE presentation_id = ? ORDER BY slide_index',
+      [presentationId]
+    );
+
+    if (slides.length === 0) {
+      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentationId]);
+      return;
+    }
+
+    // 2. Collect photo descriptions for style directive
+    const photoDescriptions = slides
+      .filter(s => s.bg_image_prompt && s.bg_image_prompt.trim())
+      .map(s => s.bg_image_prompt);
+
+    // 3. Generate unified photo style directive
+    let photoStyleDirective = '';
+    if (photoDescriptions.length >= 2) {
+      try {
+        photoStyleDirective = await generatePhotoStyleDirective(photoDescriptions, brandData);
+        console.log(`[WebBG] Photo style directive: ${photoStyleDirective.substring(0, 100)}...`);
+      } catch (err) {
+        console.warn('[WebBG] Failed to generate photo style directive:', err.message);
+      }
+    }
+
+    // 4. Generate background images for each slide
+    let sharedTransitionBgUrl = null;
+    const duplicateCache = {}; // Cache for duplicate slides (e.g., "Thank You")
+
+    for (let i = 0; i < slides.length; i++) {
+      const slide = slides[i];
+      const slideName = (slide.slide_name || '').toLowerCase();
+
+      // Check if we already have a cached background for this slide type
+      if (duplicateCache[slideName]) {
+        console.log(`[WebBG] Reusing cached background for "${slide.slide_name}" (slide ${i})`);
+        await query('UPDATE presentation_slides SET bg_image_url = ? WHERE presentation_id = ? AND slide_index = ?',
+          [duplicateCache[slideName], presentationId, slide.slide_index]);
+        continue;
+      }
+
+      // Check transition slide sharing
+      const isTransition = slideName.includes('demo chapter intro') || slideName.includes('demo chapter closing') || slideName.includes('chapter intro') || slideName.includes('chapter closing');
+      if (isTransition && sharedTransitionBgUrl) {
+        console.log(`[WebBG] Reusing transition background for slide ${i}`);
+        await query('UPDATE presentation_slides SET bg_image_url = ? WHERE presentation_id = ? AND slide_index = ?',
+          [sharedTransitionBgUrl, presentationId, slide.slide_index]);
+        continue;
+      }
+
+      // Generate the background image
+      const description = slide.bg_image_prompt || `Professional business background for a presentation slide titled "${slide.slide_name}"`;
+      const photoPrompt = buildPhotoOnlyPrompt(description, brandData, photoStyleDirective);
+
+      try {
+        console.log(`[WebBG] Generating background for slide ${i} ("${slide.slide_name}")...`);
+        const imageResult = await generateSlideImage(photoPrompt, null);
+
+        if (imageResult && imageResult.imageBase64) {
+          // Resize to 1920x1080
+          const imageBuffer = Buffer.from(imageResult.imageBase64, 'base64');
+          const resized = await sharp(imageBuffer)
+            .resize(1920, 1080, { fit: 'cover', position: 'center' })
+            .png()
+            .toBuffer();
+
+          // Upload to R2
+          const hash = crypto.createHash('md5').update(resized).digest('hex').substring(0, 14);
+          const r2Key = `user-slides/${presentationId}/${slide.slide_index}-${hash}.png`;
+          const publicUrl = await uploadToR2(r2Key, resized, 'image/png');
+
+          // Update database
+          await query('UPDATE presentation_slides SET bg_image_url = ? WHERE presentation_id = ? AND slide_index = ?',
+            [publicUrl, presentationId, slide.slide_index]);
+
+          // Cache for duplicates and transitions
+          if (slideName) duplicateCache[slideName] = publicUrl;
+          if (isTransition && !sharedTransitionBgUrl) sharedTransitionBgUrl = publicUrl;
+
+          console.log(`[WebBG] Slide ${i} background generated: ${publicUrl.substring(0, 60)}...`);
+        }
+      } catch (err) {
+        console.error(`[WebBG] Failed to generate background for slide ${i}:`, err.message);
+      }
+
+      // Rate limit
+      if (i < slides.length - 1) {
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+
+    // 5. Mark as completed
+    await query('UPDATE presentations SET status = ? WHERE id = ?', ['completed', presentationId]);
+    console.log(`[WebBG] Background generation completed for presentation ${presentationId}`);
+  } catch (err) {
+    console.error(`[WebBG] Fatal error generating backgrounds for presentation ${presentationId}:`, err);
+    await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentationId]);
+  }
+}
 
 // ═══════════════════════════════════════════════
 // APP-SPECIFIC — Image-Based Slide Generation
@@ -1267,6 +1476,240 @@ app.get('/api/presentations/:id/slides', async (req, res) => {
   } catch (err) {
     console.error('Get slides error:', err);
     res.status(500).json({ error: 'Failed to get slides' });
+  }
+});
+
+// ═══════════════════════════════════════════════
+// WEB SLIDES CRUD — User Presentations
+// ═══════════════════════════════════════════════
+
+// GET /api/presentations/:id/web-slides — Get web slide data for editing
+app.get('/api/presentations/:id/web-slides', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    const user = await getOrCreateUser(email);
+    const rows = await query('SELECT id, is_web_slides, web_brand_data FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    const slides = await query(
+      'SELECT slide_index, html_content, css_content, bg_image_url, bg_image_prompt, template_type, slide_name, updated_at FROM presentation_slides WHERE presentation_id = ? ORDER BY slide_index',
+      [req.params.id]
+    );
+
+    // Extract brand logo URL for preview rendering
+    let brandData = rows[0].web_brand_data;
+    if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch(e) { brandData = {}; } }
+    brandData = brandData || {};
+
+    res.json({ slides, brandLogoUrl: brandData.brandLogoUrl || '' });
+  } catch (err) {
+    console.error('Get web slides error:', err);
+    res.status(500).json({ error: 'Failed to get web slides' });
+  }
+});
+
+// PATCH /api/presentations/:id/web-slides/:slideIndex — Update a single web slide
+app.patch('/api/presentations/:id/web-slides/:slideIndex', async (req, res) => {
+  try {
+    const { email, html, css, backgroundImageUrl, backgroundImagePrompt, templateType, slideName } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    const slideIndex = parseInt(req.params.slideIndex, 10);
+
+    const user = await getOrCreateUser(email);
+    const rows = await query('SELECT id FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    const updates = [];
+    const params = [];
+    if (html !== undefined) { updates.push('html_content = ?'); params.push(html); }
+    if (css !== undefined) { updates.push('css_content = ?'); params.push(css); }
+    if (backgroundImageUrl !== undefined) { updates.push('bg_image_url = ?'); params.push(backgroundImageUrl); }
+    if (backgroundImagePrompt !== undefined) { updates.push('bg_image_prompt = ?'); params.push(backgroundImagePrompt); }
+    if (templateType !== undefined) { updates.push('template_type = ?'); params.push(templateType); }
+    if (slideName !== undefined) { updates.push('slide_name = ?'); params.push(slideName); }
+
+    if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+
+    updates.push('updated_at = NOW()');
+    params.push(req.params.id, slideIndex);
+
+    await query(
+      `UPDATE presentation_slides SET ${updates.join(', ')} WHERE presentation_id = ? AND slide_index = ?`,
+      params
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Patch web slide error:', err);
+    res.status(500).json({ error: 'Failed to update web slide' });
+  }
+});
+
+// POST /api/presentations/:id/web-slides/:slideIndex/upload-image — Upload background image
+app.post('/api/presentations/:id/web-slides/:slideIndex/upload-image', memUpload.single('image'), async (req, res) => {
+  try {
+    const email = req.body.email;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!req.file) return res.status(400).json({ error: 'No image file provided' });
+
+    const user = await getOrCreateUser(email);
+    const rows = await query('SELECT id FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    const slideIndex = parseInt(req.params.slideIndex, 10);
+    const type = req.body.type || 'background'; // 'background' or 'icon'
+
+    // Process image
+    let processed;
+    if (type === 'icon') {
+      processed = await sharp(req.file.buffer).resize(128, 128, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+    } else {
+      processed = await sharp(req.file.buffer).resize(1920, 1080, { fit: 'cover', position: 'center' }).png().toBuffer();
+    }
+
+    const hash = crypto.createHash('md5').update(processed).digest('hex').substring(0, 14);
+    const r2Key = type === 'icon'
+      ? `user-slide-icons/${req.params.id}/${slideIndex}-${hash}.png`
+      : `user-slides/${req.params.id}/${slideIndex}-${hash}.png`;
+    const publicUrl = await uploadToR2(r2Key, processed, 'image/png');
+
+    if (type !== 'icon') {
+      await query('UPDATE presentation_slides SET bg_image_url = ? WHERE presentation_id = ? AND slide_index = ?',
+        [publicUrl, req.params.id, slideIndex]);
+    }
+
+    res.json({ success: true, url: publicUrl });
+  } catch (err) {
+    console.error('Upload web slide image error:', err);
+    res.status(500).json({ error: 'Failed to upload image' });
+  }
+});
+
+// POST /api/presentations/:id/web-slides/:slideIndex/regenerate-background — AI regenerate background
+app.post('/api/presentations/:id/web-slides/:slideIndex/regenerate-background', async (req, res) => {
+  try {
+    const { email, prompt } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+    const presRows = await query('SELECT id, web_brand_data FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (presRows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    const slideIndex = parseInt(req.params.slideIndex, 10);
+    const slideRows = await query('SELECT bg_image_prompt, slide_name FROM presentation_slides WHERE presentation_id = ? AND slide_index = ?',
+      [req.params.id, slideIndex]);
+    if (slideRows.length === 0) return res.status(404).json({ error: 'Slide not found' });
+
+    let brandData = presRows[0].web_brand_data;
+    if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch(e) { brandData = {}; } }
+
+    const description = prompt || slideRows[0].bg_image_prompt || `Professional background for "${slideRows[0].slide_name}"`;
+    const photoPrompt = buildPhotoOnlyPrompt(description, brandData || {}, '');
+
+    res.json({ success: true, status: 'generating' });
+
+    // Generate in background
+    (async () => {
+      try {
+        const imageResult = await generateSlideImage(photoPrompt, null);
+        if (imageResult && imageResult.imageBase64) {
+          const imageBuffer = Buffer.from(imageResult.imageBase64, 'base64');
+          const resized = await sharp(imageBuffer).resize(1920, 1080, { fit: 'cover', position: 'center' }).png().toBuffer();
+          const hash = crypto.createHash('md5').update(resized).digest('hex').substring(0, 14);
+          const r2Key = `user-slides/${req.params.id}/${slideIndex}-${hash}.png`;
+          const publicUrl = await uploadToR2(r2Key, resized, 'image/png');
+          await query('UPDATE presentation_slides SET bg_image_url = ?, updated_at = NOW() WHERE presentation_id = ? AND slide_index = ?',
+            [publicUrl, req.params.id, slideIndex]);
+          console.log(`[WebBG] Regenerated background for pres ${req.params.id} slide ${slideIndex}`);
+        }
+      } catch (err) {
+        console.error(`[WebBG] Regen background failed:`, err.message);
+      }
+    })();
+  } catch (err) {
+    console.error('Regenerate background error:', err);
+    res.status(500).json({ error: 'Failed to regenerate background' });
+  }
+});
+
+// POST /api/presentations/:id/web-slides/:slideIndex/apply-template — Apply a template type from the reference
+app.post('/api/presentations/:id/web-slides/:slideIndex/apply-template', async (req, res) => {
+  try {
+    const { email, templateType } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!templateType) return res.status(400).json({ error: 'templateType required' });
+
+    const user = await getOrCreateUser(email);
+    const presRows = await query('SELECT id, web_brand_data FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (presRows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    const slideIndex = parseInt(req.params.slideIndex, 10);
+
+    // Find a reference slide with matching template type
+    const refRows = await query('SELECT slide_annotations FROM reference_presentations WHERE id = ?', [MASTER_TEMPLATE_REF_ID]);
+    if (refRows.length === 0) return res.status(500).json({ error: 'Master template not found' });
+
+    let annotations = refRows[0].slide_annotations;
+    if (typeof annotations === 'string') { try { annotations = JSON.parse(annotations); } catch(e) { annotations = []; } }
+
+    // Find the first annotation matching this template type
+    const matchIdx = (annotations || []).findIndex(a => (a.templateType || '').toLowerCase() === templateType.toLowerCase());
+    if (matchIdx === -1) return res.status(404).json({ error: `No reference slide found with template type "${templateType}"` });
+
+    // Get the reference web slide for that index
+    const refSlides = await query(
+      'SELECT html_content, css_content FROM reference_web_slides WHERE reference_id = ? AND slide_index = ?',
+      [MASTER_TEMPLATE_REF_ID, matchIdx]
+    );
+    if (refSlides.length === 0) return res.status(404).json({ error: 'Reference web slide not found for that template type' });
+
+    // Brand name substitution
+    let html = refSlides[0].html_content || '';
+    let css = refSlides[0].css_content || '';
+
+    let refBrandData = {};
+    const refBrandRows = await query('SELECT web_version_brand_data FROM reference_presentations WHERE id = ?', [MASTER_TEMPLATE_REF_ID]);
+    if (refBrandRows.length > 0) {
+      refBrandData = refBrandRows[0].web_version_brand_data;
+      if (typeof refBrandData === 'string') { try { refBrandData = JSON.parse(refBrandData); } catch(e) { refBrandData = {}; } }
+    }
+    let userBrandData = presRows[0].web_brand_data;
+    if (typeof userBrandData === 'string') { try { userBrandData = JSON.parse(userBrandData); } catch(e) { userBrandData = {}; } }
+
+    const refBrandName = (refBrandData && refBrandData.brandName) || '';
+    const targetBrandName = (userBrandData && userBrandData.brandName) || '';
+    if (refBrandName && targetBrandName && refBrandName !== targetBrandName) {
+      html = html.replace(new RegExp(escapeRegex(refBrandName), 'gi'), targetBrandName);
+      css = css.replace(new RegExp(escapeRegex(refBrandName), 'gi'), targetBrandName);
+    }
+
+    // Update the user's slide
+    await query(
+      'UPDATE presentation_slides SET html_content = ?, css_content = ?, template_type = ?, updated_at = NOW() WHERE presentation_id = ? AND slide_index = ?',
+      [html, css, templateType, req.params.id, slideIndex]
+    );
+
+    res.json({ success: true, html, css, templateType });
+  } catch (err) {
+    console.error('Apply template error:', err);
+    res.status(500).json({ error: 'Failed to apply template' });
+  }
+});
+
+// GET /api/template-types — Get available template types from the master reference
+app.get('/api/template-types', async (req, res) => {
+  try {
+    const refRows = await query('SELECT slide_annotations FROM reference_presentations WHERE id = ?', [MASTER_TEMPLATE_REF_ID]);
+    if (refRows.length === 0) return res.status(404).json({ error: 'Master template not found' });
+
+    let annotations = refRows[0].slide_annotations;
+    if (typeof annotations === 'string') { try { annotations = JSON.parse(annotations); } catch(e) { annotations = []; } }
+
+    const templateTypes = [...new Set((annotations || []).map(a => a.templateType).filter(t => t && t.trim()))];
+    res.json({ templateTypes });
+  } catch (err) {
+    console.error('Get template types error:', err);
+    res.status(500).json({ error: 'Failed to get template types' });
   }
 });
 
@@ -2750,9 +3193,67 @@ app.get('/api/present-web/:refId/data', async (req, res) => {
   }
 });
 
-// Serve the web slide viewer
+// Serve the web slide viewer (reference presentations)
 app.get('/present-web/:refId', (req, res) => {
   res.sendFile(path.join(__dirname, 'present-web.html'));
+});
+
+// Serve the web slide viewer (user presentations)
+app.get('/present-web-item/:presId', (req, res) => {
+  res.sendFile(path.join(__dirname, 'present-web.html'));
+});
+
+// GET /api/present-web/item/:presId/data — web slide data for user presentation viewer
+app.get('/api/present-web/item/:presId/data', async (req, res) => {
+  try {
+    const presId = parseInt(req.params.presId);
+    const token = req.query.token;
+
+    // Get the presentation
+    const presRows = await query('SELECT id, name, status, is_web_slides, web_brand_data, user_id, sharing_mode, share_token FROM presentations WHERE id = ?', [presId]);
+    if (presRows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+    const pres = presRows[0];
+
+    if (!pres.is_web_slides) return res.status(400).json({ error: 'Not a web-slides presentation' });
+
+    // Access control — either user owns it, or has valid share token, or sharing_mode is 'everyone'
+    const email = req.query.email;
+    let authorized = pres.sharing_mode === 'everyone';
+    if (!authorized && token && token === pres.share_token) authorized = true;
+    if (!authorized && email) {
+      const user = await getOrCreateUser(email);
+      if (user.id === pres.user_id) authorized = true;
+    }
+    // Allow Salesforce sharing mode with salesforce email
+    if (!authorized && pres.sharing_mode === 'salesforce' && email && email.toLowerCase().endsWith('@salesforce.com')) authorized = true;
+    if (!authorized) return res.status(403).json({ error: 'Access denied' });
+
+    // Get slides
+    const slides = await query(
+      'SELECT slide_index, html_content, css_content, bg_image_url, slide_name FROM presentation_slides WHERE presentation_id = ? ORDER BY slide_index',
+      [presId]
+    );
+
+    let brandData = pres.web_brand_data;
+    if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch(e) { brandData = {}; } }
+    brandData = brandData || {};
+
+    res.json({
+      name: pres.name,
+      brandLogoUrl: brandData.brandLogoUrl || '',
+      brandName: brandData.brandName || '',
+      slides: slides.map(s => ({
+        slideIndex: s.slide_index,
+        html: s.html_content,
+        css: s.css_content,
+        backgroundImageUrl: s.bg_image_url,
+        slideName: s.slide_name || ''
+      }))
+    });
+  } catch (err) {
+    console.error('Failed to get present-web item data:', err);
+    res.status(500).json({ error: 'Failed to load presentation' });
+  }
 });
 
 /**

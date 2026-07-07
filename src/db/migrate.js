@@ -42,6 +42,15 @@ async function migrate() {
         "ALTER TABLE reference_presentations ADD COLUMN web_version_status ENUM('none','generating','completed','failed') DEFAULT 'none'",
         "ALTER TABLE reference_presentations ADD COLUMN web_version_generated_at TIMESTAMP NULL",
         "ALTER TABLE reference_presentations ADD COLUMN web_version_brand_data JSON",
+        // Web-based user presentations — store HTML/CSS slides
+        "ALTER TABLE presentation_slides ADD COLUMN html_content LONGTEXT",
+        "ALTER TABLE presentation_slides ADD COLUMN css_content TEXT",
+        "ALTER TABLE presentation_slides ADD COLUMN bg_image_url TEXT",
+        "ALTER TABLE presentation_slides ADD COLUMN bg_image_prompt TEXT",
+        "ALTER TABLE presentation_slides ADD COLUMN template_type VARCHAR(100)",
+        "ALTER TABLE presentation_slides ADD COLUMN slide_name VARCHAR(255)",
+        "ALTER TABLE presentations ADD COLUMN is_web_slides BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE presentations ADD COLUMN web_brand_data JSON",
       ];
 
       const allAlters = [...sharedAlters, ...appAlters];

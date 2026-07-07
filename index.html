@@ -328,7 +328,7 @@
       </div>
 
       <!-- Presentation Settings card -->
-      <div class="mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+      <div id="settings-card" class="mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
         <p class="font-bold mb-4" style="font-size: 15px; color: #032D60;">Presentation Settings</p>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
           <div>
@@ -365,7 +365,7 @@
       </div>
 
       <!-- Generate / Regenerate button -->
-      <div class="mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+      <div id="generate-card" class="mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
         <div class="flex items-center justify-between">
           <div>
             <p class="font-bold" style="font-size: 15px; color: #032D60;">AI Slides</p>
@@ -406,6 +406,15 @@
       </div>
 
       <!-- Generated slides preview -->
+      <!-- Web Slides Editor (for is_web_slides presentations) -->
+      <div id="web-slides-editor" class="hidden" style="margin-bottom: 16px;">
+        <div class="flex items-center justify-between mb-4">
+          <p class="font-bold" style="font-size: 15px; color: #032D60;">Slides</p>
+          <span id="web-slides-count-badge" style="font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; background: #E8F5E9; color: #2E7D32;"></span>
+        </div>
+        <div id="web-slides-editor-body"></div>
+      </div>
+
       <div id="slides-preview" class="hidden" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 16px;">
         <div class="flex items-center justify-between mb-4">
           <p class="font-bold" style="font-size: 15px; color: #032D60;">Slides</p>
@@ -500,7 +509,7 @@
     <div id="new-presentation-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
       <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8" style="max-height: 90vh; overflow-y: auto;">
         <h3 class="text-lg font-bold text-gray-800 mb-1">New Presentation</h3>
-        <p class="text-sm text-gray-500 mb-5">Create an AI-powered presentation from Salesforce content, customized to your target brand.</p>
+        <p class="text-sm text-gray-500 mb-5">Select a brand kit and we'll create a presentation with branded background images automatically.</p>
 
         <!-- Brand Kit Section -->
         <div id="np-brandkit-section" style="background: linear-gradient(135deg, #f0f7ff, #e8f2ff); border-radius: 10px; padding: 16px; border: 1px dashed #b0d4f1; margin-bottom: 16px;">
@@ -541,69 +550,10 @@
           </div>
         </div>
 
-        <div class="mb-3">
-          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Presentation Name <span style="color: #ea001e;">*</span></label>
-          <input id="np-name" type="text" placeholder="e.g. Q3 Sales Review for Acme Corp" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
-        </div>
-        <div class="mb-3">
-          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Brand <span style="color: #ea001e;">*</span></label>
-          <input id="np-brand" type="text" placeholder="Target brand name (e.g. Acme Corp)" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
-          <p style="font-size: 11px; color: #888; margin-top: 4px;">The brand this presentation is being created for. Auto-filled when you select a Brand Kit above.</p>
-        </div>
-        <div class="mb-3">
-          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Topic <span style="color: #ea001e;">*</span></label>
-          <input id="np-topic" type="text" placeholder="What is this presentation about?" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;" class="mb-3">
-          <div>
-            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Slide Count</label>
-            <input id="np-slidecount" type="number" value="10" min="3" max="30" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
-          </div>
-          <div>
-            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Style</label>
-            <select id="np-style" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
-              <option value="professional">Professional</option>
-              <option value="creative">Creative</option>
-              <option value="minimal">Minimal</option>
-              <option value="technical">Technical</option>
-              <option value="executive">Executive</option>
-            </select>
-          </div>
-        </div>
-        <div class="mb-3">
-          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Target Audience</label>
-          <input id="np-audience" type="text" placeholder="e.g. C-suite executives, sales team" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;" class="mb-3">
-          <div>
-            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Industry</label>
-            <select id="np-industry" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
-              <option value="">— Select —</option>
-              <option value="Technology">Technology</option>
-              <option value="Healthcare">Healthcare</option>
-              <option value="Financial Services">Financial Services</option>
-              <option value="Retail">Retail</option>
-              <option value="Manufacturing">Manufacturing</option>
-              <option value="Education">Education</option>
-              <option value="Other">Other</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-xs font-bold mb-1" style="color: #032D60;">Presentation Type</label>
-            <select id="np-type" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
-              <option value="">— Select —</option>
-              <option value="Sales Pitch">Sales Pitch</option>
-              <option value="Product Demo">Product Demo</option>
-              <option value="Quarterly Review">Quarterly Review</option>
-              <option value="Training">Training</option>
-              <option value="Strategy">Strategy</option>
-              <option value="General">General</option>
-            </select>
-          </div>
-        </div>
         <div class="mb-4">
-          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Additional Context <span style="color: #888; font-weight: 400;">(optional)</span></label>
-          <textarea id="np-context" rows="3" placeholder="Any extra details or instructions for the AI..." class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm resize-none"></textarea>
+          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Presentation Name <span style="color: #ea001e;">*</span></label>
+          <input id="np-name" type="text" placeholder="e.g. Acme Corp Presentation" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+          <p style="font-size: 11px; color: #888; margin-top: 4px;">Auto-filled when you select a Brand Kit above.</p>
         </div>
 
         <p id="np-error" class="hidden text-sm mb-3" style="color: #C23934;"></p>
@@ -1944,7 +1894,15 @@ async function loadItems() {
     grid.innerHTML = items.map((item) => {
       const safeName = esc(item.name).replace(/'/g, "\\'");
       const status = statusColors[item.status] || statusColors.draft;
-      const presentLink = (item.status === 'completed' && item.share_token) ? `<a href="/present/${esc(item.share_token)}" target="_blank" onclick="event.stopPropagation();" style="font-size: 12px; color: #10B981; text-decoration: none; display: flex; align-items: center; gap: 4px; margin-top: 4px;">▶ Present ↗</a>` : '';
+      let presentLink = '';
+      if (item.status === 'completed') {
+        if (item.is_web_slides) {
+          const webUrl = `/present-web-item/${item.id}` + (item.share_token ? `?token=${encodeURIComponent(item.share_token)}` : '');
+          presentLink = `<a href="${webUrl}" target="_blank" onclick="event.stopPropagation();" style="font-size: 12px; color: #10B981; text-decoration: none; display: flex; align-items: center; gap: 4px; margin-top: 4px;">▶ Present ↗</a>`;
+        } else if (item.share_token) {
+          presentLink = `<a href="/present/${esc(item.share_token)}" target="_blank" onclick="event.stopPropagation();" style="font-size: 12px; color: #10B981; text-decoration: none; display: flex; align-items: center; gap: 4px; margin-top: 4px;">▶ Present ↗</a>`;
+        }
+      }
       return `
       <div class="item-card" style="background: white; border-radius: 8px; padding: 20px; cursor: pointer; transition: box-shadow 0.15s ease, transform 0.15s ease; position: relative; box-shadow: 0 1px 3px rgba(0,0,0,0.08); border: 1px solid #e5e7eb;"
         onclick="viewItem(${item.id})"
@@ -1998,6 +1956,7 @@ async function viewItem(id, skipPush) {
     currentItemId = presentation.id; // For share functions compatibility
     currentPresentationData = data;
     currentItemName = presentation.name; // For share dialog
+    window._isWebSlides = !!presentation.is_web_slides;
 
     // Populate header
     document.getElementById('detail-breadcrumb').textContent = presentation.name;
@@ -2005,11 +1964,17 @@ async function viewItem(id, skipPush) {
     // Present button — show when completed
     const presentBtn = document.getElementById('detail-present-btn');
     const exportGoogleBtn = document.getElementById('detail-export-google-btn');
-    if (presentation.status === 'completed' && presentation.share_token) {
+    if (presentation.status === 'completed' && (presentation.share_token || presentation.is_web_slides)) {
       presentBtn.classList.remove('hidden');
       presentBtn.style.display = 'inline-flex';
-      exportGoogleBtn.classList.remove('hidden');
-      exportGoogleBtn.style.display = 'inline-flex';
+      // Hide Google export for web-based presentations
+      if (presentation.is_web_slides) {
+        exportGoogleBtn.classList.add('hidden');
+        exportGoogleBtn.style.display = 'none';
+      } else {
+        exportGoogleBtn.classList.remove('hidden');
+        exportGoogleBtn.style.display = 'inline-flex';
+      }
     } else {
       presentBtn.classList.add('hidden');
       presentBtn.style.display = 'none';
@@ -2023,7 +1988,7 @@ async function viewItem(id, skipPush) {
     const statusText = document.getElementById('detail-status-text');
     const statusConfig = {
       draft: { bg: '#F3F4F6', border: '#D1D5DB', color: '#6B7280', icon: '📝', label: 'Draft — Ready to generate' },
-      generating: { bg: '#FEF3C7', border: '#FCD34D', color: '#D97706', icon: '⏳', label: 'Generating slides...' },
+      generating: { bg: '#FEF3C7', border: '#FCD34D', color: '#D97706', icon: '⏳', label: presentation.is_web_slides ? 'Generating background images...' : 'Generating slides...' },
       completed: { bg: '#ECFDF5', border: '#6EE7B7', color: '#059669', icon: '✅', label: 'Completed — Ready to present' },
       failed: { bg: '#FEF2F2', border: '#FECACA', color: '#DC2626', icon: '❌', label: 'Generation failed — try again' }
     };
@@ -2036,31 +2001,56 @@ async function viewItem(id, skipPush) {
     statusBanner.classList.remove('hidden');
     statusBanner.style.display = 'flex';
 
-    // Settings fields
-    document.getElementById('edit-name').value = presentation.name || '';
-    document.getElementById('edit-topic').value = data.topic || '';
-    document.getElementById('edit-audience').value = data.audience || '';
-    document.getElementById('edit-style').value = data.style || 'professional';
+    // For web slides presentations: hide old settings/generate cards, show web editor
+    const settingsCard = document.getElementById('settings-card');
+    const generateCard = document.getElementById('generate-card');
+    const googleBanner = document.getElementById('detail-google-banner');
 
-    // Generate button text
-    const genBtn = document.getElementById('generate-btn');
-    const genSubtitle = document.getElementById('generate-subtitle');
-    if (presentation.status === 'completed') {
-      genBtn.textContent = '🔄 Regenerate Slides';
-      genBtn.disabled = false;
-      genSubtitle.textContent = 'Regenerate all slides with AI';
-    } else if (presentation.status === 'generating') {
-      genBtn.textContent = '⏳ Generating...';
-      genBtn.disabled = true;
-      genSubtitle.textContent = 'Slides are being generated...';
+    if (presentation.is_web_slides) {
+      // Hide legacy controls
+      if (settingsCard) { settingsCard.classList.add('hidden'); settingsCard.style.display = 'none'; }
+      if (generateCard) { generateCard.classList.add('hidden'); generateCard.style.display = 'none'; }
+      if (googleBanner) { googleBanner.classList.add('hidden'); googleBanner.style.display = 'none'; }
+
+      // Load the web slide editor
+      await loadWebSlideEditor(presentation);
     } else {
-      genBtn.textContent = '🚀 Generate Slides';
-      genBtn.disabled = false;
-      genSubtitle.textContent = 'Generate AI-powered presentation slides';
-    }
+      // Legacy image-based flow — hide web editor if it was visible
+      const webEditor = document.getElementById('web-slides-editor');
+      if (webEditor) { webEditor.classList.add('hidden'); webEditor.style.display = 'none'; }
 
-    // Load slides from the slides endpoint
-    await loadPresentationSlides(presentation.id, presentation.status);
+      if (settingsCard) { settingsCard.classList.remove('hidden'); settingsCard.style.display = ''; }
+      if (generateCard) { generateCard.classList.remove('hidden'); generateCard.style.display = ''; }
+
+      // Settings fields
+      document.getElementById('edit-name').value = presentation.name || '';
+      document.getElementById('edit-topic').value = data.topic || '';
+      document.getElementById('edit-audience').value = data.audience || '';
+      document.getElementById('edit-style').value = data.style || 'professional';
+
+      // Generate button text
+      const genBtn = document.getElementById('generate-btn');
+      const genSubtitle = document.getElementById('generate-subtitle');
+      if (presentation.status === 'completed') {
+        genBtn.textContent = '🔄 Regenerate Slides';
+        genBtn.disabled = false;
+        genSubtitle.textContent = 'Regenerate all slides with AI';
+      } else if (presentation.status === 'generating') {
+        genBtn.textContent = '⏳ Generating...';
+        genBtn.disabled = true;
+        genSubtitle.textContent = 'Slides are being generated...';
+      } else {
+        genBtn.textContent = '🚀 Generate Slides';
+        genBtn.disabled = false;
+        genSubtitle.textContent = 'Generate AI-powered presentation slides';
+      }
+
+      // Load slides from the slides endpoint
+      await loadPresentationSlides(presentation.id, presentation.status);
+
+      // Check Google connection status for detail page
+      checkGoogleStatus();
+    }
 
     // Sharing controls
     const sharingControls = document.getElementById('sharing-controls');
@@ -2088,17 +2078,18 @@ async function viewItem(id, skipPush) {
     };
     hideSaveSettingsBar();
 
-    // Check Google connection status for detail page
-    checkGoogleStatus();
-
     // Auto-poll if presentation is currently generating
     if (presentation.status === 'generating') {
-      const genBtn = document.getElementById('generate-btn');
-      const progress = document.getElementById('generate-progress');
-      const statusEl = document.getElementById('generate-status');
-      progress.classList.remove('hidden');
-      statusEl.textContent = 'Generating slides...';
-      pollGenerationStatus(presentation.id, document.getElementById('user-email').textContent, genBtn, progress, statusEl);
+      if (presentation.is_web_slides) {
+        pollWebBgGeneration(presentation.id);
+      } else {
+        const genBtn = document.getElementById('generate-btn');
+        const progress = document.getElementById('generate-progress');
+        const statusEl = document.getElementById('generate-status');
+        progress.classList.remove('hidden');
+        statusEl.textContent = 'Generating slides...';
+        pollGenerationStatus(presentation.id, document.getElementById('user-email').textContent, genBtn, progress, statusEl);
+      }
     }
 
     if (!skipPush) {
@@ -2275,12 +2266,6 @@ async function selectBrandKit(itemId, btnEl) {
       brandKitSource: bk.brand_name || ''
     };
 
-    // Auto-populate Brand field
-    const brandField = document.getElementById('np-brand');
-    if (_selectedBrandKit.brandName) {
-      brandField.value = _selectedBrandKit.brandName;
-    }
-
     // Auto-populate Presentation Name if empty
     const nameField = document.getElementById('np-name');
     if (!nameField.value.trim() && _selectedBrandKit.brandName) {
@@ -2310,14 +2295,6 @@ document.addEventListener('click', (e) => {
 
 function openNewPresentationDialog() {
   document.getElementById('np-name').value = '';
-  document.getElementById('np-brand').value = '';
-  document.getElementById('np-topic').value = '';
-  document.getElementById('np-slidecount').value = '10';
-  document.getElementById('np-audience').value = '';
-  document.getElementById('np-style').value = 'professional';
-  document.getElementById('np-industry').value = '';
-  document.getElementById('np-type').value = '';
-  document.getElementById('np-context').value = '';
   document.getElementById('np-error').classList.add('hidden');
   // Reset brand kit state
   _selectedBrandKit = null;
@@ -2334,12 +2311,15 @@ function closeNewPresentationDialog() {
 
 async function createPresentation() {
   const name = document.getElementById('np-name').value.trim();
-  const brand = document.getElementById('np-brand').value.trim();
-  const topic = document.getElementById('np-topic').value.trim();
   const errorEl = document.getElementById('np-error');
 
-  if (!name || !brand || !topic) {
-    errorEl.textContent = 'Name, brand, and topic are required.';
+  if (!name) {
+    errorEl.textContent = 'Presentation name is required.';
+    errorEl.classList.remove('hidden');
+    return;
+  }
+  if (!_selectedBrandKit) {
+    errorEl.textContent = 'Please select a Brand Kit.';
     errorEl.classList.remove('hidden');
     return;
   }
@@ -2351,29 +2331,18 @@ async function createPresentation() {
 
   const email = document.getElementById('user-email').textContent;
   const presData = {
-    topic,
-    brand,
-    slideCount: parseInt(document.getElementById('np-slidecount').value) || 10,
-    audience: document.getElementById('np-audience').value.trim() || 'general business audience',
-    style: document.getElementById('np-style').value,
-    industryTag: document.getElementById('np-industry').value || null,
-    presentationTypeTag: document.getElementById('np-type').value || null,
-    additionalContext: document.getElementById('np-context').value.trim() || null
+    useWebTemplate: true,
+    brandName: _selectedBrandKit.brandName,
+    brandColorPrimary: _selectedBrandKit.brandColorPrimary,
+    brandColorSecondary: _selectedBrandKit.brandColorSecondary,
+    brandTone: _selectedBrandKit.brandTone,
+    brandVisualStyle: _selectedBrandKit.brandVisualStyle,
+    brandLogoUrl: _selectedBrandKit.brandLogoUrl,
+    brandWebsiteUrl: _selectedBrandKit.brandWebsiteUrl,
+    brandDescription: _selectedBrandKit.brandDescription,
+    brandKitId: _selectedBrandKit.brandKitId,
+    brandKitSource: _selectedBrandKit.brandKitSource,
   };
-
-  // Include brand kit data if selected
-  if (_selectedBrandKit) {
-    presData.brandName = _selectedBrandKit.brandName;
-    presData.brandColorPrimary = _selectedBrandKit.brandColorPrimary;
-    presData.brandColorSecondary = _selectedBrandKit.brandColorSecondary;
-    presData.brandTone = _selectedBrandKit.brandTone;
-    presData.brandVisualStyle = _selectedBrandKit.brandVisualStyle;
-    presData.brandLogoUrl = _selectedBrandKit.brandLogoUrl;
-    presData.brandWebsiteUrl = _selectedBrandKit.brandWebsiteUrl;
-    presData.brandDescription = _selectedBrandKit.brandDescription;
-    presData.brandKitId = _selectedBrandKit.brandKitId;
-    presData.brandKitSource = _selectedBrandKit.brandKitSource;
-  }
 
   try {
     const resp = await fetch('/api/presentations', {
@@ -2604,7 +2573,11 @@ function renderSharingButtons(mode) {
   if (mode !== 'private' && currentShareToken) {
     linkBox.classList.remove('hidden');
     linkBox.style.display = 'flex';
-    linkUrl.textContent = `${window.location.origin}/present/${currentShareToken}`;
+    if (window._isWebSlides && currentPresentationId) {
+      linkUrl.textContent = `${window.location.origin}/present-web-item/${currentPresentationId}?token=${encodeURIComponent(currentShareToken)}`;
+    } else {
+      linkUrl.textContent = `${window.location.origin}/present/${currentShareToken}`;
+    }
   } else {
     linkBox.classList.add('hidden');
     linkBox.style.display = 'none';
@@ -2641,7 +2614,12 @@ function copyShareLink() {
 }
 
 function openPresentation() {
-  if (currentShareToken) {
+  if (window._isWebSlides && currentPresentationId) {
+    // Web-based HTML presentation viewer
+    let url = `/present-web-item/${currentPresentationId}`;
+    if (currentShareToken) url += `?token=${encodeURIComponent(currentShareToken)}`;
+    window.open(url, '_blank');
+  } else if (currentShareToken) {
     window.open(`/present/${currentShareToken}`, '_blank');
   }
 }
@@ -3056,6 +3034,440 @@ async function deleteGroundingReference(id) {
   } catch (err) {
     alert(err.message);
   }
+}
+
+// ═══════════════════════════════════════════════
+// User Web Slides Editor
+// ═══════════════════════════════════════════════
+let userWebSlides = [];       // cached web slides for user presentation
+let userWebBrandLogoUrl = '';  // brand logo URL
+let userTemplateTypes = [];    // available template types from master ref
+let userWebBrandData = null;   // brand data stored on the presentation
+
+async function loadWebSlideEditor(presentation) {
+  const editorContainer = document.getElementById('web-slides-editor');
+  const editorBody = document.getElementById('web-slides-editor-body');
+  const countBadge = document.getElementById('web-slides-count-badge');
+  const slidesPreview = document.getElementById('slides-preview');
+
+  // Hide old slides preview
+  if (slidesPreview) { slidesPreview.classList.add('hidden'); slidesPreview.style.display = 'none'; }
+
+  // If still generating, show placeholder and poll
+  if (presentation.status === 'generating') {
+    editorContainer.classList.remove('hidden');
+    editorContainer.style.display = 'block';
+    countBadge.textContent = '';
+    editorBody.innerHTML = `
+      <div style="text-align: center; padding: 40px 20px;">
+        <div style="display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 12px;">
+          <div style="width: 10px; height: 10px; background: #0176D3; border-radius: 50%; animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0s;"></div>
+          <div style="width: 10px; height: 10px; background: #0176D3; border-radius: 50%; animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.2s;"></div>
+          <div style="width: 10px; height: 10px; background: #0176D3; border-radius: 50%; animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.4s;"></div>
+        </div>
+        <p style="font-size: 14px; font-weight: 600; color: #374151;">Generating background images...</p>
+        <p style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">Your slides are ready — AI backgrounds are being created. This takes about a minute.</p>
+      </div>`;
+    pollWebBgGeneration(presentation.id);
+    return;
+  }
+
+  const email = document.getElementById('user-email').textContent;
+  const presId = presentation.id;
+
+  try {
+    // Fetch web slides and template types in parallel
+    const [slidesResp, typesResp] = await Promise.all([
+      fetch(`/api/presentations/${presId}/web-slides?email=${encodeURIComponent(email)}`),
+      fetch(`/api/template-types?email=${encodeURIComponent(email)}`)
+    ]);
+
+    if (!slidesResp.ok) throw new Error('Failed to load slides');
+
+    const slidesData = await slidesResp.json();
+    userWebSlides = slidesData.slides || [];
+    userWebBrandLogoUrl = slidesData.brandLogoUrl || '';
+
+    // Parse brand data from presentation
+    userWebBrandData = presentation.web_brand_data;
+    if (typeof userWebBrandData === 'string') {
+      try { userWebBrandData = JSON.parse(userWebBrandData); } catch(e) { userWebBrandData = {}; }
+    }
+
+    if (typesResp.ok) {
+      const typesData = await typesResp.json();
+      userTemplateTypes = typesData.templateTypes || [];
+    }
+
+    if (userWebSlides.length === 0) {
+      editorContainer.classList.add('hidden');
+      return;
+    }
+
+    editorContainer.classList.remove('hidden');
+    editorContainer.style.display = 'block';
+    countBadge.textContent = `${userWebSlides.length} slides`;
+
+    renderUserWebSlides();
+  } catch (err) {
+    console.error('Failed to load web slides:', err);
+    editorBody.innerHTML = `<p style="color: #ef4444; text-align: center; padding: 20px;">${esc(err.message)}</p>`;
+    editorContainer.classList.remove('hidden');
+    editorContainer.style.display = 'block';
+  }
+}
+
+function buildUserSlidePreviewSrcdoc(webSlide, slideIndex) {
+  const bgUrl = webSlide.bg_image_url || '';
+  const html = webSlide.html_content || '';
+  const css = webSlide.css_content || '';
+  const brandLogo = userWebBrandLogoUrl || '';
+  const slideName = webSlide.slide_name || '';
+  const isTitleSlide = isCoverSlideByName(slideIndex, slideName);
+
+  const isPovIntro = (slideName || '').toLowerCase() === 'pov intro';
+  const isIntroSlide = slideIndex === 0;
+  let logoHtml;
+  if (isTitleSlide) {
+    const logoTop = isPovIntro ? '30%' : isIntroSlide ? '35%' : '50%';
+    logoHtml = `<div style="position:absolute;top:${logoTop};left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:80px;pointer-events:none;">`;
+    if (brandLogo) {
+      logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:200px;width:auto;object-fit:contain;">`;
+      logoHtml += '<div style="width:3px;height:160px;background:rgba(255,255,255,0.6);"></div>';
+    }
+    logoHtml += '<img src="/sflogo.png" alt="SF" style="height:200px;width:auto;object-fit:contain;">';
+    logoHtml += '</div>';
+  } else {
+    logoHtml = '<div style="position:absolute;top:30px;right:30px;z-index:10;display:flex;align-items:center;gap:12px;pointer-events:none;">';
+    if (brandLogo) {
+      logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:48px;width:auto;object-fit:contain;">`;
+      logoHtml += '<div style="width:1px;height:40px;background:rgba(255,255,255,0.5);"></div>';
+    }
+    logoHtml += '<img src="/sflogo.png" alt="SF" style="height:48px;width:auto;object-fit:contain;">';
+    logoHtml += '</div>';
+  }
+
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{width:1920px;height:1080px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;}
+.slide-bg{position:absolute;inset:0;background-size:cover;background-position:center;z-index:1;${bgUrl ? `background-image:url('${bgUrl}');` : 'background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);'}}
+.slide-html-content{position:absolute;inset:0;z-index:2;}
+${css}
+</style></head><body>
+<div class="slide-bg"></div>
+<div class="slide-html-content">${html}</div>
+${logoHtml}
+</body></html>`;
+}
+
+function renderUserWebSlides() {
+  const editorBody = document.getElementById('web-slides-editor-body');
+  if (!editorBody) return;
+
+  editorBody.innerHTML = userWebSlides.map((slide, i) => {
+    const hasSlideData = slide.html_content || slide.bg_image_url;
+    const slideType = detectSlideType(slide.slide_name, i, userWebSlides.length, slide.template_type);
+    const fields = extractSlideFields(slide.html_content || '', slideType);
+
+    // Build template type dropdown options
+    const currentTemplate = slide.template_type || '';
+    const templateOptions = userTemplateTypes.map(tt =>
+      `<option value="${esc(tt)}" ${tt === currentTemplate ? 'selected' : ''}>${esc(tt)}</option>`
+    ).join('');
+
+    return `
+    <div id="user-slide-card-${i}" class="mb-4 rounded-xl border border-gray-200 overflow-hidden bg-gray-50">
+      <!-- Slide header -->
+      <div class="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-100">
+        <div class="flex items-center gap-2">
+          <span class="flex-shrink-0 flex items-center justify-center text-xs font-bold text-white rounded-full" style="width: 22px; height: 22px; background: #0176D3;">${i + 1}</span>
+          <span class="text-sm font-medium text-gray-700">${esc(slide.slide_name || 'Slide ' + (i+1))}</span>
+          <select data-user-slide-idx="${i}" data-user-slide-field="templateType" onchange="onUserTemplateTypeChange(${i}, this.value)" class="px-2 py-1 rounded border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-xs text-gray-500" style="max-width: 200px;">
+            <option value="">— Template —</option>
+            ${templateOptions}
+          </select>
+        </div>
+      </div>
+      <!-- Web Version Preview (full width, no Original column) -->
+      <div>
+        <div id="user-web-slide-preview-${i}" style="position: relative; width: 100%; padding-top: 56.25%; overflow: hidden; background: #000;">
+          ${hasSlideData
+            ? `<iframe id="user-slide-iframe-${i}" sandbox="allow-same-origin" scrolling="no" frameborder="0"
+                style="position: absolute; top: 0; left: 0; width: 1920px; height: 1080px; transform-origin: top left; border: none; pointer-events: none;"
+                srcdoc="${buildUserSlidePreviewSrcdoc(slide, i).replace(/"/g, '&quot;')}"></iframe>`
+            : `<div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #f8fafc;">
+                <span class="text-xs text-gray-400">No slide data</span>
+              </div>`}
+        </div>
+      </div>
+      ${hasSlideData ? `
+      <!-- Structured Editor Panel -->
+      <div class="border-t border-gray-100">
+        <button onclick="toggleUserSlideEditor(${i})" class="w-full px-4 py-2 text-left text-xs font-semibold uppercase tracking-wide hover:bg-gray-50 flex items-center gap-1 cursor-pointer" style="color:#0176D3;background:none;border:none;">
+          ✏️ Edit Content
+          <span id="user-se-toggle-arrow-${i}" class="ml-auto text-gray-400">▼</span>
+        </button>
+        <div id="user-se-panel-${i}" style="display:none;" class="px-4 pb-4">
+          ${buildSlideEditorHtml(i, slideType, fields, {
+            background_image_url: slide.bg_image_url || '',
+            html_content: slide.html_content || '',
+            css_content: slide.css_content || ''
+          })}
+        </div>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+
+  // Scale iframes
+  requestAnimationFrame(() => scaleUserSlidePreviewIframes());
+}
+
+function scaleUserSlidePreviewIframes() {
+  userWebSlides.forEach((ws, i) => {
+    const iframe = document.getElementById(`user-slide-iframe-${i}`);
+    if (!iframe) return;
+    const container = iframe.parentElement;
+    if (!container) return;
+    const containerWidth = container.clientWidth;
+    if (containerWidth > 0) {
+      const scale = containerWidth / 1920;
+      iframe.style.transform = `scale(${scale})`;
+      iframe.style.width = '1920px';
+      iframe.style.height = '1080px';
+    }
+  });
+}
+
+function toggleUserSlideEditor(slideIndex) {
+  const panel = document.getElementById(`user-se-panel-${slideIndex}`);
+  const arrow = document.getElementById(`user-se-toggle-arrow-${slideIndex}`);
+  if (!panel) return;
+  const visible = panel.style.display !== 'none';
+  panel.style.display = visible ? 'none' : 'block';
+  if (arrow) arrow.textContent = visible ? '▼' : '▲';
+}
+
+function refreshUserSlidePreview(slideIndex) {
+  const slide = userWebSlides[slideIndex];
+  if (!slide) return;
+  const iframe = document.getElementById(`user-slide-iframe-${slideIndex}`);
+  if (!iframe) return;
+  iframe.srcdoc = buildUserSlidePreviewSrcdoc(slide, slideIndex);
+  requestAnimationFrame(() => scaleUserSlidePreviewIframes());
+}
+
+// ─── User Slide Save ───
+async function saveUserSlideContent(slideIndex) {
+  const statusEl = document.getElementById(`se-status-${slideIndex}`);
+  if (statusEl) { statusEl.textContent = 'Saving...'; statusEl.style.color = '#6b7280'; }
+
+  const slide = userWebSlides[slideIndex];
+  if (!slide) { if (statusEl) statusEl.textContent = 'Error: no slide data'; return; }
+
+  const slideType = detectSlideType(slide.slide_name, slideIndex, userWebSlides.length, slide.template_type);
+  const fields = collectSlideEditorFields(slideIndex, slideType);
+  const newHtml = reconstructSlideHtml(slide.html_content, slideType, fields);
+
+  const email = document.getElementById('user-email').textContent;
+
+  try {
+    const resp = await fetch(`/api/presentations/${currentPresentationId}/web-slides/${slideIndex}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, html: newHtml })
+    });
+    const result = await resp.json();
+    if (!resp.ok) throw new Error(result.error || 'Failed');
+
+    slide.html_content = newHtml;
+    refreshUserSlidePreview(slideIndex);
+
+    if (statusEl) { statusEl.textContent = '✓ Saved'; statusEl.style.color = '#22c55e'; }
+    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+  } catch (err) {
+    console.error('Save failed:', err);
+    if (statusEl) { statusEl.textContent = '✕ ' + err.message; statusEl.style.color = '#ef4444'; }
+  }
+}
+
+// ─── User Slide Background URL ───
+async function applyUserSlideBgUrl(slideIndex) {
+  const urlInput = document.getElementById(`se-bg-url-${slideIndex}`);
+  if (!urlInput) return;
+  const url = urlInput.value.trim();
+  if (!url) return;
+  const email = document.getElementById('user-email').textContent;
+
+  try {
+    const resp = await fetch(`/api/presentations/${currentPresentationId}/web-slides/${slideIndex}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, backgroundImageUrl: url })
+    });
+    if (!resp.ok) throw new Error('Failed to update');
+
+    userWebSlides[slideIndex].bg_image_url = url;
+    refreshUserSlidePreview(slideIndex);
+  } catch (err) {
+    console.error('Apply BG URL failed:', err);
+    alert('Failed to apply background URL: ' + err.message);
+  }
+}
+
+// ─── User Slide Background Upload ───
+async function uploadUserSlideBgImage(slideIndex, fileInput) {
+  const file = fileInput.files[0];
+  if (!file) return;
+  const email = document.getElementById('user-email').textContent;
+
+  const statusEl = document.getElementById(`se-status-${slideIndex}`);
+  if (statusEl) { statusEl.textContent = 'Uploading...'; statusEl.style.color = '#6b7280'; }
+
+  const formData = new FormData();
+  formData.append('image', file);
+  formData.append('email', email);
+  formData.append('type', 'background');
+
+  try {
+    const resp = await fetch(`/api/presentations/${currentPresentationId}/web-slides/${slideIndex}/upload-image`, {
+      method: 'POST',
+      body: formData
+    });
+    const result = await resp.json();
+    if (!resp.ok) throw new Error(result.error || 'Upload failed');
+
+    const urlInput = document.getElementById(`se-bg-url-${slideIndex}`);
+    if (urlInput) urlInput.value = result.url;
+    userWebSlides[slideIndex].bg_image_url = result.url;
+    refreshUserSlidePreview(slideIndex);
+
+    if (statusEl) { statusEl.textContent = '✓ Uploaded'; statusEl.style.color = '#22c55e'; }
+    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+  } catch (err) {
+    console.error('Upload failed:', err);
+    if (statusEl) { statusEl.textContent = '✕ Upload failed'; statusEl.style.color = '#ef4444'; }
+  }
+  fileInput.value = '';
+}
+
+// ─── User Slide Background AI Regeneration ───
+async function regenerateUserSlideBgOnly(slideIndex) {
+  const statusEl = document.getElementById(`se-status-${slideIndex}`);
+  if (statusEl) { statusEl.textContent = 'Generating background...'; statusEl.style.color = '#6b7280'; }
+  const email = document.getElementById('user-email').textContent;
+
+  try {
+    const resp = await fetch(`/api/presentations/${currentPresentationId}/web-slides/${slideIndex}/regenerate-background`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    if (!resp.ok) throw new Error('Failed to start regeneration');
+
+    // Poll for completion
+    const pollInterval = setInterval(async () => {
+      try {
+        const pollResp = await fetch(`/api/presentations/${currentPresentationId}/web-slides?email=${encodeURIComponent(email)}`);
+        if (!pollResp.ok) return;
+        const pollData = await pollResp.json();
+        const updated = (pollData.slides || []).find(s => s.slide_index === slideIndex);
+        const cached = userWebSlides[slideIndex];
+        if (updated && cached && updated.bg_image_url && updated.bg_image_url !== cached.bg_image_url) {
+          clearInterval(pollInterval);
+          cached.bg_image_url = updated.bg_image_url;
+          const urlInput = document.getElementById(`se-bg-url-${slideIndex}`);
+          if (urlInput) urlInput.value = updated.bg_image_url;
+          refreshUserSlidePreview(slideIndex);
+          if (statusEl) { statusEl.textContent = '✓ Background updated'; statusEl.style.color = '#22c55e'; }
+          setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+        }
+      } catch (e) { /* keep polling */ }
+    }, 3000);
+
+    // Timeout after 3 minutes
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      if (statusEl && statusEl.textContent.includes('Generating')) {
+        statusEl.textContent = 'Timed out — check back later';
+        statusEl.style.color = '#f59e0b';
+      }
+    }, 180000);
+  } catch (err) {
+    console.error('Regen failed:', err);
+    if (statusEl) { statusEl.textContent = '✕ ' + err.message; statusEl.style.color = '#ef4444'; }
+  }
+}
+
+// ─── Template Type Change Handler ───
+async function onUserTemplateTypeChange(slideIndex, newTemplateType) {
+  if (!newTemplateType) return;
+  const email = document.getElementById('user-email').textContent;
+  const statusEl = document.getElementById(`se-status-${slideIndex}`);
+  if (statusEl) { statusEl.textContent = 'Applying template...'; statusEl.style.color = '#6b7280'; }
+
+  try {
+    const resp = await fetch(`/api/presentations/${currentPresentationId}/web-slides/${slideIndex}/apply-template`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, templateType: newTemplateType })
+    });
+    const result = await resp.json();
+    if (!resp.ok) throw new Error(result.error || 'Failed');
+
+    // Update local cache with new HTML/CSS from template
+    const slide = userWebSlides[slideIndex];
+    slide.html_content = result.html;
+    slide.css_content = result.css;
+    slide.template_type = newTemplateType;
+
+    // Re-render this slide's preview and editor panel
+    refreshUserSlidePreview(slideIndex);
+
+    // Re-render the editor fields for the new template type
+    const panel = document.getElementById(`user-se-panel-${slideIndex}`);
+    if (panel) {
+      const newSlideType = detectSlideType(slide.slide_name, slideIndex, userWebSlides.length, newTemplateType);
+      const newFields = extractSlideFields(slide.html_content, newSlideType);
+      panel.innerHTML = buildSlideEditorHtml(slideIndex, newSlideType, newFields, {
+        background_image_url: slide.bg_image_url || '',
+        html_content: slide.html_content || '',
+        css_content: slide.css_content || ''
+      });
+    }
+
+    if (statusEl) { statusEl.textContent = '✓ Template applied'; statusEl.style.color = '#22c55e'; }
+    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 3000);
+  } catch (err) {
+    console.error('Template change failed:', err);
+    if (statusEl) { statusEl.textContent = '✕ ' + err.message; statusEl.style.color = '#ef4444'; }
+  }
+}
+
+// ─── Poll Web Background Generation ───
+function pollWebBgGeneration(presId) {
+  const email = document.getElementById('user-email').textContent;
+  const pollInterval = setInterval(async () => {
+    try {
+      const resp = await fetch(`/api/presentations/${presId}?email=${encodeURIComponent(email)}`);
+      if (!resp.ok) return;
+      const result = await resp.json();
+      const pres = result.presentation;
+
+      if (pres.status === 'completed') {
+        clearInterval(pollInterval);
+        // Reload the full item view to show the editor
+        viewItem(presId, true);
+      } else if (pres.status === 'failed') {
+        clearInterval(pollInterval);
+        viewItem(presId, true);
+      }
+    } catch (e) { /* keep polling */ }
+  }, 4000);
+
+  // Timeout after 5 minutes
+  setTimeout(() => {
+    clearInterval(pollInterval);
+  }, 300000);
 }
 
 // ═══════════════════════════════════════════════
@@ -3760,21 +4172,27 @@ function buildSlideEditorHtml(slideIndex, slideType, fields, webSlide) {
   }
 
   // === Background Image Controls ===
+  // Dispatch to correct handler based on user vs reference slide context
+  const applyBgFn = `(window._isWebSlides ? applyUserSlideBgUrl : applySlideBgUrl)`;
+  const regenBgFn = `(window._isWebSlides ? regenerateUserSlideBgOnly : regenerateSlideBgOnly)`;
+  const uploadBgFn = `(window._isWebSlides ? uploadUserSlideBgImage : uploadSlideBgImage)`;
+  const saveFn = `(window._isWebSlides ? saveUserSlideContent : saveSlideContent)`;
+
   const bgUrl = webSlide ? (webSlide.background_image_url || '') : '';
   fieldsHtml += `<div class="mt-4 pt-3 border-t border-gray-200">`;
   fieldsHtml += `<label class="${labelClass}" style="margin-top:0">Background Image</label>`;
   fieldsHtml += `<div class="flex items-center gap-2">`;
   fieldsHtml += `<input type="text" id="se-bg-url-${slideIndex}" class="${inputClass}" value="${esc(bgUrl)}" placeholder="Paste image URL..." style="flex:1;">`;
-  fieldsHtml += `<button onclick="applySlideBgUrl(${slideIndex})" class="${btnSmClass}" style="color:#0176D3;">Apply</button>`;
+  fieldsHtml += `<button onclick="${applyBgFn}(${slideIndex})" class="${btnSmClass}" style="color:#0176D3;">Apply</button>`;
   fieldsHtml += `</div>`;
   fieldsHtml += `<div class="flex items-center gap-2 mt-2">`;
-  fieldsHtml += `<button onclick="regenerateSlideBgOnly(${slideIndex})" class="${btnSmClass}" style="color:#0176D3;">🔄 AI Generate</button>`;
-  fieldsHtml += `<label class="${btnSmClass} cursor-pointer" style="color:#0176D3;">📁 Upload<input type="file" accept="image/*" onchange="uploadSlideBgImage(${slideIndex}, this)" hidden></label>`;
+  fieldsHtml += `<button onclick="${regenBgFn}(${slideIndex})" class="${btnSmClass}" style="color:#0176D3;">🔄 AI Generate</button>`;
+  fieldsHtml += `<label class="${btnSmClass} cursor-pointer" style="color:#0176D3;">📁 Upload<input type="file" accept="image/*" onchange="${uploadBgFn}(${slideIndex}, this)" hidden></label>`;
   fieldsHtml += `</div></div>`;
 
   // === Save Button ===
   fieldsHtml += `<div class="mt-4 flex items-center gap-3">`;
-  fieldsHtml += `<button onclick="saveSlideContent(${slideIndex})" class="px-4 py-2 text-sm font-semibold rounded-lg cursor-pointer border-none text-white" style="background:#0176D3;">💾 Save Changes</button>`;
+  fieldsHtml += `<button onclick="${saveFn}(${slideIndex})" class="px-4 py-2 text-sm font-semibold rounded-lg cursor-pointer border-none text-white" style="background:#0176D3;">💾 Save Changes</button>`;
   fieldsHtml += `<span id="se-status-${slideIndex}" class="text-xs text-gray-400"></span>`;
   fieldsHtml += `</div>`;
 
@@ -4589,6 +5007,7 @@ async function saveReferenceAnnotations() {
 // Rescale slide preview iframes on window resize
 window.addEventListener('resize', () => {
   if (typeof scaleSlidePreviewIframes === 'function') scaleSlidePreviewIframes();
+  if (typeof scaleUserSlidePreviewIframes === 'function') scaleUserSlidePreviewIframes();
 });
 
 window.addEventListener('popstate', function(e) {

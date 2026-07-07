@@ -128,8 +128,16 @@
     let cursorTimeout = null;
     let brandLogoUrl = '';
 
-    // Extract refId from URL: /present-web/:refId
-    const refId = window.location.pathname.split('/present-web/')[1]?.split('?')[0]?.split('/')[0];
+    // Detect whether this is a reference presentation or a user presentation
+    // URL patterns: /present-web/:refId (reference) or /present-web-item/:presId (user)
+    const pathname = window.location.pathname;
+    let refId = null;
+    let itemPresId = null;
+    if (pathname.includes('/present-web-item/')) {
+      itemPresId = pathname.split('/present-web-item/')[1]?.split('?')[0]?.split('/')[0];
+    } else {
+      refId = pathname.split('/present-web/')[1]?.split('?')[0]?.split('/')[0];
+    }
 
     /**
      * Build a complete HTML document for a single slide.
@@ -211,10 +219,19 @@ ${logoHtml}
     }
 
     async function init() {
-      if (!refId) return showError('Invalid presentation link');
+      if (!refId && !itemPresId) return showError('Invalid presentation link');
 
       try {
-        const resp = await fetch(`/api/present-web/${refId}/data`);
+        // Build the correct API URL based on whether this is a reference or user presentation
+        let apiUrl;
+        if (itemPresId) {
+          const params = new URLSearchParams(window.location.search);
+          const token = params.get('token');
+          apiUrl = `/api/present-web/item/${itemPresId}/data` + (token ? `?token=${encodeURIComponent(token)}` : '');
+        } else {
+          apiUrl = `/api/present-web/${refId}/data`;
+        }
+        const resp = await fetch(apiUrl);
         const data = await resp.json();
 
         if (!resp.ok) {
