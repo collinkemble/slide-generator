@@ -3232,19 +3232,7 @@ function renderRefDetailThumbnails(annotations) {
         <div class="flex items-center gap-2">
           <span class="flex-shrink-0 flex items-center justify-center text-xs font-bold text-white rounded-full" style="width: 22px; height: 22px; background: #0176D3;">${slide.slideNumber}</span>
           <input type="text" data-refdetail-idx="${i}" data-refdetail-field="name" value="${esc(slide.name || '')}" placeholder="Slide name..." class="flex-1 px-2 py-1 rounded border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm font-medium text-gray-700" style="max-width: 300px;">
-          <select data-refdetail-idx="${i}" data-refdetail-field="templateType" class="px-2 py-1 rounded border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-xs text-gray-500" style="max-width: 200px;">
-            <option value=""${!slide.templateType ? ' selected' : ''}>Template Type...</option>
-            <option value="intro"${slide.templateType === 'intro' ? ' selected' : ''}>Intro</option>
-            <option value="simple-heading"${slide.templateType === 'simple-heading' ? ' selected' : ''}>Simple Heading</option>
-            <option value="forward-looking"${slide.templateType === 'forward-looking' ? ' selected' : ''}>Forward Looking</option>
-            <option value="pov-intro"${slide.templateType === 'pov-intro' ? ' selected' : ''}>POV Intro</option>
-            <option value="pov-themes"${slide.templateType === 'pov-themes' ? ' selected' : ''}>POV Themes</option>
-            <option value="agenda"${slide.templateType === 'agenda' ? ' selected' : ''}>Agenda</option>
-            <option value="demo-chapter-intro"${slide.templateType === 'demo-chapter-intro' ? ' selected' : ''}>Demo Chapter Intro</option>
-            <option value="demo-chapter-closing"${slide.templateType === 'demo-chapter-closing' ? ' selected' : ''}>Demo Chapter Closing</option>
-            <option value="thank-you"${slide.templateType === 'thank-you' ? ' selected' : ''}>Thank You</option>
-            <option value="content"${slide.templateType === 'content' ? ' selected' : ''}>Content</option>
-          </select>
+          <input type="text" data-refdetail-idx="${i}" data-refdetail-field="templateType" value="${esc(slide.templateType || '')}" placeholder="Template type..." class="px-2 py-1 rounded border border-gray-200 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-xs text-gray-500" style="max-width: 200px;">
         </div>
         ${hasWebVersion ? `
           <div class="flex items-center gap-2">
@@ -3943,7 +3931,7 @@ async function saveSlideContent(slideIndex) {
 
   const ann = currentRefAnnotations[slideIndex] || {};
   // Check if the user changed the templateType in the dropdown
-  const templateTypeSelect = document.querySelector(`select[data-refdetail-idx="${slideIndex}"][data-refdetail-field="templateType"]`);
+  const templateTypeSelect = document.querySelector(`input[data-refdetail-idx="${slideIndex}"][data-refdetail-field="templateType"]`);
   const templateType = templateTypeSelect ? templateTypeSelect.value : (ann.templateType || '');
   const slideType = detectSlideType(ann.name, slideIndex, currentRefAnnotations.length, templateType);
   const fields = collectSlideEditorFields(slideIndex, slideType);
@@ -4152,7 +4140,7 @@ async function saveRefDetailAnnotations() {
   const updated = currentRefAnnotations.map((slide, i) => {
     const nameInput = document.querySelector(`input[data-refdetail-idx="${i}"][data-refdetail-field="name"]`);
     const descInput = document.querySelector(`input[data-refdetail-idx="${i}"][data-refdetail-field="description"]`);
-    const templateTypeSelect = document.querySelector(`select[data-refdetail-idx="${i}"][data-refdetail-field="templateType"]`);
+    const templateTypeSelect = document.querySelector(`input[data-refdetail-idx="${i}"][data-refdetail-field="templateType"]`);
     return {
       ...slide,
       name: nameInput ? nameInput.value.trim() : slide.name,
