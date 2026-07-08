@@ -11,6 +11,7 @@ const { GoogleGenAI } = require('@google/genai');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const sharp = require('sharp');
 const multer = require('multer');
+const puppeteer = require('puppeteer-core');
 
 const app = express();
 const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -34,6 +35,112 @@ async function getSfLogoBuffer() {
 }
 // Pre-load it
 getSfLogoBuffer();
+
+// ─── Puppeteer browser pool for slide screenshots ───
+let _puppeteerBrowser = null;
+async function getPuppeteerBrowser() {
+  if (_puppeteerBrowser && _puppeteerBrowser.connected) return _puppeteerBrowser;
+  _puppeteerBrowser = await puppeteer.launch({
+    executablePath: '/usr/bin/chromium',
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+           '--disable-gpu', '--disable-web-security', '--hide-scrollbars']
+  });
+  return _puppeteerBrowser;
+}
+
+/**
+ * Render a web slide's HTML/CSS to a 1920×1080 PNG screenshot.
+ * Uses the exact same HTML structure as present-web.html's buildSlideSrcdoc.
+ * Returns a Buffer of the PNG image.
+ *
+ * @param {object} slide - { html_content, css_content, bg_image_url, slide_name }
+ * @param {number} slideIndex - 0-based slide index
+ * @param {string} brandLogoUrl - URL of the brand logo
+ * @param {string} sfLogoUrl - Public URL of the SF logo
+ * @returns {Promise<Buffer>} PNG image buffer
+ */
+async function renderWebSlideToImage(slide, slideIndex, brandLogoUrl, sfLogoUrl) {
+  const html = slide.html_content || '';
+  const css = slide.css_content || '';
+  const bgUrl = slide.bg_image_url || '';
+  const sName = (slide.slide_name || '').toLowerCase();
+  const isCover = slideIndex === 0 || sName === 'cover' || sName === 'title' || sName.includes('pov intro');
+  const isIntroSlide = slideIndex === 0;
+  const isPovIntro = sName.includes('pov intro');
+
+  // Build logo HTML exactly like present-web.html
+  let logoHtml = '';
+  if (isCover) {
+    const logoTop = isPovIntro ? '30%' : isIntroSlide ? '35%' : '50%';
+    logoHtml = `<div style="position:absolute;top:${logoTop};left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:80px;pointer-events:none;">`;
+    if (brandLogoUrl) {
+      logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:200px;width:auto;object-fit:contain;">`;
+      logoHtml += '<div style="width:3px;height:160px;background:rgba(255,255,255,0.6);"></div>';
+    }
+    if (sfLogoUrl) {
+      logoHtml += `<img src="${sfLogoUrl}" alt="Salesforce" style="height:200px;width:auto;object-fit:contain;">`;
+    }
+    logoHtml += '</div>';
+  } else {
+    logoHtml = '<div style="position:absolute;top:30px;right:30px;z-index:10;display:flex;align-items:center;gap:12px;pointer-events:none;">';
+    if (brandLogoUrl) {
+      logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:48px;width:auto;object-fit:contain;">`;
+      logoHtml += '<div style="width:1px;height:40px;background:rgba(255,255,255,0.5);"></div>';
+    }
+    if (sfLogoUrl) {
+      logoHtml += `<img src="${sfLogoUrl}" alt="Salesforce" style="height:48px;width:auto;object-fit:contain;">`;
+    }
+    logoHtml += '</div>';
+  }
+
+  const fullHtml = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 1920px; height: 1080px; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+.slide-bg {
+  position: absolute; inset: 0;
+  background-size: cover; background-position: center;
+  z-index: 1;
+  ${bgUrl ? `background-image: url('${bgUrl}');` : 'background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);'}
+}
+.slide-html-content {
+  position: absolute; inset: 0;
+  z-index: 2;
+}
+${css}
+</style>
+</head>
+<body>
+<div class="slide-bg"></div>
+<div class="slide-html-content">${html}</div>
+${logoHtml}
+</body>
+</html>`;
+
+  const browser = await getPuppeteerBrowser();
+  const page = await browser.newPage();
+  try {
+    await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+    await page.setContent(fullHtml, { waitUntil: 'networkidle0', timeout: 15000 });
+
+    // Wait a bit for images and fonts to load
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 500)));
+
+    const screenshotBuf = await page.screenshot({
+      type: 'png',
+      clip: { x: 0, y: 0, width: 1920, height: 1080 }
+    });
+
+    return screenshotBuf;
+  } finally {
+    await page.close();
+  }
+}
+
 const PORT = process.env.PORT || 3000;
 
 // ─── Middleware ───
@@ -1900,12 +2007,13 @@ app.post('/api/presentations/:id/export-google', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
-// APP-SPECIFIC — Web Slides → Google Slides Export (native text/shapes)
+// APP-SPECIFIC — Web Slides → Google Slides Export (Hybrid: Screenshot + Editable Text)
 // ═══════════════════════════════════════════════
 
 // POST /api/presentations/:id/export-google-web — Export web-based presentation to Google Slides
-// Uses AI to parse HTML into structured text elements, then creates native Google Slides with
-// background images + text boxes/shapes (fully editable, not flat images).
+// HYBRID APPROACH: Screenshots the fully-rendered HTML slide (with all design elements, gradients,
+// overlays, accent bars, containers) as a background image, then overlays native editable text boxes.
+// This gives pixel-perfect visual design AND editable text in Google Slides.
 app.post('/api/presentations/:id/export-google-web', async (req, res) => {
   try {
     const { email } = req.body;
@@ -1943,13 +2051,50 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
     if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch(e) { brandData = {}; } }
     brandData = brandData || {};
 
-    console.log(`[WebExport] Starting Google Slides export for presentation ${presentation.id} (${slides.length} slides)...`);
+    const brandLogoUrl = brandData.brandLogoUrl || '';
+    console.log(`[WebExport] Starting HYBRID Google Slides export for presentation ${presentation.id} (${slides.length} slides)...`);
 
-    // Step 1: Use AI to parse all slides' HTML into structured text elements in one batch
-    const parsedSlides = await parseWebSlidesToStructuredElements(slides, brandData);
-    console.log(`[WebExport] Parsed ${parsedSlides.length} slides into structured elements`);
+    // Step 1: Upload SF logo to R2 for public URL
+    let sfLogoPublicUrl = '';
+    try {
+      const sfLogoBuf = await getSfLogoBuffer();
+      if (sfLogoBuf) {
+        sfLogoPublicUrl = await uploadToR2(sfLogoBuf, 'system/salesforce-logo-white.png', 'image/png');
+      }
+    } catch (e) {
+      console.warn('[WebExport] Could not upload SF logo to R2:', e.message);
+    }
 
-    // Step 2: Create Google Slides presentation
+    // Step 2: Screenshot all slides and upload to R2 (design layer)
+    console.log(`[WebExport] Rendering ${slides.length} slide screenshots via headless browser...`);
+    const screenshotUrls = [];
+    for (let i = 0; i < slides.length; i++) {
+      try {
+        const pngBuf = await renderWebSlideToImage(slides[i], i, brandLogoUrl, sfLogoPublicUrl);
+        const hash = crypto.createHash('md5').update(pngBuf).digest('hex').substring(0, 8);
+        const key = `google-export/${presentation.id}/slide-${i}-${hash}.png`;
+        const publicUrl = await uploadToR2(pngBuf, key, 'image/png');
+        screenshotUrls.push(publicUrl);
+        console.log(`[WebExport] Slide ${i + 1}/${slides.length} screenshot uploaded`);
+      } catch (err) {
+        console.error(`[WebExport] Screenshot failed for slide ${i}:`, err.message);
+        // Fall back to the original background image if screenshot fails
+        screenshotUrls.push(slides[i].bg_image_url || '');
+      }
+    }
+
+    // Step 3: Extract text elements from HTML (for editable text overlay)
+    // We use simple regex extraction — the text goes on TOP of the screenshot background
+    const parsedSlides = slides.map((slide, i) => {
+      try {
+        return { slideIndex: i, elements: extractTextFromHtml(slide.html_content || '', slide.css_content || '') };
+      } catch (err) {
+        console.warn(`[WebExport] Text extraction failed for slide ${i}: ${err.message}`);
+        return { slideIndex: i, elements: [] };
+      }
+    });
+
+    // Step 4: Create Google Slides presentation
     const slidesService = google.slides({ version: 'v1', auth: authClient });
     const createResp = await slidesService.presentations.create({
       requestBody: { title: presentation.name || 'Presentation' }
@@ -1959,7 +2104,7 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
     const presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
     console.log(`[WebExport] Created Google Slides: ${presentationId}`);
 
-    // Step 3: Set up slides — delete default slide, create blank slides
+    // Step 5: Set up slides — delete default slide, create blank slides
     const setupRequests = [];
     if (createResp.data.slides && createResp.data.slides.length > 0) {
       setupRequests.push({ deleteObject: { objectId: createResp.data.slides[0].objectId } });
@@ -1978,41 +2123,24 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
       requestBody: { requests: setupRequests }
     });
 
-    // Step 4: Upload SF logo to R2 so it has a publicly accessible URL for Google Slides
     const slideWidth = 9144000;   // 10 inches in EMU
     const slideHeight = 5143500;  // 5.625 inches in EMU (16:9)
-    const brandLogoUrl = brandData.brandLogoUrl || '';
-    let sfLogoPublicUrl = '';
-    try {
-      const sfLogoBuf = await getSfLogoBuffer();
-      if (sfLogoBuf) {
-        sfLogoPublicUrl = await uploadToR2(sfLogoBuf, 'system/salesforce-logo-white.png', 'image/png');
-        console.log(`[WebExport] SF logo uploaded to R2: ${sfLogoPublicUrl}`);
-      }
-    } catch (e) {
-      console.warn('[WebExport] Could not upload SF logo to R2:', e.message);
-    }
 
-    const brandPrimaryColor = brandData.brandColorPrimary || brandData.primaryColor || '#0176D3';
-    const brandSecondaryColor = brandData.brandColorSecondary || brandData.secondaryColor || '#032D60';
-
+    // Step 6: For each slide, set screenshot as background + add editable text boxes
     for (let i = 0; i < slides.length; i++) {
-      const slide = slides[i];
+      const bgUrl = screenshotUrls[i];
       const parsed = parsedSlides[i];
-      const sName = (slide.slide_name || '').toLowerCase();
-      const isCover = i === 0 || sName === 'cover' || sName === 'title' || sName.includes('pov intro');
 
-      // ── Batch 1: Background + overlay + text (core content — must succeed) ──
       const coreRequests = [];
 
-      // Background image
-      if (slide.bg_image_url) {
+      // Set the screenshot as the slide background — this IS the design
+      if (bgUrl) {
         coreRequests.push({
           updatePageProperties: {
             objectId: `ws_slide_${i}`,
             pageProperties: {
               pageBackgroundFill: {
-                stretchedPictureFill: { contentUrl: slide.bg_image_url }
+                stretchedPictureFill: { contentUrl: bgUrl }
               }
             },
             fields: 'pageBackgroundFill'
@@ -2020,84 +2148,18 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
         });
       }
 
-      // Semi-transparent dark overlay
-      const overlayId = `ws_overlay_${i}`;
-      coreRequests.push({
-        createShape: {
-          objectId: overlayId,
-          shapeType: 'RECTANGLE',
-          elementProperties: {
-            pageObjectId: `ws_slide_${i}`,
-            size: { width: { magnitude: slideWidth, unit: 'EMU' }, height: { magnitude: slideHeight, unit: 'EMU' } },
-            transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, unit: 'EMU' }
-          }
-        }
-      });
-      coreRequests.push({
-        updateShapeProperties: {
-          objectId: overlayId,
-          shapeProperties: {
-            shapeBackgroundFill: {
-              solidFill: { color: { rgbColor: { red: 0, green: 0, blue: 0 } }, alpha: 0.45 }
-            },
-            outline: { propertyState: 'NOT_RENDERED' }
-          },
-          fields: 'shapeBackgroundFill,outline'
-        }
-      });
-
-      // ── Design shapes: deterministic template-based approach ──
-      // Instead of parsing CSS (unreliable), create predefined design elements based on slide type
-      const designShapes = getDesignShapesForSlide(sName, isCover, parsed, brandPrimaryColor, brandSecondaryColor, i);
-      for (let s = 0; s < designShapes.length; s++) {
-        const ds = designShapes[s];
-        const dsId = `ws_ds_${i}_${s}`;
-        const dsX = Math.round((ds.x / 100) * slideWidth);
-        const dsY = Math.round((ds.y / 100) * slideHeight);
-        const dsW = Math.round((ds.width / 100) * slideWidth);
-        const dsH = Math.round((ds.height / 100) * slideHeight);
-
-        coreRequests.push({
-          createShape: {
-            objectId: dsId,
-            shapeType: ds.shapeType || 'RECTANGLE',
-            elementProperties: {
-              pageObjectId: `ws_slide_${i}`,
-              size: {
-                width: { magnitude: Math.max(dsW, 18288), unit: 'EMU' },
-                height: { magnitude: Math.max(dsH, 18288), unit: 'EMU' }
-              },
-              transform: { scaleX: 1, scaleY: 1, translateX: dsX, translateY: dsY, unit: 'EMU' }
-            }
-          }
-        });
-        coreRequests.push({
-          updateShapeProperties: {
-            objectId: dsId,
-            shapeProperties: {
-              shapeBackgroundFill: {
-                solidFill: { color: { rgbColor: parseColorToRgb(ds.fillColor) }, alpha: ds.fillAlpha }
-              },
-              outline: { propertyState: 'NOT_RENDERED' }
-            },
-            fields: 'shapeBackgroundFill,outline'
-          }
-        });
-      }
-      if (designShapes.length > 0) {
-        console.log(`[WebExport] Slide ${i + 1}: added ${designShapes.length} design shapes (type: ${sName || 'content'})`);
-      }
-
-      // Text elements from parsed HTML
+      // Add transparent, editable text boxes on top of the screenshot
+      // These are invisible (no fill, no border) and sit exactly where the text
+      // appears in the screenshot, making the text selectable and editable
       if (parsed && parsed.elements && parsed.elements.length > 0) {
         for (let j = 0; j < parsed.elements.length; j++) {
           const el = parsed.elements[j];
-          const shapeId = `ws_el_${i}_${j}`;
+          const shapeId = `ws_txt_${i}_${j}`;
 
           const x = Math.round((el.x / 100) * slideWidth);
           const y = Math.round((el.y / 100) * slideHeight);
-          const w = Math.round((el.width / 100) * slideWidth);
-          const h = Math.round((el.height / 100) * slideHeight);
+          const w = Math.round((el.w / 100) * slideWidth);
+          const h = Math.round((el.h / 100) * slideHeight);
 
           coreRequests.push({
             createShape: {
@@ -2106,34 +2168,32 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
               elementProperties: {
                 pageObjectId: `ws_slide_${i}`,
                 size: {
-                  width: { magnitude: w, unit: 'EMU' },
-                  height: { magnitude: h, unit: 'EMU' }
+                  width: { magnitude: Math.max(w, 91440), unit: 'EMU' },
+                  height: { magnitude: Math.max(h, 91440), unit: 'EMU' }
                 },
                 transform: { scaleX: 1, scaleY: 1, translateX: x, translateY: y, unit: 'EMU' }
               }
             }
           });
 
-          const textContent = el.text || '';
-          if (textContent) {
+          if (el.text) {
             coreRequests.push({
-              insertText: { objectId: shapeId, text: textContent, insertionIndex: 0 }
+              insertText: { objectId: shapeId, text: el.text, insertionIndex: 0 }
             });
 
-            const fontSize = el.fontSize || 18;
-            const fontColor = parseColorToRgb(el.color || '#FFFFFF');
-            const isBold = el.bold !== undefined ? el.bold : (el.type === 'title' || el.type === 'heading');
+            // Style the text to match what's in the screenshot
+            const textStyle = {
+              fontFamily: 'Arial',
+              fontSize: { magnitude: el.fontSize || 16, unit: 'PT' },
+              foregroundColor: { opaqueColor: { rgbColor: parseColorToRgb(el.color || '#FFFFFF') } },
+              bold: el.bold || false,
+              italic: el.italic || false
+            };
 
             coreRequests.push({
               updateTextStyle: {
                 objectId: shapeId,
-                style: {
-                  fontFamily: el.fontFamily || 'Arial',
-                  fontSize: { magnitude: fontSize, unit: 'PT' },
-                  foregroundColor: { opaqueColor: { rgbColor: fontColor } },
-                  bold: isBold,
-                  italic: el.italic || false
-                },
+                style: textStyle,
                 textRange: { type: 'ALL' },
                 fields: 'fontFamily,fontSize,foregroundColor,bold,italic'
               }
@@ -2153,7 +2213,7 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
             }
           }
 
-          // Transparent background, no outline
+          // Transparent text box — no fill, no border (text overlays the screenshot)
           coreRequests.push({
             updateShapeProperties: {
               objectId: shapeId,
@@ -2167,119 +2227,40 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
         }
       }
 
-      // ── Send Batch 1: Core content (background + overlay + text) ──
+      // Send the batch
       if (coreRequests.length > 0) {
         try {
           await slidesService.presentations.batchUpdate({
             presentationId,
             requestBody: { requests: coreRequests }
           });
-          console.log(`[WebExport] Slide ${i + 1}/${slides.length} core content exported (${parsed?.elements?.length || 0} text elements)`);
-        } catch (coreErr) {
-          console.error(`[WebExport] Core batch failed for slide ${i + 1}:`, coreErr.message);
-          // Retry with just background (no overlay/text)
-          try {
-            const retryReqs = [];
-            if (slide.bg_image_url) {
-              retryReqs.push({
-                updatePageProperties: {
-                  objectId: `ws_slide_${i}`,
-                  pageProperties: {
-                    pageBackgroundFill: { stretchedPictureFill: { contentUrl: slide.bg_image_url } }
-                  },
-                  fields: 'pageBackgroundFill'
-                }
-              });
-            }
-            if (retryReqs.length > 0) {
+          console.log(`[WebExport] Slide ${i + 1}/${slides.length} exported (screenshot bg + ${parsed?.elements?.length || 0} text boxes)`);
+        } catch (batchErr) {
+          console.error(`[WebExport] Batch failed for slide ${i + 1}:`, batchErr.message);
+          // Retry with just background
+          if (bgUrl) {
+            try {
               await slidesService.presentations.batchUpdate({
                 presentationId,
-                requestBody: { requests: retryReqs }
+                requestBody: { requests: [{
+                  updatePageProperties: {
+                    objectId: `ws_slide_${i}`,
+                    pageProperties: {
+                      pageBackgroundFill: { stretchedPictureFill: { contentUrl: bgUrl } }
+                    },
+                    fields: 'pageBackgroundFill'
+                  }
+                }] }
               });
-            }
-          } catch (retryErr) {
-            console.warn(`[WebExport] Retry also failed for slide ${i + 1}: ${retryErr.message}`);
-          }
-        }
-      }
-
-      // ── Send Batch 2: Logos (separate so failures don't break text) ──
-      const logoRequests = [];
-
-      // Brand logo — top-right on cover, smaller on other slides
-      if (brandLogoUrl) {
-        const logoId = `ws_brand_logo_${i}`;
-        if (isCover) {
-          // Cover slide: centered brand logo, larger
-          const logoW = 2743200; // 3 inches
-          const logoH = 685800;  // 0.75 inches
-          const logoX = Math.round((slideWidth - logoW) / 2); // centered
-          const logoY = 457200;  // 0.5 inch from top
-          logoRequests.push({
-            createImage: {
-              objectId: logoId,
-              url: brandLogoUrl,
-              elementProperties: {
-                pageObjectId: `ws_slide_${i}`,
-                size: { width: { magnitude: logoW, unit: 'EMU' }, height: { magnitude: logoH, unit: 'EMU' } },
-                transform: { scaleX: 1, scaleY: 1, translateX: logoX, translateY: logoY, unit: 'EMU' }
-              }
-            }
-          });
-        } else {
-          // Other slides: small logo in upper-right corner
-          const logoW = 1371600; // 1.5 inches
-          const logoH = 342900;  // 0.375 inches
-          const logoX = slideWidth - logoW - 365760; // 0.4 inch from right edge
-          const logoY = 228600;  // 0.25 inch from top
-          logoRequests.push({
-            createImage: {
-              objectId: logoId,
-              url: brandLogoUrl,
-              elementProperties: {
-                pageObjectId: `ws_slide_${i}`,
-                size: { width: { magnitude: logoW, unit: 'EMU' }, height: { magnitude: logoH, unit: 'EMU' } },
-                transform: { scaleX: 1, scaleY: 1, translateX: logoX, translateY: logoY, unit: 'EMU' }
-              }
-            }
-          });
-        }
-      }
-
-      // SF logo — bottom-right on all slides
-      if (sfLogoPublicUrl) {
-        const sfLogoId = `ws_sf_logo_${i}`;
-        const sfW = 1143000;  // 1.25 inches
-        const sfH = 285750;   // 0.3125 inches
-        const sfX = slideWidth - sfW - 365760;  // 0.4 inch from right
-        const sfY = slideHeight - sfH - 274320; // 0.3 inch from bottom
-        logoRequests.push({
-          createImage: {
-            objectId: sfLogoId,
-            url: sfLogoPublicUrl,
-            elementProperties: {
-              pageObjectId: `ws_slide_${i}`,
-              size: { width: { magnitude: sfW, unit: 'EMU' }, height: { magnitude: sfH, unit: 'EMU' } },
-              transform: { scaleX: 1, scaleY: 1, translateX: sfX, translateY: sfY, unit: 'EMU' }
+            } catch (retryErr) {
+              console.warn(`[WebExport] Retry also failed for slide ${i + 1}: ${retryErr.message}`);
             }
           }
-        });
-      }
-
-      if (logoRequests.length > 0) {
-        try {
-          await slidesService.presentations.batchUpdate({
-            presentationId,
-            requestBody: { requests: logoRequests }
-          });
-          console.log(`[WebExport] Slide ${i + 1} logos added (${logoRequests.length} images)`);
-        } catch (logoErr) {
-          console.warn(`[WebExport] Logo batch failed for slide ${i + 1} (non-critical): ${logoErr.message}`);
         }
       }
     }
 
-    // Step 5: Update the presentation record
+    // Step 7: Update the presentation record
     await query(
       'UPDATE presentations SET google_presentation_id = ?, google_presentation_url = ?, updated_at = NOW() WHERE id = ?',
       [presentationId, presentationUrl, presentation.id]
@@ -2295,269 +2276,184 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
 });
 
 /**
- * Parse web slide HTML+CSS into structured text elements using regex-based extraction.
- * No AI needed — the HTML is generated by our own system with predictable structure.
- * Returns an array of parsed slides, each with an array of text elements.
+ * Extract text elements from slide HTML for editable text overlay.
+ * Returns elements with position (as % of 1920×1080), text, and styling.
+ * Uses CSS parsing to determine positions from the AI-generated layout.
  */
-function parseWebSlidesToStructuredElements(slides, brandData) {
-  const brandPrimary = (brandData && (brandData.brandColorPrimary || brandData.primaryColor)) || '#0176D3';
-  const brandSecondary = (brandData && (brandData.brandColorSecondary || brandData.secondaryColor)) || '#032D60';
-
-  return slides.map((slide, i) => {
-    try {
-      const sName = (slide.slide_name || '').toLowerCase();
-      const isCover = i === 0 || sName === 'cover' || sName === 'title' || sName.includes('pov intro');
-
-      // Get the content region where text should be placed (matches design template shapes)
-      const contentRegion = getTextContentRegion(sName, isCover);
-
-      const elements = extractTextElementsFromHtml(
-        slide.html_content || '', slide.css_content || '', slide.slide_name || '', contentRegion
-      );
-      return { slideIndex: i, elements };
-    } catch (err) {
-      console.warn(`[WebExport] Failed to parse slide ${i}: ${err.message}`);
-      return { slideIndex: i, elements: [] };
-    }
-  });
-}
-
-/**
- * Extract text elements from slide HTML+CSS.
- * Uses a comprehensive approach: strips all HTML to get text blocks,
- * then uses CSS class info for styling.
- */
-/**
- * Determine the content region (bounding box) where text should be placed,
- * matching the design shapes from getDesignShapesForSlide().
- * Returns { titleX, titleY, titleW, bodyX, bodyY, bodyW, bodyMaxY, align }
- */
-function getTextContentRegion(slideName, isCover) {
-  const name = (slideName || '').toLowerCase();
-
-  // Cover: text goes in the bottom banner (y: 65-100%)
-  if (isCover) {
-    return { titleX: 10, titleY: 68, titleW: 80, bodyX: 10, bodyY: 78, bodyW: 80, bodyMaxY: 95, align: 'center' };
-  }
-
-  // Thank You / Closing: text goes in centered box (y: 20-80%)
-  if (name.includes('thank you') || name.includes('closing') || name.includes('thank-you')) {
-    return { titleX: 20, titleY: 28, titleW: 60, bodyX: 20, bodyY: 45, bodyW: 60, bodyMaxY: 75, align: 'center' };
-  }
-
-  // Chapter / Transition / Agenda: text goes in left panel (x: 0-45%)
-  if (name.includes('chapter') || name.includes('transition') || name.includes('agenda')) {
-    return { titleX: 4, titleY: 8, titleW: 38, bodyX: 4, bodyY: 22, bodyW: 38, bodyMaxY: 92, align: 'left' };
-  }
-
-  // Forward Looking / Disclaimer: text inside full-width box (x: 3-97%)
-  if (name.includes('forward') || name.includes('safe harbor') || name.includes('disclaimer')) {
-    return { titleX: 6, titleY: 10, titleW: 88, bodyX: 6, bodyY: 22, bodyW: 88, bodyMaxY: 90, align: 'left' };
-  }
-
-  // Default content: title in top bar, body in content area
-  return { titleX: 5, titleY: 5, titleW: 55, bodyX: 5, bodyY: 22, bodyW: 65, bodyMaxY: 90, align: 'left' };
-}
-
-/**
- * Extract text elements from slide HTML+CSS.
- * Text is positioned within the given contentRegion to align with design shapes.
- */
-function extractTextElementsFromHtml(html, css, slideName, contentRegion) {
+function extractTextFromHtml(html, css) {
   const elements = [];
   if (!html) return elements;
 
-  const cr = contentRegion || { titleX: 5, titleY: 5, titleW: 90, bodyX: 5, bodyY: 20, bodyW: 90, bodyMaxY: 90, align: 'left' };
-
-  // ── Parse CSS for text styles ──
-  const stylesByClass = {};
+  // ── Parse CSS classes for position and style info ──
+  const classDefs = {};
   const cssBlockRegex = /\.([a-zA-Z][\w-]*)\s*\{([^}]*)\}/g;
-  let cssMatch;
-  while ((cssMatch = cssBlockRegex.exec(css)) !== null) {
-    const cls = cssMatch[1];
-    const body = cssMatch[2];
-    const styles = {};
+  let m;
+  while ((m = cssBlockRegex.exec(css)) !== null) {
+    const cls = m[1];
+    const body = m[2];
+    const def = {};
 
-    const fzMatch = body.match(/font-size:\s*([\d.]+)(px|pt|em|rem)/);
-    if (fzMatch) {
-      let sz = parseFloat(fzMatch[1]);
-      if (fzMatch[2] === 'px') sz *= 0.75;
-      else if (fzMatch[2] === 'em' || fzMatch[2] === 'rem') sz *= 12;
-      styles.fontSize = Math.round(sz);
+    // Position
+    const topM = body.match(/top:\s*([\d.]+)(px|%)/);
+    if (topM) def.top = topM[2] === '%' ? parseFloat(topM[1]) : (parseFloat(topM[1]) / 1080) * 100;
+
+    const leftM = body.match(/left:\s*([\d.]+)(px|%)/);
+    if (leftM) def.left = leftM[2] === '%' ? parseFloat(leftM[1]) : (parseFloat(leftM[1]) / 1920) * 100;
+
+    const rightM = body.match(/right:\s*([\d.]+)(px|%)/);
+    if (rightM) def.right = rightM[2] === '%' ? parseFloat(rightM[1]) : (parseFloat(rightM[1]) / 1920) * 100;
+
+    const bottomM = body.match(/bottom:\s*([\d.]+)(px|%)/);
+    if (bottomM) def.bottom = bottomM[2] === '%' ? parseFloat(bottomM[1]) : (parseFloat(bottomM[1]) / 1080) * 100;
+
+    const widthM = body.match(/width:\s*([\d.]+)(px|%)/);
+    if (widthM) def.width = widthM[2] === '%' ? parseFloat(widthM[1]) : (parseFloat(widthM[1]) / 1920) * 100;
+
+    const heightM = body.match(/height:\s*([\d.]+)(px|%)/);
+    if (heightM) def.height = heightM[2] === '%' ? parseFloat(heightM[1]) : (parseFloat(heightM[1]) / 1080) * 100;
+
+    // Font size
+    const fzM = body.match(/font-size:\s*([\d.]+)(px|pt|em|rem)/);
+    if (fzM) {
+      let sz = parseFloat(fzM[1]);
+      if (fzM[2] === 'px') sz *= 0.75;
+      else if (fzM[2] === 'em' || fzM[2] === 'rem') sz *= 12;
+      def.fontSize = Math.round(sz);
     }
 
-    const colorMatch = body.match(/(?:^|;|\s)color:\s*(#[0-9a-fA-F]{3,8})/m);
-    if (colorMatch) styles.color = colorMatch[1];
+    // Color
+    const colorM = body.match(/(?:^|;|\s)color:\s*(#[0-9a-fA-F]{3,8})/m);
+    if (colorM) def.color = colorM[1];
 
-    const alignMatch = body.match(/text-align:\s*(left|center|right)/);
-    if (alignMatch) styles.align = alignMatch[1];
+    // Font weight
+    const fwM = body.match(/font-weight:\s*(\d+|bold|normal)/);
+    if (fwM) def.bold = fwM[1] === 'bold' || parseInt(fwM[1]) >= 600;
 
-    const fwMatch = body.match(/font-weight:\s*(\d+|bold|normal)/);
-    if (fwMatch) styles.bold = fwMatch[1] === 'bold' || parseInt(fwMatch[1]) >= 600;
+    // Text align
+    const alignM = body.match(/text-align:\s*(left|center|right)/);
+    if (alignM) def.align = alignM[1];
 
-    stylesByClass[cls] = styles;
+    // Padding (for offset calculation)
+    const padM = body.match(/padding:\s*([\d.]+)(px|%)/);
+    if (padM) def.padding = padM[2] === '%' ? parseFloat(padM[1]) : (parseFloat(padM[1]) / 1920) * 100;
+
+    classDefs[cls] = def;
   }
-
-  const nameLower = (slideName || '').toLowerCase();
-  const defaultAlign = cr.align || 'left';
 
   function stripHtml(s) {
-    return s
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<[^>]+>/g, ' ')
+    return s.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, ' ')
       .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
       .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+      .replace(/\s+/g, ' ').trim();
   }
 
-  function getStylesForClasses(classAttr) {
+  function getClassStyles(classAttr) {
     const result = {};
     if (!classAttr) return result;
     for (const cls of classAttr.split(/\s+/)) {
-      if (stylesByClass[cls]) Object.assign(result, stylesByClass[cls]);
+      if (classDefs[cls]) Object.assign(result, classDefs[cls]);
     }
     return result;
   }
 
-  // Titles go in the title region; body text goes in the body region
-  let titleY = cr.titleY;
-  let bodyY = cr.bodyY;
   const seenTexts = new Set();
-  let titleCount = 0;
 
-  // ── Pass 1: Headings (h1-h3) → placed in title region ──
+  // Helper: determine position for an element given its CSS class styles
+  // Falls back to sequential stacking if CSS doesn't define position
+  let stackY = 8; // Start stacking from 8% down
+
+  function addElement(tag, text, classAttr) {
+    if (!text || text.length < 2 || seenTexts.has(text)) return;
+    seenTexts.add(text);
+
+    const styles = getClassStyles(classAttr);
+    const isHeading = /^h[1-3]$/i.test(tag);
+    const defaultSizes = { h1: 36, h2: 28, h3: 22, p: 16, li: 15, div: 15, span: 15 };
+
+    // Use CSS positions if available, otherwise stack sequentially
+    let x = styles.left !== undefined ? styles.left : 5;
+    let y = styles.top !== undefined ? styles.top : stackY;
+    let w = styles.width !== undefined ? styles.width : (isHeading ? 80 : 70);
+    let fontSize = styles.fontSize || defaultSizes[tag.toLowerCase()] || 16;
+
+    // Account for padding offset
+    if (styles.padding) {
+      x += styles.padding;
+      y += styles.padding;
+      w -= styles.padding * 2;
+    }
+
+    // Estimate height from text length and font size
+    const charsPerLine = Math.max(20, Math.floor((w / 100) * 1920 / (fontSize * 0.7)));
+    const lineCount = Math.max(1, Math.ceil(text.length / charsPerLine));
+    const lineHeightPx = fontSize * 1.5;
+    let h = ((lineCount * lineHeightPx) / 1080) * 100;
+    h = Math.max(3, Math.min(40, h));
+
+    // Clamp to slide boundaries
+    x = Math.max(0, Math.min(95, x));
+    y = Math.max(0, Math.min(95, y));
+    w = Math.min(w, 100 - x);
+    h = Math.min(h, 100 - y);
+
+    elements.push({
+      text, x, y, w, h,
+      fontSize, color: styles.color || '#FFFFFF',
+      bold: styles.bold || isHeading,
+      italic: false,
+      align: styles.align || (isHeading ? 'left' : 'left')
+    });
+
+    // Advance stack position for elements without CSS position
+    if (styles.top === undefined) {
+      stackY = y + h + 1.5;
+    }
+  }
+
+  // Pass 1: Headings
   const headingRegex = /<(h[1-3])(\s[^>]*)?>(([\s\S]*?))<\/\1>/gi;
-  let hMatch;
-  while ((hMatch = headingRegex.exec(html)) !== null) {
-    const tag = hMatch[1].toLowerCase();
-    const attrs = hMatch[2] || '';
-    const text = stripHtml(hMatch[3]);
-    if (!text || text.length < 2 || seenTexts.has(text)) continue;
-    seenTexts.add(text);
-
-    const classMatch = attrs.match(/class="([^"]*)"/);
-    const styles = getStylesForClasses(classMatch ? classMatch[1] : '');
-    const defaultSizes = { h1: 44, h2: 32, h3: 24 };
-    const fontSize = styles.fontSize || defaultSizes[tag] || 32;
-
-    const elH = Math.max(6, Math.min(15, Math.ceil(text.length / 40) * 5));
-
-    if (titleCount === 0) {
-      // First heading → title position
-      elements.push({
-        type: 'title', text,
-        x: cr.titleX, y: titleY, width: cr.titleW, height: elH,
-        fontSize, color: styles.color || '#FFFFFF',
-        bold: true, align: styles.align || defaultAlign
-      });
-      titleY += elH + 2;
-    } else {
-      // Subsequent headings → body region
-      elements.push({
-        type: 'heading', text,
-        x: cr.bodyX, y: bodyY, width: cr.bodyW, height: elH,
-        fontSize: Math.min(fontSize, 28), color: styles.color || '#FFFFFF',
-        bold: true, align: styles.align || defaultAlign
-      });
-      bodyY += elH + 2;
-    }
-    titleCount++;
+  let hm;
+  while ((hm = headingRegex.exec(html)) !== null) {
+    const classMatch = (hm[2] || '').match(/class="([^"]*)"/);
+    addElement(hm[1], stripHtml(hm[3]), classMatch ? classMatch[1] : '');
   }
 
-  // ── Pass 2: Paragraphs → placed in body region ──
+  // Pass 2: Paragraphs
   const pRegex = /<p(\s[^>]*)?>(([\s\S]*?))<\/p>/gi;
-  let pMatch;
-  while ((pMatch = pRegex.exec(html)) !== null) {
-    const attrs = pMatch[1] || '';
-    const text = stripHtml(pMatch[2]);
-    if (!text || text.length < 2 || seenTexts.has(text)) continue;
-    if (bodyY >= cr.bodyMaxY) continue; // Ran out of room
-    seenTexts.add(text);
-
-    const classMatch = attrs.match(/class="([^"]*)"/);
-    const styles = getStylesForClasses(classMatch ? classMatch[1] : '');
-
-    const lineCount = Math.ceil(text.length / 60);
-    const height = Math.max(5, Math.min(40, lineCount * 4));
-
-    elements.push({
-      type: 'body', text,
-      x: cr.bodyX, y: bodyY, width: cr.bodyW, height,
-      fontSize: styles.fontSize || 16, color: styles.color || '#FFFFFF',
-      bold: styles.bold || false, align: styles.align || defaultAlign
-    });
-    bodyY += height + 1.5;
+  let pm;
+  while ((pm = pRegex.exec(html)) !== null) {
+    const classMatch = (pm[1] || '').match(/class="([^"]*)"/);
+    addElement('p', stripHtml(pm[2]), classMatch ? classMatch[1] : '');
   }
 
-  // ── Pass 3: Bullet lists → placed in body region ──
+  // Pass 3: List items → combine into single text block
   const liRegex = /<li(\s[^>]*)?>(([\s\S]*?))<\/li>/gi;
-  const bulletTexts = [];
-  let liMatch;
-  while ((liMatch = liRegex.exec(html)) !== null) {
-    const text = stripHtml(liMatch[2]);
-    if (text && text.length >= 2 && !seenTexts.has(text)) {
-      bulletTexts.push('• ' + text);
-      seenTexts.add(text);
+  const bullets = [];
+  let lm;
+  while ((lm = liRegex.exec(html)) !== null) {
+    const text = stripHtml(lm[2]);
+    if (text && text.length >= 2) bullets.push('• ' + text);
+  }
+  if (bullets.length > 0) {
+    const bulletText = bullets.join('\n');
+    if (!seenTexts.has(bulletText)) {
+      seenTexts.add(bulletText);
+      const h = Math.max(8, Math.min(50, bullets.length * 4));
+      elements.push({
+        text: bulletText, x: 5, y: stackY, w: 70, h,
+        fontSize: 15, color: '#FFFFFF', bold: false, italic: false, align: 'left'
+      });
+      stackY += h + 2;
     }
   }
-  if (bulletTexts.length > 0 && bodyY < cr.bodyMaxY) {
-    const bulletText = bulletTexts.join('\n');
-    const height = Math.max(8, Math.min(50, bulletTexts.length * 5));
-    elements.push({
-      type: 'bullet_list', text: bulletText,
-      x: cr.bodyX, y: bodyY, width: cr.bodyW, height,
-      fontSize: 15, color: '#FFFFFF', bold: false, align: 'left'
-    });
-    bodyY += height + 2;
-  }
 
-  // ── Pass 4: Remaining div/span leaf text → body region ──
-  const divSpanRegex = /<(div|span)(\s[^>]*)?>(([\s\S]*?))<\/\1>/gi;
-  let dsMatch;
-  while ((dsMatch = divSpanRegex.exec(html)) !== null) {
-    const attrs = dsMatch[2] || '';
-    const rawContent = dsMatch[3];
-    if (/<(h[1-6]|p|ul|ol|div|section|table)\b/i.test(rawContent)) continue;
-
-    const text = stripHtml(rawContent);
-    if (!text || text.length < 3 || seenTexts.has(text)) continue;
-    if (bodyY >= cr.bodyMaxY) continue;
-    seenTexts.add(text);
-
-    const classMatch = attrs.match(/class="([^"]*)"/);
-    const styles = getStylesForClasses(classMatch ? classMatch[1] : '');
-
-    const isLargeFont = styles.fontSize && styles.fontSize >= 36;
-    const isShortText = text.length <= 15;
-
-    if (isLargeFont && isShortText) {
-      elements.push({
-        type: 'stat', text,
-        x: cr.bodyX + 5, y: bodyY, width: cr.bodyW - 10, height: 10,
-        fontSize: styles.fontSize || 48, color: styles.color || '#FFFFFF',
-        bold: true, align: 'center'
-      });
-    } else {
-      const lineCount = Math.ceil(text.length / 60);
-      const height = Math.max(4, Math.min(25, lineCount * 4));
-      elements.push({
-        type: 'body', text,
-        x: cr.bodyX, y: bodyY, width: cr.bodyW, height,
-        fontSize: styles.fontSize || 15, color: styles.color || '#FFFFFF',
-        bold: styles.bold || false, align: styles.align || defaultAlign
-      });
-    }
-    bodyY += 7;
-  }
-
-  // Fallback: if no text extracted, use slide name
-  if (elements.length === 0 && slideName) {
-    elements.push({
-      type: 'title', text: slideName,
-      x: cr.titleX, y: cr.titleY, width: cr.titleW, height: 12,
-      fontSize: 36, color: '#FFFFFF', bold: true, align: defaultAlign
-    });
+  // Pass 4: Leaf-level div/span (no nested block elements)
+  const dsRegex = /<(div|span)(\s[^>]*)?>(([\s\S]*?))<\/\1>/gi;
+  let dm;
+  while ((dm = dsRegex.exec(html)) !== null) {
+    if (/<(h[1-6]|p|ul|ol|div|section|table)\b/i.test(dm[3])) continue;
+    const classMatch = (dm[2] || '').match(/class="([^"]*)"/);
+    addElement(dm[1], stripHtml(dm[3]), classMatch ? classMatch[1] : '');
   }
 
   return elements;
@@ -2576,161 +2472,6 @@ function parseColorToRgb(hex) {
     green: parseInt(hex.substring(2, 4), 16) / 255,
     blue: parseInt(hex.substring(4, 6), 16) / 255
   };
-}
-
-/**
- * Generate deterministic design shapes for a Google Slides export based on slide type.
- * Instead of parsing unpredictable AI-generated CSS, we use predefined templates
- * for each slide type to create consistent, professional design elements.
- *
- * Each shape = { x, y, width, height (all in %), fillColor, fillAlpha, shapeType? }
- */
-function getDesignShapesForSlide(slideName, isCover, parsed, brandPrimary, brandSecondary, slideIndex) {
-  const shapes = [];
-  const name = (slideName || '').toLowerCase();
-
-  // Count text elements to adapt the design
-  const textCount = (parsed && parsed.elements) ? parsed.elements.length : 0;
-  const hasBullets = parsed && parsed.elements && parsed.elements.some(e => e.type === 'bullet_list');
-  const hasStats = parsed && parsed.elements && parsed.elements.some(e => e.type === 'stat');
-
-  // ── COVER / TITLE slide ──
-  if (isCover) {
-    // Bottom banner bar for title area
-    shapes.push({
-      x: 0, y: 65, width: 100, height: 35,
-      fillColor: '#000000', fillAlpha: 0.55
-    });
-    // Brand accent strip at top of banner
-    shapes.push({
-      x: 0, y: 64.5, width: 100, height: 0.8,
-      fillColor: brandPrimary, fillAlpha: 0.9
-    });
-    return shapes;
-  }
-
-  // ── THANK YOU / CLOSING slide ──
-  if (name.includes('thank you') || name.includes('closing') || name.includes('thank-you')) {
-    // Center content box
-    shapes.push({
-      x: 15, y: 20, width: 70, height: 60,
-      fillColor: '#000000', fillAlpha: 0.5,
-      shapeType: 'ROUND_RECTANGLE'
-    });
-    // Brand color top accent line
-    shapes.push({
-      x: 30, y: 22, width: 40, height: 0.7,
-      fillColor: brandPrimary, fillAlpha: 1
-    });
-    return shapes;
-  }
-
-  // ── CHAPTER TRANSITION / DEMO CHAPTER slides ──
-  if (name.includes('chapter') || name.includes('transition') || name.includes('agenda')) {
-    // Left content panel
-    shapes.push({
-      x: 0, y: 0, width: 45, height: 100,
-      fillColor: brandSecondary, fillAlpha: 0.85
-    });
-    // Brand accent vertical line
-    shapes.push({
-      x: 44.5, y: 5, width: 0.4, height: 90,
-      fillColor: brandPrimary, fillAlpha: 1
-    });
-    return shapes;
-  }
-
-  // ── FORWARD LOOKING STATEMENT slide ──
-  if (name.includes('forward') || name.includes('safe harbor') || name.includes('disclaimer')) {
-    // Full-width content area (legal text needs room)
-    shapes.push({
-      x: 3, y: 5, width: 94, height: 90,
-      fillColor: '#000000', fillAlpha: 0.6,
-      shapeType: 'ROUND_RECTANGLE'
-    });
-    // Top accent bar
-    shapes.push({
-      x: 3, y: 5, width: 94, height: 0.8,
-      fillColor: brandPrimary, fillAlpha: 1
-    });
-    return shapes;
-  }
-
-  // ── STATS / METRICS slide (detected by stat elements) ──
-  if (hasStats) {
-    // Bottom content band
-    shapes.push({
-      x: 0, y: 55, width: 100, height: 45,
-      fillColor: '#000000', fillAlpha: 0.6
-    });
-    // Accent line above stats
-    shapes.push({
-      x: 5, y: 55, width: 90, height: 0.7,
-      fillColor: brandPrimary, fillAlpha: 1
-    });
-    // Title area top bar
-    shapes.push({
-      x: 3, y: 3, width: 55, height: 12,
-      fillColor: '#000000', fillAlpha: 0.5,
-      shapeType: 'ROUND_RECTANGLE'
-    });
-    // Accent bar left of title
-    shapes.push({
-      x: 3, y: 3, width: 0.5, height: 12,
-      fillColor: brandPrimary, fillAlpha: 1
-    });
-    return shapes;
-  }
-
-  // ── CONTENT slide with BULLETS ──
-  if (hasBullets) {
-    // Content panel on the left side
-    shapes.push({
-      x: 2, y: 2, width: 58, height: 96,
-      fillColor: '#000000', fillAlpha: 0.55,
-      shapeType: 'ROUND_RECTANGLE'
-    });
-    // Left accent bar
-    shapes.push({
-      x: 2, y: 2, width: 0.5, height: 96,
-      fillColor: brandPrimary, fillAlpha: 1
-    });
-    return shapes;
-  }
-
-  // ── DEFAULT CONTENT slide ──
-  // Title bar at top
-  shapes.push({
-    x: 3, y: 3, width: 60, height: 12,
-    fillColor: '#000000', fillAlpha: 0.55,
-    shapeType: 'ROUND_RECTANGLE'
-  });
-  // Left accent on title
-  shapes.push({
-    x: 3, y: 3, width: 0.5, height: 12,
-    fillColor: brandPrimary, fillAlpha: 1
-  });
-  // Body content area
-  if (textCount > 2) {
-    shapes.push({
-      x: 3, y: 18, width: 70, height: 75,
-      fillColor: '#000000', fillAlpha: 0.45,
-      shapeType: 'ROUND_RECTANGLE'
-    });
-  } else {
-    shapes.push({
-      x: 3, y: 18, width: 94, height: 75,
-      fillColor: '#000000', fillAlpha: 0.4,
-      shapeType: 'ROUND_RECTANGLE'
-    });
-  }
-  // Bottom accent strip
-  shapes.push({
-    x: 0, y: 96, width: 100, height: 4,
-    fillColor: brandPrimary, fillAlpha: 0.25
-  });
-
-  return shapes;
 }
 
 // ═══════════════════════════════════════════════
