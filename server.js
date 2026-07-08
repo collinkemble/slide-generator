@@ -1096,11 +1096,13 @@ async function copyTemplateSlides(presentationId, brandData) {
       css = css.replace(new RegExp(escapeRegex(refBrandName), 'gi'), targetBrandName);
     }
 
+    // Do NOT copy the reference's background_image_url — user presentations get fresh AI-generated backgrounds.
+    // Setting bg_image_url to NULL means the slide shows its CSS gradient fallback until backgrounds are generated.
     await query(
       `INSERT INTO presentation_slides (presentation_id, slide_index, html_content, css_content, bg_image_url, bg_image_prompt, template_type, slide_name)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE html_content=VALUES(html_content), css_content=VALUES(css_content), bg_image_url=VALUES(bg_image_url), bg_image_prompt=VALUES(bg_image_prompt), template_type=VALUES(template_type), slide_name=VALUES(slide_name)`,
-      [presentationId, slide.slide_index, html, css, slide.background_image_url, slide.background_image_prompt, ann.templateType || '', ann.name || '']
+      [presentationId, slide.slide_index, html, css, null, slide.background_image_prompt, ann.templateType || '', ann.name || '']
     );
   }
 }
