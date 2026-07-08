@@ -294,6 +294,7 @@
         <div class="flex items-center gap-2">
           <button id="detail-present-btn" onclick="openPresentation()" class="hidden cursor-pointer" style="background: #10B981; color: white; font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: none; display: inline-flex; align-items: center; gap: 4px;">▶ Present</button>
           <button id="detail-export-google-btn" onclick="exportToGoogleSlides()" class="hidden cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #374151; font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 8px;">Export to Google Slides</button>
+          <button id="detail-reexport-google-btn" onclick="exportToGoogleSlides()" class="hidden cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #6B7280; font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 8px;">↻ Re-export to Google Slides</button>
           <button onclick="openShareDialogForItem()" class="cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #374151; font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 8px;">Share</button>
         </div>
       </div>
@@ -1838,7 +1839,9 @@ function showAuthError() {
 
 function connectGoogle() {
   const email = document.getElementById('user-email').textContent;
-  window.location.href = `/api/auth/google?email=${encodeURIComponent(email)}`;
+  // Pass current presentation ID so we can redirect back to it after auth
+  const returnTo = currentPresentationId ? `&returnTo=${currentPresentationId}` : '';
+  window.location.href = `/api/auth/google?email=${encodeURIComponent(email)}${returnTo}`;
 }
 
 async function disconnectGoogle() {
@@ -1964,17 +1967,41 @@ async function viewItem(id, skipPush) {
     // Present button — show when completed
     const presentBtn = document.getElementById('detail-present-btn');
     const exportGoogleBtn = document.getElementById('detail-export-google-btn');
+    const reexportGoogleBtn = document.getElementById('detail-reexport-google-btn');
     if (presentation.status === 'completed' && (presentation.share_token || presentation.is_web_slides)) {
       presentBtn.classList.remove('hidden');
       presentBtn.style.display = 'inline-flex';
-      // Show Google export for all completed presentations (web-based uses native text/shapes export)
-      exportGoogleBtn.classList.remove('hidden');
-      exportGoogleBtn.style.display = 'inline-flex';
+
+      // If already exported to Google, show "Open" button + re-export button
+      if (presentation.google_presentation_url) {
+        exportGoogleBtn.classList.remove('hidden');
+        exportGoogleBtn.style.display = 'inline-flex';
+        exportGoogleBtn.innerHTML = '✓ Open in Google Slides ↗';
+        exportGoogleBtn.style.background = '#10B981';
+        exportGoogleBtn.style.color = 'white';
+        exportGoogleBtn.style.borderColor = '#10B981';
+        exportGoogleBtn.onclick = () => window.open(presentation.google_presentation_url, '_blank');
+        reexportGoogleBtn.classList.remove('hidden');
+        reexportGoogleBtn.style.display = 'inline-flex';
+      } else {
+        // No prior export — show initial export button, hide re-export
+        exportGoogleBtn.classList.remove('hidden');
+        exportGoogleBtn.style.display = 'inline-flex';
+        exportGoogleBtn.innerHTML = 'Export to Google Slides';
+        exportGoogleBtn.style.background = 'none';
+        exportGoogleBtn.style.color = '#374151';
+        exportGoogleBtn.style.borderColor = '#d1d5db';
+        exportGoogleBtn.onclick = exportToGoogleSlides;
+        reexportGoogleBtn.classList.add('hidden');
+        reexportGoogleBtn.style.display = 'none';
+      }
     } else {
       presentBtn.classList.add('hidden');
       presentBtn.style.display = 'none';
       exportGoogleBtn.classList.add('hidden');
       exportGoogleBtn.style.display = 'none';
+      reexportGoogleBtn.classList.add('hidden');
+      reexportGoogleBtn.style.display = 'none';
     }
 
     // Status banner
@@ -2630,7 +2657,9 @@ async function exportToGoogleSlides() {
   }
 
   const btn = document.getElementById('detail-export-google-btn');
+  const reexportBtn = document.getElementById('detail-reexport-google-btn');
   btn.disabled = true;
+  if (reexportBtn) reexportBtn.disabled = true;
   btn.innerHTML = '<span class="inline-flex items-center gap-2"><svg class="animate-spin" style="width:14px;height:14px" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="3" opacity="0.3"/><path fill="currentColor" d="M12 2a10 10 0 0 1 10 10h-3a7 7 0 0 0-7-7V2z"/></svg> Exporting to Google Slides...</span>';
 
   const email = document.getElementById('user-email').textContent;
@@ -2665,13 +2694,19 @@ async function exportToGoogleSlides() {
     }
 
     if (data.googleUrl) {
-      // Show success state with clickable link
+      // Show success state with clickable "Open" button
       btn.disabled = false;
       btn.innerHTML = '✓ Open in Google Slides ↗';
       btn.style.background = '#10B981';
       btn.style.color = 'white';
       btn.style.borderColor = '#10B981';
       btn.onclick = () => window.open(data.googleUrl, '_blank');
+      // Show re-export button
+      const reexportBtn = document.getElementById('detail-reexport-google-btn');
+      reexportBtn.classList.remove('hidden');
+      reexportBtn.style.display = 'inline-flex';
+      reexportBtn.disabled = false;
+      reexportBtn.innerHTML = '↻ Re-export to Google Slides';
       // Also open immediately
       window.open(data.googleUrl, '_blank');
     } else {
@@ -2684,6 +2719,9 @@ async function exportToGoogleSlides() {
     btn.disabled = false;
     btn.style.background = 'none';
     btn.style.color = '#374151';
+    btn.style.borderColor = '#d1d5db';
+    btn.onclick = exportToGoogleSlides;
+    if (reexportBtn) reexportBtn.disabled = false;
   }
 }
 
@@ -5011,8 +5049,15 @@ async function saveReferenceAnnotations() {
 (function checkUrlParams() {
   const params = new URLSearchParams(window.location.search);
   if (params.get('google_connected') === 'true') {
-    // Clean URL
+    const returnTo = params.get('returnTo');
     history.replaceState({}, '', '/');
+    // If we have a presentation to return to, open it after a short delay
+    if (returnTo) {
+      setTimeout(() => {
+        currentPresentationId = parseInt(returnTo);
+        viewItem(currentPresentationId);
+      }, 500);
+    }
   }
   if (params.get('google_error')) {
     alert('Google connection failed: ' + params.get('google_error'));

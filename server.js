@@ -578,7 +578,10 @@ async function extractGoogleSlidesContent(presentationId, authClient) {
 
 // GET /api/auth/google — redirect user to Google OAuth consent
 app.get('/api/auth/google', (req, res) => {
-  const state = req.query.email || '';
+  // Encode email + optional returnTo presentation ID in state
+  const stateObj = { email: req.query.email || '' };
+  if (req.query.returnTo) stateObj.returnTo = req.query.returnTo;
+  const state = Buffer.from(JSON.stringify(stateObj)).toString('base64');
   const client = createOAuth2Client();
   const url = client.generateAuthUrl({
     access_type: 'offline',
@@ -596,7 +599,16 @@ app.get('/api/auth/google', (req, res) => {
 app.get('/api/auth/google/callback', async (req, res) => {
   try {
     const { code, state } = req.query;
-    const email = state || '';
+    // Decode state — could be base64 JSON (new) or plain email (old)
+    let email = '';
+    let returnTo = '';
+    try {
+      const stateObj = JSON.parse(Buffer.from(state || '', 'base64').toString());
+      email = stateObj.email || '';
+      returnTo = stateObj.returnTo || '';
+    } catch (e) {
+      email = state || ''; // Fallback for old-format state
+    }
 
     if (!code) {
       return res.redirect('/?google_error=no_code');
@@ -631,7 +643,8 @@ app.get('/api/auth/google/callback', async (req, res) => {
       );
     }
 
-    res.redirect('/?google_connected=true');
+    const returnParam = returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : '';
+    res.redirect(`/?google_connected=true${returnParam}`);
   } catch (err) {
     console.error('Google OAuth callback error:', err);
     res.redirect('/?google_error=' + encodeURIComponent(err.message));
@@ -1964,26 +1977,33 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
       requestBody: { requests: setupRequests }
     });
 
-    // Step 4: For each slide, set background image + overlay + text + logos
+    // Step 4: Upload SF logo to R2 so it has a publicly accessible URL for Google Slides
     const slideWidth = 9144000;   // 10 inches in EMU
     const slideHeight = 5143500;  // 5.625 inches in EMU (16:9)
     const brandLogoUrl = brandData.brandLogoUrl || '';
-    const sfLogoUrl = 'https://aubreydemo.com/salesforce-logo-white.png';
-
-    // Detect cover and transition slides
-    const nameLower = (i) => (slides[i]?.slide_name || '').toLowerCase();
+    let sfLogoPublicUrl = '';
+    try {
+      const sfLogoBuf = await getSfLogoBuffer();
+      if (sfLogoBuf) {
+        sfLogoPublicUrl = await uploadToR2(sfLogoBuf, 'system/salesforce-logo-white.png', 'image/png');
+        console.log(`[WebExport] SF logo uploaded to R2: ${sfLogoPublicUrl}`);
+      }
+    } catch (e) {
+      console.warn('[WebExport] Could not upload SF logo to R2:', e.message);
+    }
 
     for (let i = 0; i < slides.length; i++) {
       const slide = slides[i];
       const parsed = parsedSlides[i];
-      const batchRequests = [];
-      const sName = nameLower(i);
+      const sName = (slide.slide_name || '').toLowerCase();
       const isCover = i === 0 || sName === 'cover' || sName === 'title' || sName.includes('pov intro');
-      const isLast = i === slides.length - 1;
 
-      // 4a: Set background image
+      // ── Batch 1: Background + overlay + text (core content — must succeed) ──
+      const coreRequests = [];
+
+      // Background image
       if (slide.bg_image_url) {
-        batchRequests.push({
+        coreRequests.push({
           updatePageProperties: {
             objectId: `ws_slide_${i}`,
             pageProperties: {
@@ -1996,31 +2016,25 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
         });
       }
 
-      // 4b: Add semi-transparent dark overlay for text readability
+      // Semi-transparent dark overlay
       const overlayId = `ws_overlay_${i}`;
-      batchRequests.push({
+      coreRequests.push({
         createShape: {
           objectId: overlayId,
           shapeType: 'RECTANGLE',
           elementProperties: {
             pageObjectId: `ws_slide_${i}`,
-            size: {
-              width: { magnitude: slideWidth, unit: 'EMU' },
-              height: { magnitude: slideHeight, unit: 'EMU' }
-            },
+            size: { width: { magnitude: slideWidth, unit: 'EMU' }, height: { magnitude: slideHeight, unit: 'EMU' } },
             transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, unit: 'EMU' }
           }
         }
       });
-      batchRequests.push({
+      coreRequests.push({
         updateShapeProperties: {
           objectId: overlayId,
           shapeProperties: {
             shapeBackgroundFill: {
-              solidFill: {
-                color: { rgbColor: { red: 0, green: 0, blue: 0 } },
-                alpha: 0.45
-              }
+              solidFill: { color: { rgbColor: { red: 0, green: 0, blue: 0 } }, alpha: 0.45 }
             },
             outline: { propertyState: 'NOT_RENDERED' }
           },
@@ -2028,83 +2042,7 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
         }
       });
 
-      // 4c: Add logos in upper-right corner (skip for cover slides — they get centered logos)
-      if (!isCover && brandLogoUrl) {
-        const logoId = `ws_logo_${i}`;
-        try {
-          batchRequests.push({
-            createImage: {
-              objectId: logoId,
-              url: brandLogoUrl,
-              elementProperties: {
-                pageObjectId: `ws_slide_${i}`,
-                size: {
-                  width: { magnitude: 1143000, unit: 'EMU' },  // ~1.25 inches
-                  height: { magnitude: 365760, unit: 'EMU' }    // ~0.4 inches
-                },
-                transform: {
-                  scaleX: 1, scaleY: 1,
-                  translateX: slideWidth - 1371600,  // Right margin ~0.25 inches
-                  translateY: 228600,                // Top margin ~0.25 inches
-                  unit: 'EMU'
-                }
-              }
-            }
-          });
-        } catch (e) { /* logo insert is non-fatal */ }
-      }
-
-      // Add Salesforce logo next to brand logo (non-cover slides)
-      if (!isCover) {
-        const sfLogoId = `ws_sflogo_${i}`;
-        try {
-          batchRequests.push({
-            createImage: {
-              objectId: sfLogoId,
-              url: sfLogoUrl,
-              elementProperties: {
-                pageObjectId: `ws_slide_${i}`,
-                size: {
-                  width: { magnitude: 914400, unit: 'EMU' },   // ~1 inch
-                  height: { magnitude: 274320, unit: 'EMU' }    // ~0.3 inches
-                },
-                transform: {
-                  scaleX: 1, scaleY: 1,
-                  translateX: slideWidth - 2514600,  // Left of brand logo
-                  translateY: 274320,
-                  unit: 'EMU'
-                }
-              }
-            }
-          });
-        } catch (e) { /* sf logo is non-fatal */ }
-      }
-
-      // Cover slide: add centered brand logo
-      if (isCover && brandLogoUrl) {
-        const coverLogoId = `ws_coverlogo_${i}`;
-        batchRequests.push({
-          createImage: {
-            objectId: coverLogoId,
-            url: brandLogoUrl,
-            elementProperties: {
-              pageObjectId: `ws_slide_${i}`,
-              size: {
-                width: { magnitude: 2743200, unit: 'EMU' },  // ~3 inches
-                height: { magnitude: 914400, unit: 'EMU' }    // ~1 inch
-              },
-              transform: {
-                scaleX: 1, scaleY: 1,
-                translateX: Math.round(slideWidth / 2 - 1371600),  // Centered
-                translateY: Math.round(slideHeight * 0.25),         // Upper third
-                unit: 'EMU'
-              }
-            }
-          }
-        });
-      }
-
-      // 4d: Create text elements from parsed HTML
+      // Text elements from parsed HTML
       if (parsed && parsed.elements && parsed.elements.length > 0) {
         for (let j = 0; j < parsed.elements.length; j++) {
           const el = parsed.elements[j];
@@ -2115,7 +2053,7 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
           const w = Math.round((el.width / 100) * slideWidth);
           const h = Math.round((el.height / 100) * slideHeight);
 
-          batchRequests.push({
+          coreRequests.push({
             createShape: {
               objectId: shapeId,
               shapeType: 'TEXT_BOX',
@@ -2132,7 +2070,7 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
 
           const textContent = el.text || '';
           if (textContent) {
-            batchRequests.push({
+            coreRequests.push({
               insertText: { objectId: shapeId, text: textContent, insertionIndex: 0 }
             });
 
@@ -2140,7 +2078,7 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
             const fontColor = parseColorToRgb(el.color || '#FFFFFF');
             const isBold = el.bold !== undefined ? el.bold : (el.type === 'title' || el.type === 'heading');
 
-            batchRequests.push({
+            coreRequests.push({
               updateTextStyle: {
                 objectId: shapeId,
                 style: {
@@ -2156,7 +2094,7 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
             });
 
             if (el.align) {
-              batchRequests.push({
+              coreRequests.push({
                 updateParagraphStyle: {
                   objectId: shapeId,
                   style: {
@@ -2170,7 +2108,7 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
           }
 
           // Transparent background, no outline
-          batchRequests.push({
+          coreRequests.push({
             updateShapeProperties: {
               objectId: shapeId,
               shapeProperties: {
@@ -2183,17 +2121,17 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
         }
       }
 
-      // Send batch update for this slide
-      if (batchRequests.length > 0) {
+      // ── Send Batch 1: Core content (background + overlay + text) ──
+      if (coreRequests.length > 0) {
         try {
           await slidesService.presentations.batchUpdate({
             presentationId,
-            requestBody: { requests: batchRequests }
+            requestBody: { requests: coreRequests }
           });
-          console.log(`[WebExport] Slide ${i + 1}/${slides.length} exported (${parsed?.elements?.length || 0} elements)`);
-        } catch (slideErr) {
-          console.error(`[WebExport] Error exporting slide ${i + 1}:`, slideErr.message);
-          // Retry with just background + overlay (no logos/text that might have bad URLs)
+          console.log(`[WebExport] Slide ${i + 1}/${slides.length} core content exported (${parsed?.elements?.length || 0} text elements)`);
+        } catch (coreErr) {
+          console.error(`[WebExport] Core batch failed for slide ${i + 1}:`, coreErr.message);
+          // Retry with just background (no overlay/text)
           try {
             const retryReqs = [];
             if (slide.bg_image_url) {
@@ -2216,6 +2154,81 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
           } catch (retryErr) {
             console.warn(`[WebExport] Retry also failed for slide ${i + 1}: ${retryErr.message}`);
           }
+        }
+      }
+
+      // ── Send Batch 2: Logos (separate so failures don't break text) ──
+      const logoRequests = [];
+
+      // Brand logo — top-right on cover, smaller on other slides
+      if (brandLogoUrl) {
+        const logoId = `ws_brand_logo_${i}`;
+        if (isCover) {
+          // Cover slide: centered brand logo, larger
+          const logoW = 2743200; // 3 inches
+          const logoH = 685800;  // 0.75 inches
+          const logoX = Math.round((slideWidth - logoW) / 2); // centered
+          const logoY = 457200;  // 0.5 inch from top
+          logoRequests.push({
+            createImage: {
+              objectId: logoId,
+              url: brandLogoUrl,
+              elementProperties: {
+                pageObjectId: `ws_slide_${i}`,
+                size: { width: { magnitude: logoW, unit: 'EMU' }, height: { magnitude: logoH, unit: 'EMU' } },
+                transform: { scaleX: 1, scaleY: 1, translateX: logoX, translateY: logoY, unit: 'EMU' }
+              }
+            }
+          });
+        } else {
+          // Other slides: small logo in upper-right corner
+          const logoW = 1371600; // 1.5 inches
+          const logoH = 342900;  // 0.375 inches
+          const logoX = slideWidth - logoW - 365760; // 0.4 inch from right edge
+          const logoY = 228600;  // 0.25 inch from top
+          logoRequests.push({
+            createImage: {
+              objectId: logoId,
+              url: brandLogoUrl,
+              elementProperties: {
+                pageObjectId: `ws_slide_${i}`,
+                size: { width: { magnitude: logoW, unit: 'EMU' }, height: { magnitude: logoH, unit: 'EMU' } },
+                transform: { scaleX: 1, scaleY: 1, translateX: logoX, translateY: logoY, unit: 'EMU' }
+              }
+            }
+          });
+        }
+      }
+
+      // SF logo — bottom-right on all slides
+      if (sfLogoPublicUrl) {
+        const sfLogoId = `ws_sf_logo_${i}`;
+        const sfW = 1143000;  // 1.25 inches
+        const sfH = 285750;   // 0.3125 inches
+        const sfX = slideWidth - sfW - 365760;  // 0.4 inch from right
+        const sfY = slideHeight - sfH - 274320; // 0.3 inch from bottom
+        logoRequests.push({
+          createImage: {
+            objectId: sfLogoId,
+            url: sfLogoPublicUrl,
+            elementProperties: {
+              pageObjectId: `ws_slide_${i}`,
+              size: { width: { magnitude: sfW, unit: 'EMU' }, height: { magnitude: sfH, unit: 'EMU' } },
+              transform: { scaleX: 1, scaleY: 1, translateX: sfX, translateY: sfY, unit: 'EMU' }
+            }
+          }
+        });
+      }
+
+      if (logoRequests.length > 0) {
+        try {
+          await slidesService.presentations.batchUpdate({
+            presentationId,
+            requestBody: { requests: logoRequests }
+          });
+          console.log(`[WebExport] Slide ${i + 1} logos added (${logoRequests.length} images)`);
+        } catch (logoErr) {
+          console.warn(`[WebExport] Logo batch failed for slide ${i + 1} (non-critical): ${logoErr.message}`);
         }
       }
     }
@@ -2328,7 +2341,8 @@ function extractTextElementsFromHtml(html, css, slideName) {
   // Match h1-h6, p, div, span, li — anything with text content
   const blockRegex = /<(h[1-6]|p|div|span|li|section|article|td|th|figcaption|blockquote|label|strong|em)(\s[^>]*)?>(([\s\S]*?))<\/\1>/gi;
 
-  let yPosition = isCover ? 55 : 8;
+  // Cover slides: start content after logo area (~25%); other slides: start near top
+  let yPosition = isCover ? 30 : 8;
   const seenTexts = new Set(); // Deduplicate
 
   // First pass: extract h1-h3 (high priority headings)
@@ -2348,19 +2362,24 @@ function extractTextElementsFromHtml(html, css, slideName) {
     const defaultSizes = { h1: 48, h2: 36, h3: 28 };
     const fontSize = styles.fontSize || defaultSizes[tag] || 36;
 
+    // Cover titles get centered horizontally with larger margins
+    const elX = isCover ? 10 : 5;
+    const elW = isCover ? 80 : 90;
+    const elH = Math.max(8, Math.min(18, Math.ceil(text.length / 35) * 7));
+
     elements.push({
       type: tag === 'h1' ? 'title' : tag === 'h2' ? 'heading' : 'subheading',
       text,
-      x: isCover ? 10 : 5,
+      x: elX,
       y: yPosition,
-      width: isCover ? 80 : 90,
-      height: Math.max(8, Math.min(15, Math.ceil(text.length / 40) * 6)),
+      width: elW,
+      height: elH,
       fontSize,
       color: styles.color || '#FFFFFF',
       bold: styles.bold !== null ? styles.bold : true,
       align: styles.align || defaultAlign
     });
-    yPosition += Math.max(8, Math.ceil(text.length / 40) * 6) + 2;
+    yPosition += elH + 3;
   }
 
   // Second pass: extract p tags (body text, descriptions, statements)
