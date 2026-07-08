@@ -1106,13 +1106,20 @@ async function showApp(email) {
   document.getElementById('app-section').style.display = 'block';
   document.getElementById('user-email').textContent = email;
 
+  // Check if we're returning from Google OAuth with a presentation ID
+  const googleReturnId = _googleReturnToPresentationId;
+  _googleReturnToPresentationId = null; // clear it
+
   // Check if URL has a deep link (e.g. /views/123 or /references/123)
   const viewMatch = window.location.pathname.match(/^\/views\/(\d+)$/);
   const refMatch = window.location.pathname.match(/^\/references\/(\d+)$/);
   const pageMap = { '/api-keys': 'api-keys', '/feedback': 'feedback', '/users': 'users', '/grounding': 'grounding' };
   const urlPage = pageMap[window.location.pathname];
 
-  if (viewMatch) {
+  if (googleReturnId) {
+    // Return to presentation after Google OAuth re-auth
+    viewItem(googleReturnId, true);
+  } else if (viewMatch) {
     viewItem(parseInt(viewMatch[1]), true);
   } else if (refMatch) {
     viewReference(parseInt(refMatch[1]), true);
@@ -1123,7 +1130,9 @@ async function showApp(email) {
   }
 
   // Replace current history state so back button works from initial load
-  const initState = viewMatch
+  const initState = googleReturnId
+    ? { page: 'item-detail', itemId: googleReturnId }
+    : viewMatch
     ? { page: 'item-detail', itemId: parseInt(viewMatch[1]) }
     : refMatch
     ? { page: 'reference-detail', refId: parseInt(refMatch[1]) }
@@ -5046,18 +5055,16 @@ async function saveReferenceAnnotations() {
 // ═══════════════════════════════════════════════
 // APP: URL Params Check (Google OAuth callback)
 // ═══════════════════════════════════════════════
+// Store returnTo so showApp() can navigate after login is confirmed
+let _googleReturnToPresentationId = null;
 (function checkUrlParams() {
   const params = new URLSearchParams(window.location.search);
   if (params.get('google_connected') === 'true') {
     const returnTo = params.get('returnTo');
-    history.replaceState({}, '', '/');
-    // If we have a presentation to return to, open it after a short delay
     if (returnTo) {
-      setTimeout(() => {
-        currentPresentationId = parseInt(returnTo);
-        viewItem(currentPresentationId);
-      }, 500);
+      _googleReturnToPresentationId = parseInt(returnTo);
     }
+    history.replaceState({}, '', '/');
   }
   if (params.get('google_error')) {
     alert('Google connection failed: ' + params.get('google_error'));
