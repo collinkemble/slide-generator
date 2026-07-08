@@ -2647,6 +2647,13 @@ async function exportToGoogleSlides() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email })
     });
+
+    // Handle non-JSON responses (e.g., HTML error pages from proxy/404)
+    const contentType = resp.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Error('Server returned a non-JSON response. The export endpoint may not be deployed yet — please try again in a minute.');
+    }
+
     const data = await resp.json();
     if (!resp.ok) {
       const errMsg = (data.error || '').toLowerCase();
