@@ -1118,6 +1118,8 @@ async function showApp(email) {
 
   if (googleReturnId) {
     // Return to presentation after Google OAuth re-auth
+    // Must check Google status first so googleConnected is true for export
+    await checkGoogleStatus();
     viewItem(googleReturnId, true);
   } else if (viewMatch) {
     viewItem(parseInt(viewMatch[1]), true);
@@ -2079,8 +2081,8 @@ async function viewItem(id, skipPush) {
       // Load slides from the slides endpoint
       await loadPresentationSlides(presentation.id, presentation.status);
 
-      // Check Google connection status for detail page
-      checkGoogleStatus();
+      // Check Google connection status for detail page (await to ensure googleConnected is set before UI renders)
+      await checkGoogleStatus();
     }
 
     // Sharing controls

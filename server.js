@@ -585,7 +585,7 @@ app.get('/api/auth/google', (req, res) => {
   const client = createOAuth2Client();
   const url = client.generateAuthUrl({
     access_type: 'offline',
-    prompt: 'select_account',
+    prompt: 'consent',  // Must use 'consent' to always get a refresh_token on re-auth
     scope: [
       'https://www.googleapis.com/auth/drive.file',
       'https://www.googleapis.com/auth/userinfo.email'
@@ -630,6 +630,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
     const existing = await query('SELECT id, refresh_token FROM google_tokens WHERE user_id = ?', [user.id]);
     const refreshToken = tokens.refresh_token || (existing.length > 0 ? existing[0].refresh_token : null);
     const tokenExpiry = tokens.expiry_date ? new Date(tokens.expiry_date) : null;
+    console.log(`[GoogleAuth] OAuth callback for ${email}: got refresh_token=${!!tokens.refresh_token}, using existing=${!tokens.refresh_token && existing.length > 0}, final refresh_token=${!!refreshToken}`);
 
     if (existing.length > 0) {
       await query(
