@@ -1967,14 +1967,9 @@ async function viewItem(id, skipPush) {
     if (presentation.status === 'completed' && (presentation.share_token || presentation.is_web_slides)) {
       presentBtn.classList.remove('hidden');
       presentBtn.style.display = 'inline-flex';
-      // Hide Google export for web-based presentations
-      if (presentation.is_web_slides) {
-        exportGoogleBtn.classList.add('hidden');
-        exportGoogleBtn.style.display = 'none';
-      } else {
-        exportGoogleBtn.classList.remove('hidden');
-        exportGoogleBtn.style.display = 'inline-flex';
-      }
+      // Show Google export for all completed presentations (web-based uses native text/shapes export)
+      exportGoogleBtn.classList.remove('hidden');
+      exportGoogleBtn.style.display = 'inline-flex';
     } else {
       presentBtn.classList.add('hidden');
       presentBtn.style.display = 'none';
@@ -2641,7 +2636,13 @@ async function exportToGoogleSlides() {
   const email = document.getElementById('user-email').textContent;
 
   try {
-    const resp = await fetch(`/api/presentations/${currentPresentationId}/export-google`, {
+    // Use the web-slides export endpoint for web-based presentations (native text/shapes)
+    // or the legacy image-based export for older presentations
+    const exportEndpoint = window._isWebSlides
+      ? `/api/presentations/${currentPresentationId}/export-google-web`
+      : `/api/presentations/${currentPresentationId}/export-google`;
+
+    const resp = await fetch(exportEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email })

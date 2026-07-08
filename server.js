@@ -1886,6 +1886,396 @@ app.post('/api/presentations/:id/export-google', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
+// APP-SPECIFIC — Web Slides → Google Slides Export (native text/shapes)
+// ═══════════════════════════════════════════════
+
+// POST /api/presentations/:id/export-google-web — Export web-based presentation to Google Slides
+// Uses AI to parse HTML into structured text elements, then creates native Google Slides with
+// background images + text boxes/shapes (fully editable, not flat images).
+app.post('/api/presentations/:id/export-google-web', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+
+    // Check Google connection
+    const authClient = await getAuthenticatedClient(user.id);
+    if (!authClient) {
+      return res.status(400).json({ error: 'Google account not connected. Please connect your Google account first.' });
+    }
+
+    // Verify ownership and check it's a web slides presentation
+    const rows = await query('SELECT * FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    const presentation = rows[0];
+    if (!presentation.is_web_slides) {
+      return res.status(400).json({ error: 'This is not a web-based presentation. Use the standard export.' });
+    }
+
+    // Get slides
+    const slides = await query(
+      'SELECT slide_index, html_content, css_content, bg_image_url, slide_name FROM presentation_slides WHERE presentation_id = ? ORDER BY slide_index',
+      [presentation.id]
+    );
+
+    if (slides.length === 0) {
+      return res.status(400).json({ error: 'No slides found.' });
+    }
+
+    // Get brand data
+    let brandData = presentation.web_brand_data;
+    if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch(e) { brandData = {}; } }
+    brandData = brandData || {};
+
+    console.log(`[WebExport] Starting Google Slides export for presentation ${presentation.id} (${slides.length} slides)...`);
+
+    // Step 1: Use AI to parse all slides' HTML into structured text elements in one batch
+    const parsedSlides = await parseWebSlidesToStructuredElements(slides, brandData);
+    console.log(`[WebExport] Parsed ${parsedSlides.length} slides into structured elements`);
+
+    // Step 2: Create Google Slides presentation
+    const slidesService = google.slides({ version: 'v1', auth: authClient });
+    const createResp = await slidesService.presentations.create({
+      requestBody: { title: presentation.name || 'Presentation' }
+    });
+
+    const presentationId = createResp.data.presentationId;
+    const presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
+    console.log(`[WebExport] Created Google Slides: ${presentationId}`);
+
+    // Step 3: Set up slides — delete default slide, create blank slides
+    const setupRequests = [];
+    if (createResp.data.slides && createResp.data.slides.length > 0) {
+      setupRequests.push({ deleteObject: { objectId: createResp.data.slides[0].objectId } });
+    }
+    for (let i = 0; i < slides.length; i++) {
+      setupRequests.push({
+        createSlide: {
+          objectId: `ws_slide_${i}`,
+          insertionIndex: i,
+          slideLayoutReference: { predefinedLayout: 'BLANK' }
+        }
+      });
+    }
+    await slidesService.presentations.batchUpdate({
+      presentationId,
+      requestBody: { requests: setupRequests }
+    });
+
+    // Step 4: For each slide, set background image + create text elements
+    const slideWidth = 9144000;   // 10 inches in EMU (standard Google Slides width)
+    const slideHeight = 5143500;  // 5.625 inches in EMU (16:9 at 10" wide)
+
+    for (let i = 0; i < slides.length; i++) {
+      const slide = slides[i];
+      const parsed = parsedSlides[i];
+      const batchRequests = [];
+
+      // 4a: Set background image if available
+      if (slide.bg_image_url) {
+        try {
+          batchRequests.push({
+            updatePageProperties: {
+              objectId: `ws_slide_${i}`,
+              pageProperties: {
+                pageBackgroundFill: {
+                  stretchedPictureFill: {
+                    contentUrl: slide.bg_image_url
+                  }
+                }
+              },
+              fields: 'pageBackgroundFill'
+            }
+          });
+        } catch (bgErr) {
+          console.warn(`[WebExport] Failed to set background for slide ${i}: ${bgErr.message}`);
+        }
+      }
+
+      // 4b: Create text elements from parsed HTML
+      if (parsed && parsed.elements && parsed.elements.length > 0) {
+        for (let j = 0; j < parsed.elements.length; j++) {
+          const el = parsed.elements[j];
+          const shapeId = `ws_el_${i}_${j}`;
+
+          // Convert percentage positions to EMU
+          const x = Math.round((el.x / 100) * slideWidth);
+          const y = Math.round((el.y / 100) * slideHeight);
+          const w = Math.round((el.width / 100) * slideWidth);
+          const h = Math.round((el.height / 100) * slideHeight);
+
+          // Create text box
+          batchRequests.push({
+            createShape: {
+              objectId: shapeId,
+              shapeType: 'TEXT_BOX',
+              elementProperties: {
+                pageObjectId: `ws_slide_${i}`,
+                size: {
+                  width: { magnitude: w, unit: 'EMU' },
+                  height: { magnitude: h, unit: 'EMU' }
+                },
+                transform: {
+                  scaleX: 1, scaleY: 1,
+                  translateX: x, translateY: y,
+                  unit: 'EMU'
+                }
+              }
+            }
+          });
+
+          // Insert text
+          const textContent = el.text || '';
+          if (textContent) {
+            batchRequests.push({
+              insertText: {
+                objectId: shapeId,
+                text: textContent,
+                insertionIndex: 0
+              }
+            });
+
+            // Style the text
+            const fontSize = el.fontSize || 18;
+            const fontColor = parseColorToRgb(el.color || '#FFFFFF');
+            const isBold = el.bold !== undefined ? el.bold : (el.type === 'title' || el.type === 'heading');
+
+            batchRequests.push({
+              updateTextStyle: {
+                objectId: shapeId,
+                style: {
+                  fontFamily: el.fontFamily || 'Arial',
+                  fontSize: { magnitude: fontSize, unit: 'PT' },
+                  foregroundColor: {
+                    opaqueColor: {
+                      rgbColor: fontColor
+                    }
+                  },
+                  bold: isBold,
+                  italic: el.italic || false
+                },
+                textRange: { type: 'ALL' },
+                fields: 'fontFamily,fontSize,foregroundColor,bold,italic'
+              }
+            });
+
+            // Set paragraph alignment
+            if (el.align) {
+              batchRequests.push({
+                updateParagraphStyle: {
+                  objectId: shapeId,
+                  style: {
+                    alignment: el.align === 'center' ? 'CENTER' : el.align === 'right' ? 'END' : 'START'
+                  },
+                  textRange: { type: 'ALL' },
+                  fields: 'alignment'
+                }
+              });
+            }
+          }
+
+          // Make the shape background transparent
+          batchRequests.push({
+            updateShapeProperties: {
+              objectId: shapeId,
+              shapeProperties: {
+                shapeBackgroundFill: {
+                  propertyState: 'NOT_RENDERED'
+                },
+                outline: {
+                  propertyState: 'NOT_RENDERED'
+                }
+              },
+              fields: 'shapeBackgroundFill,outline'
+            }
+          });
+        }
+      }
+
+      // Send batch update for this slide
+      if (batchRequests.length > 0) {
+        try {
+          await slidesService.presentations.batchUpdate({
+            presentationId,
+            requestBody: { requests: batchRequests }
+          });
+          console.log(`[WebExport] Slide ${i + 1}/${slides.length} exported (${parsed?.elements?.length || 0} elements)`);
+        } catch (slideErr) {
+          console.error(`[WebExport] Error exporting slide ${i + 1}:`, slideErr.message);
+          // Try again with just the background
+          if (slide.bg_image_url) {
+            try {
+              await slidesService.presentations.batchUpdate({
+                presentationId,
+                requestBody: {
+                  requests: [{
+                    updatePageProperties: {
+                      objectId: `ws_slide_${i}`,
+                      pageProperties: {
+                        pageBackgroundFill: {
+                          stretchedPictureFill: { contentUrl: slide.bg_image_url }
+                        }
+                      },
+                      fields: 'pageBackgroundFill'
+                    }
+                  }]
+                }
+              });
+            } catch (bgFallback) {
+              console.warn(`[WebExport] Background fallback also failed for slide ${i + 1}`);
+            }
+          }
+        }
+      }
+    }
+
+    // Step 5: Update the presentation record
+    await query(
+      'UPDATE presentations SET google_presentation_id = ?, google_presentation_url = ?, updated_at = NOW() WHERE id = ?',
+      [presentationId, presentationUrl, presentation.id]
+    );
+
+    console.log(`[WebExport] Presentation ${presentation.id} exported to Google Slides: ${presentationUrl}`);
+    res.json({ success: true, googleUrl: presentationUrl });
+
+  } catch (err) {
+    console.error('Export web slides to Google Slides error:', err);
+    res.status(500).json({ error: 'Failed to export to Google Slides: ' + err.message });
+  }
+});
+
+/**
+ * Parse web slide HTML+CSS into structured text elements using AI.
+ * Returns an array of parsed slides, each with an array of text elements.
+ */
+async function parseWebSlidesToStructuredElements(slides, brandData) {
+  const ai = getGenAIClient();
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+
+  const results = [];
+
+  // Process slides in batches of 4 to avoid token limits
+  const batchSize = 4;
+  for (let batchStart = 0; batchStart < slides.length; batchStart += batchSize) {
+    const batch = slides.slice(batchStart, batchStart + batchSize);
+
+    const slideDescriptions = batch.map((slide, idx) => {
+      const globalIdx = batchStart + idx;
+      return `=== SLIDE ${globalIdx} ("${slide.slide_name || 'Untitled'}") ===
+HTML:
+${slide.html_content || '<div></div>'}
+
+CSS:
+${slide.css_content || ''}`;
+    }).join('\n\n');
+
+    const prompt = `You are converting HTML presentation slides into structured text elements for Google Slides.
+
+The slides are designed for a 1920x1080 viewport. Convert each slide's HTML+CSS into a list of positioned text elements.
+
+SLIDE DATA:
+${slideDescriptions}
+
+For each slide, extract ALL visible text elements and return them as positioned boxes.
+
+RULES:
+1. Position and size are in PERCENTAGE of the slide (0-100 for both x/y and width/height)
+2. The slide is 1920x1080px. Convert any px/em/rem values to percentages.
+3. Extract text EXACTLY as it appears — do NOT rephrase or summarize
+4. For bullet lists, combine all bullets into one text element with newline separators
+5. Detect font size from CSS (convert to pt: roughly px * 0.75). Common sizes: titles=48-54pt, headings=28-36pt, body=16-22pt, stats/numbers=40-60pt
+6. Detect text color from CSS. Default to white (#FFFFFF) for most slides since they have photo backgrounds.
+7. Detect alignment from CSS (text-align property)
+8. Set bold=true for headings/titles, false for body text
+9. Skip decorative elements (lines, shapes, overlays) — only extract TEXT
+10. For elements positioned with CSS (absolute positioning, flexbox, etc.), estimate their percentage position on the slide
+11. If text has a semi-transparent background overlay behind it, ignore the overlay — just extract the text
+
+Return ONLY a JSON array (one entry per slide in order). Each entry has "slideIndex" (number) and "elements" (array of text elements).
+
+Each text element has:
+- "type": "title" | "heading" | "subheading" | "body" | "stat" | "bullet_list" | "label" | "caption"
+- "text": the actual text content (use \\n for line breaks in bullet lists)
+- "x": left position as percentage (0-100)
+- "y": top position as percentage (0-100)
+- "width": width as percentage (0-100)
+- "height": height as percentage (0-100)
+- "fontSize": font size in pt (number)
+- "color": hex color string like "#FFFFFF"
+- "bold": boolean
+- "italic": boolean (optional, default false)
+- "align": "left" | "center" | "right"
+- "fontFamily": font family name (optional, default "Arial")
+
+Example:
+[
+  {
+    "slideIndex": 0,
+    "elements": [
+      {"type": "title", "text": "Welcome to Acme Corp", "x": 5, "y": 65, "width": 90, "height": 15, "fontSize": 48, "color": "#FFFFFF", "bold": true, "align": "center"},
+      {"type": "subheading", "text": "Innovation That Matters", "x": 15, "y": 80, "width": 70, "height": 8, "fontSize": 24, "color": "#CCCCCC", "bold": false, "align": "center"}
+    ]
+  }
+]
+
+Return ONLY the JSON array, no markdown fences, no explanation.`;
+
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: { temperature: 0.2, maxOutputTokens: 8192 },
+      });
+
+      const parts = response.candidates?.[0]?.content?.parts || [];
+      let text = parts
+        .filter(p => p.text !== undefined && !p.thought)
+        .map(p => p.text)
+        .join('\n')
+        .trim();
+
+      // Strip code fences
+      text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+      const parsed = JSON.parse(text);
+      for (const item of parsed) {
+        results[item.slideIndex] = item;
+      }
+    } catch (err) {
+      console.error(`[WebExport] Failed to parse slides batch ${batchStart}-${batchStart + batch.length - 1}:`, err.message);
+      // Fill in empty results for failed batch
+      for (let idx = batchStart; idx < batchStart + batch.length; idx++) {
+        if (!results[idx]) results[idx] = { slideIndex: idx, elements: [] };
+      }
+    }
+  }
+
+  // Ensure all indices are filled
+  for (let i = 0; i < slides.length; i++) {
+    if (!results[i]) results[i] = { slideIndex: i, elements: [] };
+  }
+
+  return results;
+}
+
+/**
+ * Parse a hex color string to RGB values (0-1 range) for Google Slides API.
+ */
+function parseColorToRgb(hex) {
+  if (!hex || typeof hex !== 'string') return { red: 1, green: 1, blue: 1 };
+  hex = hex.replace('#', '');
+  if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+  if (hex.length !== 6) return { red: 1, green: 1, blue: 1 };
+  return {
+    red: parseInt(hex.substring(0, 2), 16) / 255,
+    green: parseInt(hex.substring(2, 4), 16) / 255,
+    blue: parseInt(hex.substring(4, 6), 16) / 255
+  };
+}
+
+// ═══════════════════════════════════════════════
 // APP-SPECIFIC — Web Presentation Viewer
 // ═══════════════════════════════════════════════
 
