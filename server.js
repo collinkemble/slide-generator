@@ -2299,13 +2299,24 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
  * Returns an array of parsed slides, each with an array of text elements.
  */
 function parseWebSlidesToStructuredElements(slides, brandData) {
+  const brandPrimary = (brandData && (brandData.brandColorPrimary || brandData.primaryColor)) || '#0176D3';
+  const brandSecondary = (brandData && (brandData.brandColorSecondary || brandData.secondaryColor)) || '#032D60';
+
   return slides.map((slide, i) => {
     try {
-      const { elements, shapes } = extractTextElementsFromHtml(slide.html_content || '', slide.css_content || '', slide.slide_name || '', brandData);
-      return { slideIndex: i, elements, shapes: shapes || [] };
+      const sName = (slide.slide_name || '').toLowerCase();
+      const isCover = i === 0 || sName === 'cover' || sName === 'title' || sName.includes('pov intro');
+
+      // Get the content region where text should be placed (matches design template shapes)
+      const contentRegion = getTextContentRegion(sName, isCover);
+
+      const elements = extractTextElementsFromHtml(
+        slide.html_content || '', slide.css_content || '', slide.slide_name || '', contentRegion
+      );
+      return { slideIndex: i, elements };
     } catch (err) {
       console.warn(`[WebExport] Failed to parse slide ${i}: ${err.message}`);
-      return { slideIndex: i, elements: [], shapes: [] };
+      return { slideIndex: i, elements: [] };
     }
   });
 }
@@ -2315,15 +2326,49 @@ function parseWebSlidesToStructuredElements(slides, brandData) {
  * Uses a comprehensive approach: strips all HTML to get text blocks,
  * then uses CSS class info for styling.
  */
-function extractTextElementsFromHtml(html, css, slideName, brandData) {
+/**
+ * Determine the content region (bounding box) where text should be placed,
+ * matching the design shapes from getDesignShapesForSlide().
+ * Returns { titleX, titleY, titleW, bodyX, bodyY, bodyW, bodyMaxY, align }
+ */
+function getTextContentRegion(slideName, isCover) {
+  const name = (slideName || '').toLowerCase();
+
+  // Cover: text goes in the bottom banner (y: 65-100%)
+  if (isCover) {
+    return { titleX: 10, titleY: 68, titleW: 80, bodyX: 10, bodyY: 78, bodyW: 80, bodyMaxY: 95, align: 'center' };
+  }
+
+  // Thank You / Closing: text goes in centered box (y: 20-80%)
+  if (name.includes('thank you') || name.includes('closing') || name.includes('thank-you')) {
+    return { titleX: 20, titleY: 28, titleW: 60, bodyX: 20, bodyY: 45, bodyW: 60, bodyMaxY: 75, align: 'center' };
+  }
+
+  // Chapter / Transition / Agenda: text goes in left panel (x: 0-45%)
+  if (name.includes('chapter') || name.includes('transition') || name.includes('agenda')) {
+    return { titleX: 4, titleY: 8, titleW: 38, bodyX: 4, bodyY: 22, bodyW: 38, bodyMaxY: 92, align: 'left' };
+  }
+
+  // Forward Looking / Disclaimer: text inside full-width box (x: 3-97%)
+  if (name.includes('forward') || name.includes('safe harbor') || name.includes('disclaimer')) {
+    return { titleX: 6, titleY: 10, titleW: 88, bodyX: 6, bodyY: 22, bodyW: 88, bodyMaxY: 90, align: 'left' };
+  }
+
+  // Default content: title in top bar, body in content area
+  return { titleX: 5, titleY: 5, titleW: 55, bodyX: 5, bodyY: 22, bodyW: 65, bodyMaxY: 90, align: 'left' };
+}
+
+/**
+ * Extract text elements from slide HTML+CSS.
+ * Text is positioned within the given contentRegion to align with design shapes.
+ */
+function extractTextElementsFromHtml(html, css, slideName, contentRegion) {
   const elements = [];
-  const shapes = []; // Design shapes: rectangles, lines, accent bars
-  if (!html) return { elements, shapes };
+  if (!html) return elements;
 
-  const brandPrimary = (brandData && (brandData.brandColorPrimary || brandData.primaryColor)) || '#0176D3';
-  const brandSecondary = (brandData && (brandData.brandColorSecondary || brandData.secondaryColor)) || '#032D60';
+  const cr = contentRegion || { titleX: 5, titleY: 5, titleW: 90, bodyX: 5, bodyY: 20, bodyW: 90, bodyMaxY: 90, align: 'left' };
 
-  // ── Parse ALL CSS rules with full property extraction ──
+  // ── Parse CSS for text styles ──
   const stylesByClass = {};
   const cssBlockRegex = /\.([a-zA-Z][\w-]*)\s*\{([^}]*)\}/g;
   let cssMatch;
@@ -2349,67 +2394,12 @@ function extractTextElementsFromHtml(html, css, slideName, brandData) {
     const fwMatch = body.match(/font-weight:\s*(\d+|bold|normal)/);
     if (fwMatch) styles.bold = fwMatch[1] === 'bold' || parseInt(fwMatch[1]) >= 600;
 
-    // ── Design properties ──
-    const bgColorMatch = body.match(/background(?:-color)?:\s*(#[0-9a-fA-F]{3,8})/);
-    if (bgColorMatch) styles.backgroundColor = bgColorMatch[1];
-
-    const bgRgbaMatch = body.match(/background(?:-color)?:\s*rgba\(\s*(\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\s*\)/);
-    if (bgRgbaMatch) {
-      styles.backgroundColor = `#${parseInt(bgRgbaMatch[1]).toString(16).padStart(2,'0')}${parseInt(bgRgbaMatch[2]).toString(16).padStart(2,'0')}${parseInt(bgRgbaMatch[3]).toString(16).padStart(2,'0')}`;
-      styles.backgroundAlpha = parseFloat(bgRgbaMatch[4]);
-    }
-
-    const borderLeftMatch = body.match(/border-left:\s*([\d.]+)px\s+solid\s+(#[0-9a-fA-F]{3,8}|var\(--[^)]+\))/);
-    if (borderLeftMatch) {
-      styles.borderLeftWidth = parseFloat(borderLeftMatch[1]);
-      let borderColor = borderLeftMatch[2];
-      if (borderColor.startsWith('var(--primary')) borderColor = brandPrimary;
-      else if (borderColor.startsWith('var(--secondary')) borderColor = brandSecondary;
-      styles.borderLeftColor = borderColor;
-    }
-
-    const borderRadiusMatch = body.match(/border-radius:\s*([\d.]+)px/);
-    if (borderRadiusMatch) styles.borderRadius = parseFloat(borderRadiusMatch[1]);
-
-    // Position properties (px values → percentage of 1920x1080)
-    const widthMatch = body.match(/(?:^|;|\s)width:\s*([\d.]+)px/);
-    if (widthMatch) styles.widthPx = parseFloat(widthMatch[1]);
-    const heightMatch = body.match(/(?:^|;|\s)height:\s*([\d.]+)px/);
-    if (heightMatch) styles.heightPx = parseFloat(heightMatch[1]);
-    const topMatch = body.match(/(?:^|;|\s)top:\s*([\d.]+)px/);
-    if (topMatch) styles.topPx = parseFloat(topMatch[1]);
-    const leftMatch = body.match(/(?:^|;|\s)left:\s*([\d.]+)px/);
-    if (leftMatch) styles.leftPx = parseFloat(leftMatch[1]);
-    const bottomMatch = body.match(/(?:^|;|\s)bottom:\s*([\d.]+)px/);
-    if (bottomMatch) styles.bottomPx = parseFloat(bottomMatch[1]);
-
-    // Percentage positions
-    const topPctMatch = body.match(/(?:^|;|\s)top:\s*([\d.]+)%/);
-    if (topPctMatch) styles.topPct = parseFloat(topPctMatch[1]);
-    const leftPctMatch = body.match(/(?:^|;|\s)left:\s*([\d.]+)%/);
-    if (leftPctMatch) styles.leftPct = parseFloat(leftPctMatch[1]);
-    const widthPctMatch = body.match(/(?:^|;|\s)width:\s*([\d.]+)%/);
-    if (widthPctMatch) styles.widthPct = parseFloat(widthPctMatch[1]);
-    const heightPctMatch = body.match(/(?:^|;|\s)height:\s*([\d.]+)%/);
-    if (heightPctMatch) styles.heightPct = parseFloat(heightPctMatch[1]);
-
-    const paddingMatch = body.match(/padding:\s*([\d.]+)px/);
-    if (paddingMatch) styles.padding = parseFloat(paddingMatch[1]);
-
-    const opacityMatch = body.match(/(?:^|;|\s)opacity:\s*([\d.]+)/);
-    if (opacityMatch) styles.opacity = parseFloat(opacityMatch[1]);
-
     stylesByClass[cls] = styles;
   }
 
-  // ── Detect slide type ──
-  const nameLower = slideName.toLowerCase();
-  const isCover = nameLower === 'cover' || nameLower === 'title' || nameLower.includes('pov intro');
-  const isThankYou = nameLower.includes('thank you') || nameLower.includes('closing');
-  const isTransition = nameLower.includes('chapter') && (nameLower.includes('intro') || nameLower.includes('closing'));
-  const defaultAlign = (isCover || isThankYou || isTransition) ? 'center' : 'left';
+  const nameLower = (slideName || '').toLowerCase();
+  const defaultAlign = cr.align || 'left';
 
-  // ── Helper: strip HTML to plain text ──
   function stripHtml(s) {
     return s
       .replace(/<br\s*\/?>/gi, '\n')
@@ -2420,190 +2410,86 @@ function extractTextElementsFromHtml(html, css, slideName, brandData) {
       .trim();
   }
 
-  // ── Helper: get full styles for an element's class attribute ──
   function getStylesForClasses(classAttr) {
     const result = {};
     if (!classAttr) return result;
     for (const cls of classAttr.split(/\s+/)) {
-      const s = stylesByClass[cls];
-      if (!s) continue;
-      Object.assign(result, s);
+      if (stylesByClass[cls]) Object.assign(result, stylesByClass[cls]);
     }
     return result;
   }
 
-  // ── Helper: resolve CSS color variables ──
-  function resolveColor(color) {
-    if (!color) return null;
-    if (color.startsWith('var(--primary')) return brandPrimary;
-    if (color.startsWith('var(--secondary')) return brandSecondary;
-    return color;
-  }
-
-  // ═════════════════════════════════════════════
-  // PASS 0: Extract design shapes from CSS classes
-  // ═════════════════════════════════════════════
-  // Look for elements with visual container styling (backgrounds, borders)
-  const containerRegex = /<div(\s[^>]*?)class="([^"]*)"[^>]*>/gi;
-  let cMatch;
-  while ((cMatch = containerRegex.exec(html)) !== null) {
-    const classAttr = cMatch[2];
-    const styles = getStylesForClasses(classAttr);
-
-    // Skip overlay classes (we handle those separately as a full-slide overlay)
-    if (classAttr.includes('overlay') || classAttr.includes('slide-content')) continue;
-
-    const hasBg = styles.backgroundColor;
-    const hasBorder = styles.borderLeftColor;
-
-    if (hasBg || hasBorder) {
-      // Calculate position as percentage of slide
-      let x = styles.leftPct || (styles.leftPx ? (styles.leftPx / 1920) * 100 : null);
-      let y = styles.topPct || (styles.topPx ? (styles.topPx / 1080) * 100 : null);
-      let w = styles.widthPct || (styles.widthPx ? (styles.widthPx / 1920) * 100 : null);
-      let h = styles.heightPct || (styles.heightPx ? (styles.heightPx / 1080) * 100 : null);
-
-      // If we have a background-colored container, create a shape for it
-      if (hasBg && w && h) {
-        shapes.push({
-          type: 'rectangle',
-          x: x || 0, y: y || 0,
-          width: w, height: h,
-          backgroundColor: resolveColor(styles.backgroundColor),
-          backgroundAlpha: styles.backgroundAlpha !== undefined ? styles.backgroundAlpha : 1,
-          borderRadius: styles.borderRadius || 0,
-          borderLeftWidth: hasBorder ? styles.borderLeftWidth : 0,
-          borderLeftColor: hasBorder ? resolveColor(styles.borderLeftColor) : null
-        });
-      }
-      // If just a border-left accent bar, create a thin line shape
-      else if (hasBorder && styles.borderLeftWidth >= 3) {
-        shapes.push({
-          type: 'accent_bar',
-          x: x || 3, y: y || 10,
-          width: (styles.borderLeftWidth / 1920) * 100,
-          height: h || 60,
-          backgroundColor: resolveColor(styles.borderLeftColor),
-          backgroundAlpha: 1
-        });
-      }
-    }
-  }
-
-  // ── Look for stat-divider / metric-divider elements ──
-  const dividerRegex = /<div[^>]*class="[^"]*(?:divider|separator)[^"]*"[^>]*>/gi;
-  let divMatch;
-  let dividerCount = 0;
-  while ((divMatch = dividerRegex.exec(html)) !== null) {
-    dividerCount++;
-  }
-
-  // ── Look for card/pillar containers ──
-  const cardRegex = /<div[^>]*class="[^"]*(?:card|pillar-card|agent-box|chapter-block|chapter-item|stat-item|metric-block)[^"]*"[^>]*>/gi;
-  let cardMatches = [];
-  let cardMatch;
-  while ((cardMatch = cardRegex.exec(html)) !== null) {
-    const fullTag = cardMatch[0];
-    const classMatch = fullTag.match(/class="([^"]*)"/);
-    if (classMatch) cardMatches.push(classMatch[1]);
-  }
-
-  // If we found card-like containers, create evenly-spaced card shapes
-  if (cardMatches.length >= 2 && cardMatches.length <= 6) {
-    const cardCount = cardMatches.length;
-    const cardWidth = Math.min(25, Math.floor(85 / cardCount)); // % width each
-    const gap = Math.floor((90 - cardWidth * cardCount) / (cardCount + 1));
-    const isChapter = cardMatches[0].includes('chapter');
-
-    for (let ci = 0; ci < cardCount; ci++) {
-      const styles = getStylesForClasses(cardMatches[ci]);
-      const isActive = cardMatches[ci].includes('active');
-
-      shapes.push({
-        type: 'card',
-        x: 5 + gap + ci * (cardWidth + gap),
-        y: isChapter ? 25 : 35,
-        width: cardWidth,
-        height: isChapter ? 50 : 40,
-        backgroundColor: styles.backgroundColor ? resolveColor(styles.backgroundColor) : (isActive ? brandPrimary : '#000000'),
-        backgroundAlpha: styles.backgroundAlpha !== undefined ? styles.backgroundAlpha : (isActive ? 0.25 : 0.3),
-        borderRadius: styles.borderRadius || 8,
-        borderLeftWidth: isActive ? 4 : 0,
-        borderLeftColor: isActive ? brandPrimary : null
-      });
-    }
-  }
-
-  // ═════════════════════════════════════════════
-  // PASS 1-4: Extract text elements (existing logic, improved)
-  // ═════════════════════════════════════════════
-
-  // Cover slides: start content after logo area (~25%); other slides: start near top
-  let yPosition = isCover ? 30 : 8;
+  // Titles go in the title region; body text goes in the body region
+  let titleY = cr.titleY;
+  let bodyY = cr.bodyY;
   const seenTexts = new Set();
+  let titleCount = 0;
 
-  // First pass: extract h1-h3
+  // ── Pass 1: Headings (h1-h3) → placed in title region ──
   const headingRegex = /<(h[1-3])(\s[^>]*)?>(([\s\S]*?))<\/\1>/gi;
   let hMatch;
   while ((hMatch = headingRegex.exec(html)) !== null) {
     const tag = hMatch[1].toLowerCase();
     const attrs = hMatch[2] || '';
-    const rawContent = hMatch[3];
-    const text = stripHtml(rawContent);
+    const text = stripHtml(hMatch[3]);
     if (!text || text.length < 2 || seenTexts.has(text)) continue;
     seenTexts.add(text);
 
     const classMatch = attrs.match(/class="([^"]*)"/);
     const styles = getStylesForClasses(classMatch ? classMatch[1] : '');
+    const defaultSizes = { h1: 44, h2: 32, h3: 24 };
+    const fontSize = styles.fontSize || defaultSizes[tag] || 32;
 
-    const defaultSizes = { h1: 48, h2: 36, h3: 28 };
-    const fontSize = styles.fontSize || defaultSizes[tag] || 36;
+    const elH = Math.max(6, Math.min(15, Math.ceil(text.length / 40) * 5));
 
-    const elX = isCover ? 10 : 5;
-    const elW = isCover ? 80 : 90;
-    const elH = Math.max(8, Math.min(18, Math.ceil(text.length / 35) * 7));
-
-    elements.push({
-      type: tag === 'h1' ? 'title' : tag === 'h2' ? 'heading' : 'subheading',
-      text,
-      x: elX, y: yPosition, width: elW, height: elH,
-      fontSize,
-      color: styles.color || '#FFFFFF',
-      bold: styles.bold !== null && styles.bold !== undefined ? styles.bold : true,
-      align: styles.align || defaultAlign
-    });
-    yPosition += elH + 3;
+    if (titleCount === 0) {
+      // First heading → title position
+      elements.push({
+        type: 'title', text,
+        x: cr.titleX, y: titleY, width: cr.titleW, height: elH,
+        fontSize, color: styles.color || '#FFFFFF',
+        bold: true, align: styles.align || defaultAlign
+      });
+      titleY += elH + 2;
+    } else {
+      // Subsequent headings → body region
+      elements.push({
+        type: 'heading', text,
+        x: cr.bodyX, y: bodyY, width: cr.bodyW, height: elH,
+        fontSize: Math.min(fontSize, 28), color: styles.color || '#FFFFFF',
+        bold: true, align: styles.align || defaultAlign
+      });
+      bodyY += elH + 2;
+    }
+    titleCount++;
   }
 
-  // Second pass: extract p tags
+  // ── Pass 2: Paragraphs → placed in body region ──
   const pRegex = /<p(\s[^>]*)?>(([\s\S]*?))<\/p>/gi;
   let pMatch;
   while ((pMatch = pRegex.exec(html)) !== null) {
     const attrs = pMatch[1] || '';
-    const rawContent = pMatch[2];
-    const text = stripHtml(rawContent);
+    const text = stripHtml(pMatch[2]);
     if (!text || text.length < 2 || seenTexts.has(text)) continue;
+    if (bodyY >= cr.bodyMaxY) continue; // Ran out of room
     seenTexts.add(text);
 
     const classMatch = attrs.match(/class="([^"]*)"/);
     const styles = getStylesForClasses(classMatch ? classMatch[1] : '');
 
-    const lineCount = Math.ceil(text.length / 70);
-    const height = Math.max(6, Math.min(45, lineCount * 4));
+    const lineCount = Math.ceil(text.length / 60);
+    const height = Math.max(5, Math.min(40, lineCount * 4));
 
     elements.push({
-      type: 'body',
-      text,
-      x: 5, y: yPosition, width: 90, height,
-      fontSize: styles.fontSize || 18,
-      color: styles.color || '#FFFFFF',
-      bold: styles.bold || false,
-      align: styles.align || defaultAlign
+      type: 'body', text,
+      x: cr.bodyX, y: bodyY, width: cr.bodyW, height,
+      fontSize: styles.fontSize || 16, color: styles.color || '#FFFFFF',
+      bold: styles.bold || false, align: styles.align || defaultAlign
     });
-    yPosition += height + 2;
+    bodyY += height + 1.5;
   }
 
-  // Third pass: extract bullet list items
+  // ── Pass 3: Bullet lists → placed in body region ──
   const liRegex = /<li(\s[^>]*)?>(([\s\S]*?))<\/li>/gi;
   const bulletTexts = [];
   let liMatch;
@@ -2614,19 +2500,18 @@ function extractTextElementsFromHtml(html, css, slideName, brandData) {
       seenTexts.add(text);
     }
   }
-  if (bulletTexts.length > 0) {
+  if (bulletTexts.length > 0 && bodyY < cr.bodyMaxY) {
     const bulletText = bulletTexts.join('\n');
-    const height = Math.max(10, Math.min(55, bulletTexts.length * 5));
+    const height = Math.max(8, Math.min(50, bulletTexts.length * 5));
     elements.push({
-      type: 'bullet_list',
-      text: bulletText,
-      x: 5, y: yPosition, width: 90, height,
-      fontSize: 16, color: '#FFFFFF', bold: false, align: 'left'
+      type: 'bullet_list', text: bulletText,
+      x: cr.bodyX, y: bodyY, width: cr.bodyW, height,
+      fontSize: 15, color: '#FFFFFF', bold: false, align: 'left'
     });
-    yPosition += height + 2;
+    bodyY += height + 2;
   }
 
-  // Fourth pass: divs/spans with text (leaf-level)
+  // ── Pass 4: Remaining div/span leaf text → body region ──
   const divSpanRegex = /<(div|span)(\s[^>]*)?>(([\s\S]*?))<\/\1>/gi;
   let dsMatch;
   while ((dsMatch = divSpanRegex.exec(html)) !== null) {
@@ -2636,51 +2521,45 @@ function extractTextElementsFromHtml(html, css, slideName, brandData) {
 
     const text = stripHtml(rawContent);
     if (!text || text.length < 3 || seenTexts.has(text)) continue;
+    if (bodyY >= cr.bodyMaxY) continue;
     seenTexts.add(text);
 
     const classMatch = attrs.match(/class="([^"]*)"/);
-    const className = classMatch ? classMatch[1] : '';
-    const styles = getStylesForClasses(className);
+    const styles = getStylesForClasses(classMatch ? classMatch[1] : '');
 
     const isLargeFont = styles.fontSize && styles.fontSize >= 36;
     const isShortText = text.length <= 15;
 
     if (isLargeFont && isShortText) {
       elements.push({
-        type: 'stat',
-        text,
-        x: 10, y: yPosition, width: 80, height: 10,
-        fontSize: styles.fontSize || 48,
-        color: styles.color || '#FFFFFF',
+        type: 'stat', text,
+        x: cr.bodyX + 5, y: bodyY, width: cr.bodyW - 10, height: 10,
+        fontSize: styles.fontSize || 48, color: styles.color || '#FFFFFF',
         bold: true, align: 'center'
       });
     } else {
-      const lineCount = Math.ceil(text.length / 70);
-      const height = Math.max(5, Math.min(30, lineCount * 4));
+      const lineCount = Math.ceil(text.length / 60);
+      const height = Math.max(4, Math.min(25, lineCount * 4));
       elements.push({
-        type: 'body',
-        text,
-        x: 5, y: yPosition, width: 90, height,
-        fontSize: styles.fontSize || 16,
-        color: styles.color || '#FFFFFF',
-        bold: styles.bold || false,
-        align: styles.align || defaultAlign
+        type: 'body', text,
+        x: cr.bodyX, y: bodyY, width: cr.bodyW, height,
+        fontSize: styles.fontSize || 15, color: styles.color || '#FFFFFF',
+        bold: styles.bold || false, align: styles.align || defaultAlign
       });
     }
-    yPosition += 8;
+    bodyY += 7;
   }
 
-  // Fallback: if no text at all, use slide name
+  // Fallback: if no text extracted, use slide name
   if (elements.length === 0 && slideName) {
     elements.push({
-      type: 'title',
-      text: slideName,
-      x: 10, y: 40, width: 80, height: 15,
-      fontSize: 36, color: '#FFFFFF', bold: true, align: 'center'
+      type: 'title', text: slideName,
+      x: cr.titleX, y: cr.titleY, width: cr.titleW, height: 12,
+      fontSize: 36, color: '#FFFFFF', bold: true, align: defaultAlign
     });
   }
 
-  return { elements, shapes };
+  return elements;
 }
 
 /**
