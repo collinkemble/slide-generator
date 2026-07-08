@@ -1992,6 +1992,9 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
       console.warn('[WebExport] Could not upload SF logo to R2:', e.message);
     }
 
+    const brandPrimaryColor = brandData.brandColorPrimary || brandData.primaryColor || '#0176D3';
+    const brandSecondaryColor = brandData.brandColorSecondary || brandData.secondaryColor || '#032D60';
+
     for (let i = 0; i < slides.length; i++) {
       const slide = slides[i];
       const parsed = parsedSlides[i];
@@ -2042,86 +2045,46 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
         }
       });
 
-      // Design shapes (rectangles, accent bars, cards) from parsed CSS
-      if (parsed && parsed.shapes && parsed.shapes.length > 0) {
-        for (let s = 0; s < parsed.shapes.length; s++) {
-          const shape = parsed.shapes[s];
-          const shapeId = `ws_shape_${i}_${s}`;
+      // ── Design shapes: deterministic template-based approach ──
+      // Instead of parsing CSS (unreliable), create predefined design elements based on slide type
+      const designShapes = getDesignShapesForSlide(sName, isCover, parsed, brandPrimaryColor, brandSecondaryColor, i);
+      for (let s = 0; s < designShapes.length; s++) {
+        const ds = designShapes[s];
+        const dsId = `ws_ds_${i}_${s}`;
+        const dsX = Math.round((ds.x / 100) * slideWidth);
+        const dsY = Math.round((ds.y / 100) * slideHeight);
+        const dsW = Math.round((ds.width / 100) * slideWidth);
+        const dsH = Math.round((ds.height / 100) * slideHeight);
 
-          const sx = Math.round((shape.x / 100) * slideWidth);
-          const sy = Math.round((shape.y / 100) * slideHeight);
-          const sw = Math.round((shape.width / 100) * slideWidth);
-          const sh = Math.round((shape.height / 100) * slideHeight);
-
-          // Create the shape (use ROUND_RECTANGLE for cards with border-radius)
-          const shapeType = shape.borderRadius > 0 ? 'ROUND_RECTANGLE' : 'RECTANGLE';
-          coreRequests.push({
-            createShape: {
-              objectId: shapeId,
-              shapeType,
-              elementProperties: {
-                pageObjectId: `ws_slide_${i}`,
-                size: {
-                  width: { magnitude: Math.max(sw, 9144), unit: 'EMU' },  // min 0.01 inch
-                  height: { magnitude: Math.max(sh, 9144), unit: 'EMU' }
-                },
-                transform: { scaleX: 1, scaleY: 1, translateX: sx, translateY: sy, unit: 'EMU' }
-              }
+        coreRequests.push({
+          createShape: {
+            objectId: dsId,
+            shapeType: ds.shapeType || 'RECTANGLE',
+            elementProperties: {
+              pageObjectId: `ws_slide_${i}`,
+              size: {
+                width: { magnitude: Math.max(dsW, 18288), unit: 'EMU' },
+                height: { magnitude: Math.max(dsH, 18288), unit: 'EMU' }
+              },
+              transform: { scaleX: 1, scaleY: 1, translateX: dsX, translateY: dsY, unit: 'EMU' }
             }
-          });
-
-          // Style the shape
-          const bgColor = parseColorToRgb(shape.backgroundColor || '#000000');
-          const alpha = shape.backgroundAlpha !== undefined ? shape.backgroundAlpha : 0.5;
-
-          const shapeProps = {
-            shapeBackgroundFill: {
-              solidFill: { color: { rgbColor: bgColor }, alpha }
-            },
-            outline: { propertyState: 'NOT_RENDERED' }
-          };
-
-          coreRequests.push({
-            updateShapeProperties: {
-              objectId: shapeId,
-              shapeProperties: shapeProps,
-              fields: 'shapeBackgroundFill,outline'
-            }
-          });
-
-          // If it has a left border accent bar, create a thin shape for it
-          if (shape.borderLeftWidth && shape.borderLeftColor) {
-            const accentId = `ws_accent_${i}_${s}`;
-            const accentW = Math.round((shape.borderLeftWidth / 1920) * slideWidth);
-            coreRequests.push({
-              createShape: {
-                objectId: accentId,
-                shapeType: 'RECTANGLE',
-                elementProperties: {
-                  pageObjectId: `ws_slide_${i}`,
-                  size: {
-                    width: { magnitude: Math.max(accentW, 27432), unit: 'EMU' },  // min 0.03 inch
-                    height: { magnitude: sh, unit: 'EMU' }
-                  },
-                  transform: { scaleX: 1, scaleY: 1, translateX: sx, translateY: sy, unit: 'EMU' }
-                }
-              }
-            });
-            coreRequests.push({
-              updateShapeProperties: {
-                objectId: accentId,
-                shapeProperties: {
-                  shapeBackgroundFill: {
-                    solidFill: { color: { rgbColor: parseColorToRgb(shape.borderLeftColor) }, alpha: 1 }
-                  },
-                  outline: { propertyState: 'NOT_RENDERED' }
-                },
-                fields: 'shapeBackgroundFill,outline'
-              }
-            });
           }
-        }
-        console.log(`[WebExport] Slide ${i + 1}: added ${parsed.shapes.length} design shapes`);
+        });
+        coreRequests.push({
+          updateShapeProperties: {
+            objectId: dsId,
+            shapeProperties: {
+              shapeBackgroundFill: {
+                solidFill: { color: { rgbColor: parseColorToRgb(ds.fillColor) }, alpha: ds.fillAlpha }
+              },
+              outline: { propertyState: 'NOT_RENDERED' }
+            },
+            fields: 'shapeBackgroundFill,outline'
+          }
+        });
+      }
+      if (designShapes.length > 0) {
+        console.log(`[WebExport] Slide ${i + 1}: added ${designShapes.length} design shapes (type: ${sName || 'content'})`);
       }
 
       // Text elements from parsed HTML
@@ -2733,6 +2696,161 @@ function parseColorToRgb(hex) {
     green: parseInt(hex.substring(2, 4), 16) / 255,
     blue: parseInt(hex.substring(4, 6), 16) / 255
   };
+}
+
+/**
+ * Generate deterministic design shapes for a Google Slides export based on slide type.
+ * Instead of parsing unpredictable AI-generated CSS, we use predefined templates
+ * for each slide type to create consistent, professional design elements.
+ *
+ * Each shape = { x, y, width, height (all in %), fillColor, fillAlpha, shapeType? }
+ */
+function getDesignShapesForSlide(slideName, isCover, parsed, brandPrimary, brandSecondary, slideIndex) {
+  const shapes = [];
+  const name = (slideName || '').toLowerCase();
+
+  // Count text elements to adapt the design
+  const textCount = (parsed && parsed.elements) ? parsed.elements.length : 0;
+  const hasBullets = parsed && parsed.elements && parsed.elements.some(e => e.type === 'bullet_list');
+  const hasStats = parsed && parsed.elements && parsed.elements.some(e => e.type === 'stat');
+
+  // ── COVER / TITLE slide ──
+  if (isCover) {
+    // Bottom banner bar for title area
+    shapes.push({
+      x: 0, y: 65, width: 100, height: 35,
+      fillColor: '#000000', fillAlpha: 0.55
+    });
+    // Brand accent strip at top of banner
+    shapes.push({
+      x: 0, y: 64.5, width: 100, height: 0.8,
+      fillColor: brandPrimary, fillAlpha: 0.9
+    });
+    return shapes;
+  }
+
+  // ── THANK YOU / CLOSING slide ──
+  if (name.includes('thank you') || name.includes('closing') || name.includes('thank-you')) {
+    // Center content box
+    shapes.push({
+      x: 15, y: 20, width: 70, height: 60,
+      fillColor: '#000000', fillAlpha: 0.5,
+      shapeType: 'ROUND_RECTANGLE'
+    });
+    // Brand color top accent line
+    shapes.push({
+      x: 30, y: 22, width: 40, height: 0.7,
+      fillColor: brandPrimary, fillAlpha: 1
+    });
+    return shapes;
+  }
+
+  // ── CHAPTER TRANSITION / DEMO CHAPTER slides ──
+  if (name.includes('chapter') || name.includes('transition') || name.includes('agenda')) {
+    // Left content panel
+    shapes.push({
+      x: 0, y: 0, width: 45, height: 100,
+      fillColor: brandSecondary, fillAlpha: 0.85
+    });
+    // Brand accent vertical line
+    shapes.push({
+      x: 44.5, y: 5, width: 0.4, height: 90,
+      fillColor: brandPrimary, fillAlpha: 1
+    });
+    return shapes;
+  }
+
+  // ── FORWARD LOOKING STATEMENT slide ──
+  if (name.includes('forward') || name.includes('safe harbor') || name.includes('disclaimer')) {
+    // Full-width content area (legal text needs room)
+    shapes.push({
+      x: 3, y: 5, width: 94, height: 90,
+      fillColor: '#000000', fillAlpha: 0.6,
+      shapeType: 'ROUND_RECTANGLE'
+    });
+    // Top accent bar
+    shapes.push({
+      x: 3, y: 5, width: 94, height: 0.8,
+      fillColor: brandPrimary, fillAlpha: 1
+    });
+    return shapes;
+  }
+
+  // ── STATS / METRICS slide (detected by stat elements) ──
+  if (hasStats) {
+    // Bottom content band
+    shapes.push({
+      x: 0, y: 55, width: 100, height: 45,
+      fillColor: '#000000', fillAlpha: 0.6
+    });
+    // Accent line above stats
+    shapes.push({
+      x: 5, y: 55, width: 90, height: 0.7,
+      fillColor: brandPrimary, fillAlpha: 1
+    });
+    // Title area top bar
+    shapes.push({
+      x: 3, y: 3, width: 55, height: 12,
+      fillColor: '#000000', fillAlpha: 0.5,
+      shapeType: 'ROUND_RECTANGLE'
+    });
+    // Accent bar left of title
+    shapes.push({
+      x: 3, y: 3, width: 0.5, height: 12,
+      fillColor: brandPrimary, fillAlpha: 1
+    });
+    return shapes;
+  }
+
+  // ── CONTENT slide with BULLETS ──
+  if (hasBullets) {
+    // Content panel on the left side
+    shapes.push({
+      x: 2, y: 2, width: 58, height: 96,
+      fillColor: '#000000', fillAlpha: 0.55,
+      shapeType: 'ROUND_RECTANGLE'
+    });
+    // Left accent bar
+    shapes.push({
+      x: 2, y: 2, width: 0.5, height: 96,
+      fillColor: brandPrimary, fillAlpha: 1
+    });
+    return shapes;
+  }
+
+  // ── DEFAULT CONTENT slide ──
+  // Title bar at top
+  shapes.push({
+    x: 3, y: 3, width: 60, height: 12,
+    fillColor: '#000000', fillAlpha: 0.55,
+    shapeType: 'ROUND_RECTANGLE'
+  });
+  // Left accent on title
+  shapes.push({
+    x: 3, y: 3, width: 0.5, height: 12,
+    fillColor: brandPrimary, fillAlpha: 1
+  });
+  // Body content area
+  if (textCount > 2) {
+    shapes.push({
+      x: 3, y: 18, width: 70, height: 75,
+      fillColor: '#000000', fillAlpha: 0.45,
+      shapeType: 'ROUND_RECTANGLE'
+    });
+  } else {
+    shapes.push({
+      x: 3, y: 18, width: 94, height: 75,
+      fillColor: '#000000', fillAlpha: 0.4,
+      shapeType: 'ROUND_RECTANGLE'
+    });
+  }
+  // Bottom accent strip
+  shapes.push({
+    x: 0, y: 96, width: 100, height: 4,
+    fillColor: brandPrimary, fillAlpha: 0.25
+  });
+
+  return shapes;
 }
 
 // ═══════════════════════════════════════════════
