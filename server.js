@@ -11,7 +11,7 @@ const { GoogleGenAI } = require('@google/genai');
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const sharp = require('sharp');
 const multer = require('multer');
-const puppeteer = require('puppeteer-core');
+const puppeteer = require('puppeteer');
 
 const app = express();
 const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -40,12 +40,17 @@ getSfLogoBuffer();
 let _puppeteerBrowser = null;
 async function getPuppeteerBrowser() {
   if (_puppeteerBrowser && _puppeteerBrowser.connected) return _puppeteerBrowser;
-  _puppeteerBrowser = await puppeteer.launch({
-    executablePath: '/usr/bin/chromium',
+  const launchOptions = {
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
            '--disable-gpu', '--disable-web-security', '--hide-scrollbars']
-  });
+  };
+  // On Heroku or other PaaS, the puppeteer npm package bundles its own Chromium.
+  // If PUPPETEER_EXECUTABLE_PATH is set (e.g. by a buildpack), use that instead.
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+  _puppeteerBrowser = await puppeteer.launch(launchOptions);
   return _puppeteerBrowser;
 }
 

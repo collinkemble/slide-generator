@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "heroku-postbuild": "npx puppeteer browsers install chrome"
   },
   "keywords": [
     "salesforce",
@@ -22,7 +23,7 @@
     "googleapis": "^146.0.0",
     "multer": "^2.2.0",
     "mysql2": "^3.11.0",
-    "puppeteer-core": "^25.3.0",
+    "puppeteer": "^25.3.0",
     "sharp": "^0.35.3"
   }
 }
