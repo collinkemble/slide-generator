@@ -2631,7 +2631,7 @@ async function exportToGoogleSlides() {
 
   const btn = document.getElementById('detail-export-google-btn');
   btn.disabled = true;
-  btn.textContent = 'Exporting...';
+  btn.innerHTML = '<span class="inline-flex items-center gap-2"><svg class="animate-spin" style="width:14px;height:14px" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="3" opacity="0.3"/><path fill="currentColor" d="M12 2a10 10 0 0 1 10 10h-3a7 7 0 0 0-7-7V2z"/></svg> Exporting to Google Slides...</span>';
 
   const email = document.getElementById('user-email').textContent;
 
@@ -2665,14 +2665,25 @@ async function exportToGoogleSlides() {
     }
 
     if (data.googleUrl) {
+      // Show success state with clickable link
+      btn.disabled = false;
+      btn.innerHTML = '✓ Open in Google Slides ↗';
+      btn.style.background = '#10B981';
+      btn.style.color = 'white';
+      btn.style.borderColor = '#10B981';
+      btn.onclick = () => window.open(data.googleUrl, '_blank');
+      // Also open immediately
       window.open(data.googleUrl, '_blank');
+    } else {
+      btn.innerHTML = '✓ Exported!';
+      setTimeout(() => { btn.innerHTML = 'Export to Google Slides'; btn.disabled = false; btn.onclick = exportToGoogleSlides; btn.style.background = 'none'; btn.style.color = '#374151'; btn.style.borderColor = '#d1d5db'; }, 5000);
     }
-    btn.textContent = '✓ Exported!';
-    setTimeout(() => { btn.textContent = 'Export to Google Slides'; btn.disabled = false; }, 3000);
   } catch (err) {
     alert('Export failed: ' + err.message);
-    btn.textContent = 'Export to Google Slides';
+    btn.innerHTML = 'Export to Google Slides';
     btn.disabled = false;
+    btn.style.background = 'none';
+    btn.style.color = '#374151';
   }
 }
 
