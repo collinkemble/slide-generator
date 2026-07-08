@@ -1096,13 +1096,15 @@ async function copyTemplateSlides(presentationId, brandData) {
       css = css.replace(new RegExp(escapeRegex(refBrandName), 'gi'), targetBrandName);
     }
 
-    // Do NOT copy the reference's background_image_url — user presentations get fresh AI-generated backgrounds.
-    // Setting bg_image_url to NULL means the slide shows its CSS gradient fallback until backgrounds are generated.
+    // Do NOT copy the reference's background_image_url OR bg_image_prompt.
+    // The reference prompts describe the grounding asset's brand (e.g., "running shoes", "golden retriever")
+    // and contaminate AI image generation even after recontextualization attempts.
+    // Instead, set both to NULL — fresh prompts will be generated from slide names + target brand.
     await query(
       `INSERT INTO presentation_slides (presentation_id, slide_index, html_content, css_content, bg_image_url, bg_image_prompt, template_type, slide_name)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE html_content=VALUES(html_content), css_content=VALUES(css_content), bg_image_url=VALUES(bg_image_url), bg_image_prompt=VALUES(bg_image_prompt), template_type=VALUES(template_type), slide_name=VALUES(slide_name)`,
-      [presentationId, slide.slide_index, html, css, null, slide.background_image_prompt, ann.templateType || '', ann.name || '']
+      [presentationId, slide.slide_index, html, css, null, null, ann.templateType || '', ann.name || '']
     );
   }
 }
@@ -1113,14 +1115,13 @@ function escapeRegex(str) {
 
 /**
  * Generate branded background images for a user's web-template presentation.
- * Reuses the same three-pass approach as reference web version generation,
- * but skips HTML generation (already copied from template).
+ * Generates FRESH prompts from slide names + brand context — no reference template prompts used.
  */
 async function generateUserBackgroundsInBackground(presentationId, brandData) {
   try {
     console.log(`[WebBG] Starting background generation for presentation ${presentationId}`);
 
-    // 1. Get all slides with their background prompts
+    // 1. Get all slides (bg_image_prompt will be NULL since we don't copy from reference)
     const slides = await query(
       'SELECT slide_index, bg_image_prompt, slide_name FROM presentation_slides WHERE presentation_id = ? ORDER BY slide_index',
       [presentationId]
@@ -1131,28 +1132,23 @@ async function generateUserBackgroundsInBackground(presentationId, brandData) {
       return;
     }
 
-    // 2. Recontextualize background prompts for the target brand
-    //    The template bg_image_prompts were written for the reference brand — rewrite them
-    //    so photos match the target brand's industry and identity.
+    // 2. Generate FRESH background prompts from scratch based on slide names + brand identity.
+    //    This avoids any contamination from the reference template's imagery.
     const brandName = (brandData && brandData.brandName) || '';
     const brandDescription = (brandData && brandData.brandDescription) || '';
-    if (brandName) {
-      try {
-        console.log(`[WebBG] Recontextualizing ${slides.length} background prompts for "${brandName}"...`);
-        const recontextualized = await recontextualizeBackgroundPrompts(slides, brandData);
-        // Apply recontextualized prompts back to the slides array
-        for (const slide of slides) {
-          if (recontextualized[slide.slide_index] !== undefined) {
-            slide.bg_image_prompt = recontextualized[slide.slide_index];
-            // Also update the DB so the prompt is saved for future single-slide regeneration
-            await query('UPDATE presentation_slides SET bg_image_prompt = ? WHERE presentation_id = ? AND slide_index = ?',
-              [slide.bg_image_prompt, presentationId, slide.slide_index]);
-          }
+    try {
+      console.log(`[WebBG] Generating fresh background prompts for ${slides.length} slides, brand: "${brandName}"...`);
+      const freshPrompts = await generateFreshBackgroundPrompts(slides, brandData);
+      for (const slide of slides) {
+        if (freshPrompts[slide.slide_index]) {
+          slide.bg_image_prompt = freshPrompts[slide.slide_index];
+          await query('UPDATE presentation_slides SET bg_image_prompt = ? WHERE presentation_id = ? AND slide_index = ?',
+            [slide.bg_image_prompt, presentationId, slide.slide_index]);
         }
-        console.log(`[WebBG] Recontextualized prompts for "${brandName}" successfully`);
-      } catch (err) {
-        console.warn('[WebBG] Failed to recontextualize prompts, using originals:', err.message);
       }
+      console.log(`[WebBG] Generated ${Object.keys(freshPrompts).length} fresh prompts for "${brandName}"`);
+    } catch (err) {
+      console.warn('[WebBG] Failed to generate fresh prompts, using slide-name fallbacks:', err.message);
     }
 
     // 3. Collect photo descriptions for style directive
@@ -3288,6 +3284,81 @@ app.get('/api/present-web/item/:presId/data', async (req, res) => {
  * This function rewrites them so photos match the target brand's industry and identity.
  * Returns an object mapping slide_index → rewritten prompt.
  */
+/**
+ * Generate FRESH background image prompts from scratch based on slide names and brand identity.
+ * No reference template prompts are used — this avoids any contamination from the grounding asset.
+ */
+async function generateFreshBackgroundPrompts(slides, brandData) {
+  const ai = getGenAIClient();
+  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+
+  const brandName = brandData.brandName || brandData.brand || '';
+  const brandDescription = brandData.brandDescription || '';
+  const brandTone = brandData.brandTone || '';
+  const brandVisualStyle = brandData.brandVisualStyle || '';
+  const brandColorPrimary = brandData.brandColorPrimary || '';
+  const brandColorSecondary = brandData.brandColorSecondary || '';
+
+  const slideList = slides.map(s => `[Slide ${s.slide_index}] "${s.slide_name || 'Untitled'}"`).join('\n');
+
+  const prompt = `You are a creative director creating background photo descriptions for a professional presentation.
+
+BRAND:
+- Name: "${brandName}"
+${brandDescription ? `- About: ${brandDescription}` : ''}
+${brandTone ? `- Tone: ${brandTone}` : ''}
+${brandVisualStyle ? `- Visual Style: ${brandVisualStyle}` : ''}
+${brandColorPrimary ? `- Primary Color: ${brandColorPrimary}` : ''}
+${brandColorSecondary ? `- Secondary Color: ${brandColorSecondary}` : ''}
+
+Write a BACKGROUND PHOTO DESCRIPTION for each slide below. Each description is for a full-bleed 1920x1080 background photograph that will have text overlaid on top.
+
+RULES:
+1. Every photo MUST be relevant to "${brandName}" and its specific industry/products
+2. Photos should be professional, high-quality, and visually compelling
+3. Vary the compositions: use close-ups, wide shots, aerial views, lifestyle scenes, product details, textures, etc.
+4. Keep descriptions concise (2-3 sentences each)
+5. NO TEXT in the photos — these are background images only
+6. NO LOGOS in the photos
+7. The photos should work well as backgrounds with text overlay (slight blur, good contrast areas)
+8. Match the slide purpose: cover slides need dramatic/hero images, data slides need subtle/clean backgrounds, closing slides need warm/inviting imagery
+9. CRITICAL: Every single photo must unmistakably be about "${brandName}" — if someone saw just the photo, they should be able to guess the brand's industry
+
+SLIDES:
+${slideList}
+
+Return ONLY valid JSON — an array of objects with "slideIndex" (number) and "prompt" (string).
+Example: [{"slideIndex": 0, "prompt": "A luxurious close-up of..."}, {"slideIndex": 1, "prompt": "..."}]
+No markdown, no code fences, no explanation — just the JSON array.`;
+
+  const response = await ai.models.generateContent({
+    model,
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    config: { temperature: 0.8, maxOutputTokens: 4096 },
+  });
+
+  const parts = response.candidates?.[0]?.content?.parts || [];
+  let text = parts
+    .filter(p => p.text !== undefined && !p.thought)
+    .map(p => p.text)
+    .join('\n')
+    .trim();
+
+  // Strip markdown code fences if present
+  text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+
+  const parsed = JSON.parse(text);
+  const result = {};
+  for (const item of parsed) {
+    if (typeof item.slideIndex === 'number' && typeof item.prompt === 'string') {
+      result[item.slideIndex] = item.prompt;
+    }
+  }
+
+  console.log(`[WebBG] Generated ${Object.keys(result).length} fresh prompts for "${brandName}"`);
+  return result;
+}
+
 async function recontextualizeBackgroundPrompts(slides, brandData) {
   const ai = getGenAIClient();
   const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
