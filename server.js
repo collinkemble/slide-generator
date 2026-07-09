@@ -242,7 +242,10 @@ async function extractTextPositionsFromBrowser(slide, slideIndex, brandLogoUrl, 
         // Skip invisible elements
         if (computed.display === 'none' || computed.visibility === 'hidden' || computed.opacity === '0') continue;
 
-        const fontSize = parseFloat(computed.fontSize) * 0.75; // px to pt
+        const fontSizePx = parseFloat(computed.fontSize);
+        const fontSize = fontSizePx * 0.75; // px to pt
+        const lineHeightPx = parseFloat(computed.lineHeight) || fontSizePx * 1.2;
+        const lineSpacingRatio = lineHeightPx / fontSizePx; // e.g. 1.2, 1.5
         const color = computed.color;
         const fontWeight = computed.fontWeight;
         const fontStyle = computed.fontStyle;
@@ -265,6 +268,7 @@ async function extractTextPositionsFromBrowser(slide, slideIndex, brandLogoUrl, 
           w: (rect.width / slideW) * 100,
           h: (rect.height / slideH) * 100,
           fontSize: Math.round(fontSize),
+          lineSpacing: Math.round(lineSpacingRatio * 100), // as percentage (e.g. 120 = 1.2x)
           color: hexColor,
           bold: fontWeight === 'bold' || parseInt(fontWeight) >= 600,
           italic: fontStyle === 'italic',
@@ -2222,11 +2226,13 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
         for (let i = 0; i < slides.length; i++) {
           try {
             const pngBuf = await renderWebSlideToImage(slides[i], i, brandLogoUrl, sfLogoPublicUrl);
-            const hash = crypto.createHash('md5').update(pngBuf).digest('hex').substring(0, 8);
-            const key = `google-export/${presentation.id}/slide-${i}-${hash}.png`;
-            const publicUrl = await uploadToR2(pngBuf, key, 'image/png');
+            // Convert PNG to JPEG for much smaller file size (Google Slides handles JPEG better)
+            const jpgBuf = await sharp(pngBuf).jpeg({ quality: 90 }).toBuffer();
+            const hash = crypto.createHash('md5').update(jpgBuf).digest('hex').substring(0, 8);
+            const key = `google-export/${presentation.id}/slide-${i}-${hash}.jpg`;
+            const publicUrl = await uploadToR2(jpgBuf, key, 'image/jpeg');
             screenshotUrls.push(publicUrl);
-            console.log(`[WebExport] Slide ${i + 1}/${slides.length} screenshot uploaded`);
+            console.log(`[WebExport] Slide ${i + 1}/${slides.length} screenshot uploaded (${Math.round(jpgBuf.length / 1024)}KB)`);
           } catch (err) {
             console.error(`[WebExport] Screenshot failed for slide ${i}:`, err.message);
             screenshotUrls.push(slides[i].bg_image_url || '');
@@ -2286,27 +2292,46 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
 
           const coreRequests = [];
 
+          // Insert screenshot as a full-slide image element (more reliable than stretchedPictureFill)
           if (bgUrl) {
+            const bgImgId = `ws_bg_${i}`;
             coreRequests.push({
-              updatePageProperties: {
-                objectId: `ws_slide_${i}`,
-                pageProperties: {
-                  pageBackgroundFill: { stretchedPictureFill: { contentUrl: bgUrl } }
-                },
-                fields: 'pageBackgroundFill'
+              createImage: {
+                objectId: bgImgId,
+                url: bgUrl,
+                elementProperties: {
+                  pageObjectId: `ws_slide_${i}`,
+                  size: {
+                    width: { magnitude: slideWidth, unit: 'EMU' },
+                    height: { magnitude: slideHeight, unit: 'EMU' }
+                  },
+                  transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, unit: 'EMU' }
+                }
               }
             });
           }
 
           if (parsed && parsed.elements && parsed.elements.length > 0) {
+            // Google Slides text boxes have ~7.2pt (91440 EMU) default padding on all sides.
+            // The API doesn't let us remove it, so we compensate by shifting position.
+            const defaultPadEmu = 91440; // 0.1 inch = 7.2pt
+
             for (let j = 0; j < parsed.elements.length; j++) {
               const el = parsed.elements[j];
               const shapeId = `ws_txt_${i}_${j}`;
 
-              const x = Math.round((el.x / 100) * slideWidth);
-              const y = Math.round((el.y / 100) * slideHeight);
-              const w = Math.round((el.w / 100) * slideWidth);
-              const h = Math.round((el.h / 100) * slideHeight);
+              // Convert percentages to EMU, then offset to compensate for internal padding
+              const rawX = Math.round((el.x / 100) * slideWidth);
+              const rawY = Math.round((el.y / 100) * slideHeight);
+              const rawW = Math.round((el.w / 100) * slideWidth);
+              const rawH = Math.round((el.h / 100) * slideHeight);
+
+              // Shift text box left and up by the default padding amount so text
+              // renders at the correct position despite the internal margins
+              const x = Math.max(0, rawX - defaultPadEmu);
+              const y = Math.max(0, rawY - defaultPadEmu);
+              const w = Math.max(91440, rawW + defaultPadEmu * 2); // widen to account for left+right pad
+              const h = Math.max(91440, rawH + defaultPadEmu * 2); // taller for top+bottom pad
 
               coreRequests.push({
                 createShape: {
@@ -2315,8 +2340,8 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
                   elementProperties: {
                     pageObjectId: `ws_slide_${i}`,
                     size: {
-                      width: { magnitude: Math.max(w, 91440), unit: 'EMU' },
-                      height: { magnitude: Math.max(h, 91440), unit: 'EMU' }
+                      width: { magnitude: w, unit: 'EMU' },
+                      height: { magnitude: h, unit: 'EMU' }
                     },
                     transform: { scaleX: 1, scaleY: 1, translateX: x, translateY: y, unit: 'EMU' }
                   }
@@ -2345,26 +2370,35 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
                   }
                 });
 
-                if (el.align) {
-                  coreRequests.push({
-                    updateParagraphStyle: {
-                      objectId: shapeId,
-                      style: { alignment: el.align === 'center' ? 'CENTER' : el.align === 'right' ? 'END' : 'START' },
-                      textRange: { type: 'ALL' },
-                      fields: 'alignment'
-                    }
-                  });
-                }
+                // Set paragraph style: alignment + line spacing matching the web rendering
+                const paraStyle = {
+                  alignment: el.align === 'center' ? 'CENTER' : el.align === 'right' ? 'END' : 'START',
+                  lineSpacing: el.lineSpacing || 115,
+                  spaceAbove: { magnitude: 0, unit: 'PT' },
+                  spaceBelow: { magnitude: 0, unit: 'PT' }
+                };
+
+                coreRequests.push({
+                  updateParagraphStyle: {
+                    objectId: shapeId,
+                    style: paraStyle,
+                    textRange: { type: 'ALL' },
+                    fields: 'alignment,lineSpacing,spaceAbove,spaceBelow'
+                  }
+                });
               }
 
+              // Transparent text box, anchor text at top, disable autofit
               coreRequests.push({
                 updateShapeProperties: {
                   objectId: shapeId,
                   shapeProperties: {
                     shapeBackgroundFill: { propertyState: 'NOT_RENDERED' },
-                    outline: { propertyState: 'NOT_RENDERED' }
+                    outline: { propertyState: 'NOT_RENDERED' },
+                    contentAlignment: 'TOP',
+                    autofit: { autofitType: 'NONE' }
                   },
-                  fields: 'shapeBackgroundFill,outline'
+                  fields: 'shapeBackgroundFill,outline,contentAlignment,autofit'
                 }
               });
             }
@@ -2384,12 +2418,17 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
                   await slidesService.presentations.batchUpdate({
                     presentationId,
                     requestBody: { requests: [{
-                      updatePageProperties: {
-                        objectId: `ws_slide_${i}`,
-                        pageProperties: {
-                          pageBackgroundFill: { stretchedPictureFill: { contentUrl: bgUrl } }
-                        },
-                        fields: 'pageBackgroundFill'
+                      createImage: {
+                        objectId: `ws_bg_retry_${i}`,
+                        url: bgUrl,
+                        elementProperties: {
+                          pageObjectId: `ws_slide_${i}`,
+                          size: {
+                            width: { magnitude: slideWidth, unit: 'EMU' },
+                            height: { magnitude: slideHeight, unit: 'EMU' }
+                          },
+                          transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, unit: 'EMU' }
+                        }
                       }
                     }] }
                   });
