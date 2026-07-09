@@ -76,7 +76,12 @@ async function getPuppeteerBrowser() {
  * @param {string} sfLogoUrl - Public URL of the SF logo
  * @returns {Promise<Buffer>} PNG image buffer
  */
-async function renderWebSlideToImage(slide, slideIndex, brandLogoUrl, sfLogoUrl) {
+/**
+ * Build the full HTML document for a slide (used for both screenshots and text extraction).
+ * hideText: if true, hides text elements (h1-h6, p, li, span with text) so the screenshot
+ * only has background, design shapes, and logos — no text baked in.
+ */
+function buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, hideText = false) {
   const html = slide.html_content || '';
   const css = slide.css_content || '';
   const bgUrl = slide.bg_image_url || '';
@@ -110,7 +115,13 @@ async function renderWebSlideToImage(slide, slideIndex, brandLogoUrl, sfLogoUrl)
     logoHtml += '</div>';
   }
 
-  const fullHtml = `<!DOCTYPE html>
+  // If hideText, inject CSS that hides all text elements so they don't appear in screenshots
+  // We use color:transparent instead of visibility:hidden to preserve layout spacing
+  const hideTextCss = hideText ? `
+h1, h2, h3, h4, h5, h6, p, li, span, a, strong, em, b, i, u { color: transparent !important; -webkit-text-stroke: 0 !important; text-shadow: none !important; }
+  ` : '';
+
+  return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
@@ -128,6 +139,7 @@ html, body { width: 1920px; height: 1080px; overflow: hidden; font-family: -appl
   z-index: 2;
 }
 ${css}
+${hideTextCss}
 </style>
 </head>
 <body>
@@ -136,6 +148,10 @@ ${css}
 ${logoHtml}
 </body>
 </html>`;
+}
+
+async function renderWebSlideToImage(slide, slideIndex, brandLogoUrl, sfLogoUrl) {
+  const fullHtml = buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, true); // hideText = true
 
   const browser = await getPuppeteerBrowser();
   const page = await browser.newPage();
@@ -152,6 +168,114 @@ ${logoHtml}
     });
 
     return screenshotBuf;
+  } finally {
+    await page.close();
+  }
+}
+
+/**
+ * Use headless browser to extract actual rendered text positions from a slide.
+ * Returns array of { text, x, y, w, h (as %), fontSize, color, bold, italic, align }
+ * with pixel-perfect positions from getBoundingClientRect.
+ */
+async function extractTextPositionsFromBrowser(slide, slideIndex, brandLogoUrl, sfLogoUrl) {
+  const fullHtml = buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, false); // show text
+
+  const browser = await getPuppeteerBrowser();
+  const page = await browser.newPage();
+  try {
+    await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
+    await page.setContent(fullHtml, { waitUntil: 'networkidle0', timeout: 15000 });
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 300)));
+
+    // Extract all visible text elements with their computed positions and styles
+    const elements = await page.evaluate(() => {
+      const results = [];
+      const seenTexts = new Set();
+      const slideW = 1920;
+      const slideH = 1080;
+
+      // Select all text-bearing elements inside the content area
+      const contentEl = document.querySelector('.slide-html-content');
+      if (!contentEl) return results;
+
+      const textEls = contentEl.querySelectorAll('h1, h2, h3, h4, h5, h6, p, li, span, div, a, strong, em, b, i, u, td, th');
+
+      for (const el of textEls) {
+        // Skip elements that contain block children (we'll get the children instead)
+        const hasBlockChild = el.querySelector('h1, h2, h3, h4, h5, h6, p, ul, ol, div, section, table');
+        if (hasBlockChild && !['LI', 'TD', 'TH', 'SPAN', 'STRONG', 'EM', 'B', 'I', 'U', 'A'].includes(el.tagName)) continue;
+
+        // Get the direct text content (not from nested block elements)
+        let text = '';
+        if (['LI', 'SPAN', 'STRONG', 'EM', 'B', 'I', 'U', 'A', 'TD', 'TH'].includes(el.tagName)) {
+          text = el.textContent.trim();
+        } else {
+          // For block elements, get only direct text nodes + inline children
+          for (const child of el.childNodes) {
+            if (child.nodeType === Node.TEXT_NODE) {
+              text += child.textContent;
+            } else if (child.nodeType === Node.ELEMENT_NODE) {
+              const tag = child.tagName;
+              if (['SPAN', 'STRONG', 'EM', 'B', 'I', 'U', 'A', 'BR'].includes(tag)) {
+                text += tag === 'BR' ? '\n' : child.textContent;
+              }
+            }
+          }
+          text = text.trim();
+        }
+
+        if (!text || text.length < 2) continue;
+
+        // Deduplicate — skip if we've seen this exact text at a similar position
+        const key = text.substring(0, 50);
+        if (seenTexts.has(key)) continue;
+        seenTexts.add(key);
+
+        const rect = el.getBoundingClientRect();
+        // Skip elements outside viewport or with zero size
+        if (rect.width < 10 || rect.height < 5) continue;
+        if (rect.bottom < 0 || rect.top > slideH || rect.right < 0 || rect.left > slideW) continue;
+
+        const computed = window.getComputedStyle(el);
+
+        // Skip invisible elements
+        if (computed.display === 'none' || computed.visibility === 'hidden' || computed.opacity === '0') continue;
+
+        const fontSize = parseFloat(computed.fontSize) * 0.75; // px to pt
+        const color = computed.color;
+        const fontWeight = computed.fontWeight;
+        const fontStyle = computed.fontStyle;
+        const textAlign = computed.textAlign;
+
+        // Convert RGB color to hex
+        let hexColor = '#FFFFFF';
+        const rgbMatch = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+        if (rgbMatch) {
+          const r = parseInt(rgbMatch[1]).toString(16).padStart(2, '0');
+          const g = parseInt(rgbMatch[2]).toString(16).padStart(2, '0');
+          const b = parseInt(rgbMatch[3]).toString(16).padStart(2, '0');
+          hexColor = `#${r}${g}${b}`;
+        }
+
+        results.push({
+          text,
+          x: (rect.left / slideW) * 100,
+          y: (rect.top / slideH) * 100,
+          w: (rect.width / slideW) * 100,
+          h: (rect.height / slideH) * 100,
+          fontSize: Math.round(fontSize),
+          color: hexColor,
+          bold: fontWeight === 'bold' || parseInt(fontWeight) >= 600,
+          italic: fontStyle === 'italic',
+          align: textAlign === 'center' ? 'center' : textAlign === 'right' ? 'right' : 'left'
+        });
+      }
+
+      return results;
+    });
+
+    return elements;
   } finally {
     await page.close();
   }
@@ -2110,15 +2234,18 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
           job.progress = i + 1; // Update progress for polling
         }
 
-        // Step 3: Extract text elements from HTML
-        const parsedSlides = slides.map((slide, i) => {
+        // Step 3: Extract text positions using headless browser (pixel-perfect)
+        const parsedSlides = [];
+        for (let i = 0; i < slides.length; i++) {
           try {
-            return { slideIndex: i, elements: extractTextFromHtml(slide.html_content || '', slide.css_content || '') };
+            const elements = await extractTextPositionsFromBrowser(slides[i], i, brandLogoUrl, sfLogoPublicUrl);
+            parsedSlides.push({ slideIndex: i, elements });
+            console.log(`[WebExport] Slide ${i + 1}/${slides.length}: extracted ${elements.length} text elements`);
           } catch (err) {
             console.warn(`[WebExport] Text extraction failed for slide ${i}: ${err.message}`);
-            return { slideIndex: i, elements: [] };
+            parsedSlides.push({ slideIndex: i, elements: [] });
           }
-        });
+        }
 
         // Step 4: Create Google Slides presentation
         const slidesService = google.slides({ version: 'v1', auth: authClient });
