@@ -16,6 +16,17 @@ const puppeteer = require('puppeteer');
 const app = express();
 const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
+// ─── In-memory export job store ───
+// Jobs are keyed by a UUID. Each job has: { status, progress, total, googleUrl, error, startedAt }
+const exportJobs = new Map();
+// Clean up old jobs every 10 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, job] of exportJobs) {
+    if (now - job.startedAt > 30 * 60 * 1000) exportJobs.delete(id); // 30 min TTL
+  }
+}, 10 * 60 * 1000);
+
 // Master template reference ID — all new web presentations start as a copy of this reference
 const MASTER_TEMPLATE_REF_ID = parseInt(process.env.MASTER_TEMPLATE_REF_ID || '4');
 
@@ -2016,9 +2027,9 @@ app.post('/api/presentations/:id/export-google', async (req, res) => {
 // ═══════════════════════════════════════════════
 
 // POST /api/presentations/:id/export-google-web — Export web-based presentation to Google Slides
-// HYBRID APPROACH: Screenshots the fully-rendered HTML slide (with all design elements, gradients,
-// overlays, accent bars, containers) as a background image, then overlays native editable text boxes.
-// This gives pixel-perfect visual design AND editable text in Google Slides.
+// ASYNC: Returns a jobId immediately; client polls GET /api/export-jobs/:jobId for progress.
+// HYBRID APPROACH: Screenshots the fully-rendered HTML slide as a background image, then
+// overlays native editable text boxes for pixel-perfect design + editable text.
 app.post('/api/presentations/:id/export-google-web', async (req, res) => {
   try {
     const { email } = req.body;
@@ -2051,233 +2062,252 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
       return res.status(400).json({ error: 'No slides found.' });
     }
 
-    // Get brand data
-    let brandData = presentation.web_brand_data;
-    if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch(e) { brandData = {}; } }
-    brandData = brandData || {};
+    // Create a job and return immediately
+    const jobId = crypto.randomUUID();
+    exportJobs.set(jobId, { status: 'processing', progress: 0, total: slides.length, googleUrl: null, error: null, startedAt: Date.now() });
 
-    const brandLogoUrl = brandData.brandLogoUrl || '';
-    console.log(`[WebExport] Starting HYBRID Google Slides export for presentation ${presentation.id} (${slides.length} slides)...`);
+    // Respond immediately — client will poll
+    res.json({ jobId, status: 'processing', total: slides.length });
 
-    // Step 1: Upload SF logo to R2 for public URL
-    let sfLogoPublicUrl = '';
-    try {
-      const sfLogoBuf = await getSfLogoBuffer();
-      if (sfLogoBuf) {
-        sfLogoPublicUrl = await uploadToR2(sfLogoBuf, 'system/salesforce-logo-white.png', 'image/png');
-      }
-    } catch (e) {
-      console.warn('[WebExport] Could not upload SF logo to R2:', e.message);
-    }
-
-    // Step 2: Screenshot all slides and upload to R2 (design layer)
-    console.log(`[WebExport] Rendering ${slides.length} slide screenshots via headless browser...`);
-    const screenshotUrls = [];
-    for (let i = 0; i < slides.length; i++) {
+    // ── Run the actual export in the background ──
+    (async () => {
+      const job = exportJobs.get(jobId);
       try {
-        const pngBuf = await renderWebSlideToImage(slides[i], i, brandLogoUrl, sfLogoPublicUrl);
-        const hash = crypto.createHash('md5').update(pngBuf).digest('hex').substring(0, 8);
-        const key = `google-export/${presentation.id}/slide-${i}-${hash}.png`;
-        const publicUrl = await uploadToR2(pngBuf, key, 'image/png');
-        screenshotUrls.push(publicUrl);
-        console.log(`[WebExport] Slide ${i + 1}/${slides.length} screenshot uploaded`);
-      } catch (err) {
-        console.error(`[WebExport] Screenshot failed for slide ${i}:`, err.message);
-        // Fall back to the original background image if screenshot fails
-        screenshotUrls.push(slides[i].bg_image_url || '');
-      }
-    }
+        // Get brand data
+        let brandData = presentation.web_brand_data;
+        if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch(e) { brandData = {}; } }
+        brandData = brandData || {};
 
-    // Step 3: Extract text elements from HTML (for editable text overlay)
-    // We use simple regex extraction — the text goes on TOP of the screenshot background
-    const parsedSlides = slides.map((slide, i) => {
-      try {
-        return { slideIndex: i, elements: extractTextFromHtml(slide.html_content || '', slide.css_content || '') };
-      } catch (err) {
-        console.warn(`[WebExport] Text extraction failed for slide ${i}: ${err.message}`);
-        return { slideIndex: i, elements: [] };
-      }
-    });
+        const brandLogoUrl = brandData.brandLogoUrl || '';
+        console.log(`[WebExport] Starting HYBRID Google Slides export for presentation ${presentation.id} (${slides.length} slides)...`);
 
-    // Step 4: Create Google Slides presentation
-    const slidesService = google.slides({ version: 'v1', auth: authClient });
-    const createResp = await slidesService.presentations.create({
-      requestBody: { title: presentation.name || 'Presentation' }
-    });
-
-    const presentationId = createResp.data.presentationId;
-    const presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
-    console.log(`[WebExport] Created Google Slides: ${presentationId}`);
-
-    // Step 5: Set up slides — delete default slide, create blank slides
-    const setupRequests = [];
-    if (createResp.data.slides && createResp.data.slides.length > 0) {
-      setupRequests.push({ deleteObject: { objectId: createResp.data.slides[0].objectId } });
-    }
-    for (let i = 0; i < slides.length; i++) {
-      setupRequests.push({
-        createSlide: {
-          objectId: `ws_slide_${i}`,
-          insertionIndex: i,
-          slideLayoutReference: { predefinedLayout: 'BLANK' }
+        // Step 1: Upload SF logo to R2 for public URL
+        let sfLogoPublicUrl = '';
+        try {
+          const sfLogoBuf = await getSfLogoBuffer();
+          if (sfLogoBuf) {
+            sfLogoPublicUrl = await uploadToR2(sfLogoBuf, 'system/salesforce-logo-white.png', 'image/png');
+          }
+        } catch (e) {
+          console.warn('[WebExport] Could not upload SF logo to R2:', e.message);
         }
-      });
-    }
-    await slidesService.presentations.batchUpdate({
-      presentationId,
-      requestBody: { requests: setupRequests }
-    });
 
-    const slideWidth = 9144000;   // 10 inches in EMU
-    const slideHeight = 5143500;  // 5.625 inches in EMU (16:9)
+        // Step 2: Screenshot all slides and upload to R2 (design layer)
+        console.log(`[WebExport] Rendering ${slides.length} slide screenshots via headless browser...`);
+        const screenshotUrls = [];
+        for (let i = 0; i < slides.length; i++) {
+          try {
+            const pngBuf = await renderWebSlideToImage(slides[i], i, brandLogoUrl, sfLogoPublicUrl);
+            const hash = crypto.createHash('md5').update(pngBuf).digest('hex').substring(0, 8);
+            const key = `google-export/${presentation.id}/slide-${i}-${hash}.png`;
+            const publicUrl = await uploadToR2(pngBuf, key, 'image/png');
+            screenshotUrls.push(publicUrl);
+            console.log(`[WebExport] Slide ${i + 1}/${slides.length} screenshot uploaded`);
+          } catch (err) {
+            console.error(`[WebExport] Screenshot failed for slide ${i}:`, err.message);
+            screenshotUrls.push(slides[i].bg_image_url || '');
+          }
+          job.progress = i + 1; // Update progress for polling
+        }
 
-    // Step 6: For each slide, set screenshot as background + add editable text boxes
-    for (let i = 0; i < slides.length; i++) {
-      const bgUrl = screenshotUrls[i];
-      const parsed = parsedSlides[i];
-
-      const coreRequests = [];
-
-      // Set the screenshot as the slide background — this IS the design
-      if (bgUrl) {
-        coreRequests.push({
-          updatePageProperties: {
-            objectId: `ws_slide_${i}`,
-            pageProperties: {
-              pageBackgroundFill: {
-                stretchedPictureFill: { contentUrl: bgUrl }
-              }
-            },
-            fields: 'pageBackgroundFill'
+        // Step 3: Extract text elements from HTML
+        const parsedSlides = slides.map((slide, i) => {
+          try {
+            return { slideIndex: i, elements: extractTextFromHtml(slide.html_content || '', slide.css_content || '') };
+          } catch (err) {
+            console.warn(`[WebExport] Text extraction failed for slide ${i}: ${err.message}`);
+            return { slideIndex: i, elements: [] };
           }
         });
-      }
 
-      // Add transparent, editable text boxes on top of the screenshot
-      // These are invisible (no fill, no border) and sit exactly where the text
-      // appears in the screenshot, making the text selectable and editable
-      if (parsed && parsed.elements && parsed.elements.length > 0) {
-        for (let j = 0; j < parsed.elements.length; j++) {
-          const el = parsed.elements[j];
-          const shapeId = `ws_txt_${i}_${j}`;
+        // Step 4: Create Google Slides presentation
+        const slidesService = google.slides({ version: 'v1', auth: authClient });
+        const createResp = await slidesService.presentations.create({
+          requestBody: { title: presentation.name || 'Presentation' }
+        });
 
-          const x = Math.round((el.x / 100) * slideWidth);
-          const y = Math.round((el.y / 100) * slideHeight);
-          const w = Math.round((el.w / 100) * slideWidth);
-          const h = Math.round((el.h / 100) * slideHeight);
+        const presentationId = createResp.data.presentationId;
+        const presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
+        console.log(`[WebExport] Created Google Slides: ${presentationId}`);
 
-          coreRequests.push({
-            createShape: {
-              objectId: shapeId,
-              shapeType: 'TEXT_BOX',
-              elementProperties: {
-                pageObjectId: `ws_slide_${i}`,
-                size: {
-                  width: { magnitude: Math.max(w, 91440), unit: 'EMU' },
-                  height: { magnitude: Math.max(h, 91440), unit: 'EMU' }
-                },
-                transform: { scaleX: 1, scaleY: 1, translateX: x, translateY: y, unit: 'EMU' }
-              }
+        // Step 5: Set up slides — delete default slide, create blank slides
+        const setupRequests = [];
+        if (createResp.data.slides && createResp.data.slides.length > 0) {
+          setupRequests.push({ deleteObject: { objectId: createResp.data.slides[0].objectId } });
+        }
+        for (let i = 0; i < slides.length; i++) {
+          setupRequests.push({
+            createSlide: {
+              objectId: `ws_slide_${i}`,
+              insertionIndex: i,
+              slideLayoutReference: { predefinedLayout: 'BLANK' }
             }
           });
+        }
+        await slidesService.presentations.batchUpdate({
+          presentationId,
+          requestBody: { requests: setupRequests }
+        });
 
-          if (el.text) {
+        const slideWidth = 9144000;
+        const slideHeight = 5143500;
+
+        // Step 6: For each slide, set screenshot as background + add editable text boxes
+        for (let i = 0; i < slides.length; i++) {
+          const bgUrl = screenshotUrls[i];
+          const parsed = parsedSlides[i];
+
+          const coreRequests = [];
+
+          if (bgUrl) {
             coreRequests.push({
-              insertText: { objectId: shapeId, text: el.text, insertionIndex: 0 }
-            });
-
-            // Style the text to match what's in the screenshot
-            const textStyle = {
-              fontFamily: 'Arial',
-              fontSize: { magnitude: el.fontSize || 16, unit: 'PT' },
-              foregroundColor: { opaqueColor: { rgbColor: parseColorToRgb(el.color || '#FFFFFF') } },
-              bold: el.bold || false,
-              italic: el.italic || false
-            };
-
-            coreRequests.push({
-              updateTextStyle: {
-                objectId: shapeId,
-                style: textStyle,
-                textRange: { type: 'ALL' },
-                fields: 'fontFamily,fontSize,foregroundColor,bold,italic'
+              updatePageProperties: {
+                objectId: `ws_slide_${i}`,
+                pageProperties: {
+                  pageBackgroundFill: { stretchedPictureFill: { contentUrl: bgUrl } }
+                },
+                fields: 'pageBackgroundFill'
               }
             });
+          }
 
-            if (el.align) {
+          if (parsed && parsed.elements && parsed.elements.length > 0) {
+            for (let j = 0; j < parsed.elements.length; j++) {
+              const el = parsed.elements[j];
+              const shapeId = `ws_txt_${i}_${j}`;
+
+              const x = Math.round((el.x / 100) * slideWidth);
+              const y = Math.round((el.y / 100) * slideHeight);
+              const w = Math.round((el.w / 100) * slideWidth);
+              const h = Math.round((el.h / 100) * slideHeight);
+
               coreRequests.push({
-                updateParagraphStyle: {
+                createShape: {
                   objectId: shapeId,
-                  style: {
-                    alignment: el.align === 'center' ? 'CENTER' : el.align === 'right' ? 'END' : 'START'
+                  shapeType: 'TEXT_BOX',
+                  elementProperties: {
+                    pageObjectId: `ws_slide_${i}`,
+                    size: {
+                      width: { magnitude: Math.max(w, 91440), unit: 'EMU' },
+                      height: { magnitude: Math.max(h, 91440), unit: 'EMU' }
+                    },
+                    transform: { scaleX: 1, scaleY: 1, translateX: x, translateY: y, unit: 'EMU' }
+                  }
+                }
+              });
+
+              if (el.text) {
+                coreRequests.push({
+                  insertText: { objectId: shapeId, text: el.text, insertionIndex: 0 }
+                });
+
+                const textStyle = {
+                  fontFamily: 'Arial',
+                  fontSize: { magnitude: el.fontSize || 16, unit: 'PT' },
+                  foregroundColor: { opaqueColor: { rgbColor: parseColorToRgb(el.color || '#FFFFFF') } },
+                  bold: el.bold || false,
+                  italic: el.italic || false
+                };
+
+                coreRequests.push({
+                  updateTextStyle: {
+                    objectId: shapeId,
+                    style: textStyle,
+                    textRange: { type: 'ALL' },
+                    fields: 'fontFamily,fontSize,foregroundColor,bold,italic'
+                  }
+                });
+
+                if (el.align) {
+                  coreRequests.push({
+                    updateParagraphStyle: {
+                      objectId: shapeId,
+                      style: { alignment: el.align === 'center' ? 'CENTER' : el.align === 'right' ? 'END' : 'START' },
+                      textRange: { type: 'ALL' },
+                      fields: 'alignment'
+                    }
+                  });
+                }
+              }
+
+              coreRequests.push({
+                updateShapeProperties: {
+                  objectId: shapeId,
+                  shapeProperties: {
+                    shapeBackgroundFill: { propertyState: 'NOT_RENDERED' },
+                    outline: { propertyState: 'NOT_RENDERED' }
                   },
-                  textRange: { type: 'ALL' },
-                  fields: 'alignment'
+                  fields: 'shapeBackgroundFill,outline'
                 }
               });
             }
           }
 
-          // Transparent text box — no fill, no border (text overlays the screenshot)
-          coreRequests.push({
-            updateShapeProperties: {
-              objectId: shapeId,
-              shapeProperties: {
-                shapeBackgroundFill: { propertyState: 'NOT_RENDERED' },
-                outline: { propertyState: 'NOT_RENDERED' }
-              },
-              fields: 'shapeBackgroundFill,outline'
-            }
-          });
-        }
-      }
-
-      // Send the batch
-      if (coreRequests.length > 0) {
-        try {
-          await slidesService.presentations.batchUpdate({
-            presentationId,
-            requestBody: { requests: coreRequests }
-          });
-          console.log(`[WebExport] Slide ${i + 1}/${slides.length} exported (screenshot bg + ${parsed?.elements?.length || 0} text boxes)`);
-        } catch (batchErr) {
-          console.error(`[WebExport] Batch failed for slide ${i + 1}:`, batchErr.message);
-          // Retry with just background
-          if (bgUrl) {
+          if (coreRequests.length > 0) {
             try {
               await slidesService.presentations.batchUpdate({
                 presentationId,
-                requestBody: { requests: [{
-                  updatePageProperties: {
-                    objectId: `ws_slide_${i}`,
-                    pageProperties: {
-                      pageBackgroundFill: { stretchedPictureFill: { contentUrl: bgUrl } }
-                    },
-                    fields: 'pageBackgroundFill'
-                  }
-                }] }
+                requestBody: { requests: coreRequests }
               });
-            } catch (retryErr) {
-              console.warn(`[WebExport] Retry also failed for slide ${i + 1}: ${retryErr.message}`);
+              console.log(`[WebExport] Slide ${i + 1}/${slides.length} exported (screenshot bg + ${parsed?.elements?.length || 0} text boxes)`);
+            } catch (batchErr) {
+              console.error(`[WebExport] Batch failed for slide ${i + 1}:`, batchErr.message);
+              if (bgUrl) {
+                try {
+                  await slidesService.presentations.batchUpdate({
+                    presentationId,
+                    requestBody: { requests: [{
+                      updatePageProperties: {
+                        objectId: `ws_slide_${i}`,
+                        pageProperties: {
+                          pageBackgroundFill: { stretchedPictureFill: { contentUrl: bgUrl } }
+                        },
+                        fields: 'pageBackgroundFill'
+                      }
+                    }] }
+                  });
+                } catch (retryErr) {
+                  console.warn(`[WebExport] Retry also failed for slide ${i + 1}: ${retryErr.message}`);
+                }
+              }
             }
           }
         }
+
+        // Step 7: Update the presentation record
+        await query(
+          'UPDATE presentations SET google_presentation_id = ?, google_presentation_url = ?, updated_at = NOW() WHERE id = ?',
+          [presentationId, presentationUrl, presentation.id]
+        );
+
+        console.log(`[WebExport] Presentation ${presentation.id} exported to Google Slides: ${presentationUrl}`);
+        job.status = 'completed';
+        job.googleUrl = presentationUrl;
+
+      } catch (err) {
+        console.error('Export web slides to Google Slides error:', err);
+        job.status = 'failed';
+        job.error = err.message;
       }
-    }
-
-    // Step 7: Update the presentation record
-    await query(
-      'UPDATE presentations SET google_presentation_id = ?, google_presentation_url = ?, updated_at = NOW() WHERE id = ?',
-      [presentationId, presentationUrl, presentation.id]
-    );
-
-    console.log(`[WebExport] Presentation ${presentation.id} exported to Google Slides: ${presentationUrl}`);
-    res.json({ success: true, googleUrl: presentationUrl });
+    })();
 
   } catch (err) {
     console.error('Export web slides to Google Slides error:', err);
     res.status(500).json({ error: 'Failed to export to Google Slides: ' + err.message });
   }
+});
+
+// GET /api/export-jobs/:jobId — Poll for export job progress
+app.get('/api/export-jobs/:jobId', (req, res) => {
+  const job = exportJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  res.json({
+    status: job.status,
+    progress: job.progress,
+    total: job.total,
+    googleUrl: job.googleUrl,
+    error: job.error
+  });
 });
 
 /**

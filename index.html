@@ -1850,8 +1850,8 @@ function showAuthError() {
 
 function connectGoogle() {
   const email = document.getElementById('user-email').textContent;
-  // Pass current presentation ID so we can redirect back to it after auth
-  const returnTo = currentPresentationId ? `&returnTo=${currentPresentationId}` : '';
+  // Only pass returnTo when on the presentation detail page — not from the home page
+  const returnTo = (currentPage === 'item-detail' && currentPresentationId) ? `&returnTo=${currentPresentationId}` : '';
   window.location.href = `/api/auth/google?email=${encodeURIComponent(email)}${returnTo}`;
 }
 
@@ -2671,12 +2671,12 @@ async function exportToGoogleSlides() {
   const reexportBtn = document.getElementById('detail-reexport-google-btn');
   btn.disabled = true;
   if (reexportBtn) reexportBtn.disabled = true;
-  btn.innerHTML = '<span class="inline-flex items-center gap-2"><svg class="animate-spin" style="width:14px;height:14px" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="3" opacity="0.3"/><path fill="currentColor" d="M12 2a10 10 0 0 1 10 10h-3a7 7 0 0 0-7-7V2z"/></svg> Exporting to Google Slides...</span>';
+  btn.innerHTML = '<span class="inline-flex items-center gap-2"><svg class="animate-spin" style="width:14px;height:14px" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="3" opacity="0.3"/><path fill="currentColor" d="M12 2a10 10 0 0 1 10 10h-3a7 7 0 0 0-7-7V2z"/></svg> Starting export...</span>';
 
   const email = document.getElementById('user-email').textContent;
 
   try {
-    // Use the web-slides export endpoint for web-based presentations (native text/shapes)
+    // Use the web-slides export endpoint for web-based presentations
     // or the legacy image-based export for older presentations
     const exportEndpoint = window._isWebSlides
       ? `/api/presentations/${currentPresentationId}/export-google-web`
@@ -2704,36 +2704,83 @@ async function exportToGoogleSlides() {
       throw new Error(data.error || 'Export failed');
     }
 
+    // If the response has a jobId, it's an async export — poll for completion
+    if (data.jobId) {
+      const totalSlides = data.total || 0;
+      await pollExportJob(data.jobId, totalSlides, btn, reexportBtn);
+      return;
+    }
+
+    // Legacy sync response (non-web-slides export)
     if (data.googleUrl) {
-      // Show success state with clickable "Open" button
-      btn.disabled = false;
-      btn.innerHTML = '✓ Open in Google Slides ↗';
-      btn.style.background = '#10B981';
-      btn.style.color = 'white';
-      btn.style.borderColor = '#10B981';
-      btn.onclick = () => window.open(data.googleUrl, '_blank');
-      // Show re-export button
-      const reexportBtn = document.getElementById('detail-reexport-google-btn');
-      reexportBtn.classList.remove('hidden');
-      reexportBtn.style.display = 'inline-flex';
-      reexportBtn.disabled = false;
-      reexportBtn.innerHTML = '↻ Re-export to Google Slides';
-      // Also open immediately
-      window.open(data.googleUrl, '_blank');
+      showExportSuccess(btn, reexportBtn, data.googleUrl);
     } else {
       btn.innerHTML = '✓ Exported!';
-      setTimeout(() => { btn.innerHTML = 'Export to Google Slides'; btn.disabled = false; btn.onclick = exportToGoogleSlides; btn.style.background = 'none'; btn.style.color = '#374151'; btn.style.borderColor = '#d1d5db'; }, 5000);
+      setTimeout(() => { resetExportBtn(btn); }, 5000);
     }
   } catch (err) {
     alert('Export failed: ' + err.message);
-    btn.innerHTML = 'Export to Google Slides';
-    btn.disabled = false;
-    btn.style.background = 'none';
-    btn.style.color = '#374151';
-    btn.style.borderColor = '#d1d5db';
-    btn.onclick = exportToGoogleSlides;
+    resetExportBtn(btn);
     if (reexportBtn) reexportBtn.disabled = false;
   }
+}
+
+async function pollExportJob(jobId, totalSlides, btn, reexportBtn) {
+  const poll = async () => {
+    try {
+      const resp = await fetch(`/api/export-jobs/${jobId}`);
+      const job = await resp.json();
+
+      if (job.status === 'processing') {
+        const pct = totalSlides > 0 ? Math.round((job.progress / totalSlides) * 100) : 0;
+        btn.innerHTML = `<span class="inline-flex items-center gap-2"><svg class="animate-spin" style="width:14px;height:14px" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="3" opacity="0.3"/><path fill="currentColor" d="M12 2a10 10 0 0 1 10 10h-3a7 7 0 0 0-7-7V2z"/></svg> Exporting... ${pct}% (${job.progress}/${totalSlides} slides)</span>`;
+        setTimeout(poll, 2000); // Poll every 2 seconds
+        return;
+      }
+
+      if (job.status === 'completed' && job.googleUrl) {
+        showExportSuccess(btn, reexportBtn, job.googleUrl);
+        return;
+      }
+
+      if (job.status === 'failed') {
+        throw new Error(job.error || 'Export failed');
+      }
+    } catch (err) {
+      alert('Export failed: ' + err.message);
+      resetExportBtn(btn);
+      if (reexportBtn) reexportBtn.disabled = false;
+    }
+  };
+  setTimeout(poll, 2000); // First poll after 2 seconds
+}
+
+function showExportSuccess(btn, reexportBtn, googleUrl) {
+  btn.disabled = false;
+  btn.innerHTML = '✓ Open in Google Slides ↗';
+  btn.style.background = '#10B981';
+  btn.style.color = 'white';
+  btn.style.borderColor = '#10B981';
+  btn.onclick = () => window.open(googleUrl, '_blank');
+  // Show re-export button
+  const reBtn = reexportBtn || document.getElementById('detail-reexport-google-btn');
+  if (reBtn) {
+    reBtn.classList.remove('hidden');
+    reBtn.style.display = 'inline-flex';
+    reBtn.disabled = false;
+    reBtn.innerHTML = '↻ Re-export to Google Slides';
+  }
+  // Open immediately
+  window.open(googleUrl, '_blank');
+}
+
+function resetExportBtn(btn) {
+  btn.innerHTML = 'Export to Google Slides';
+  btn.disabled = false;
+  btn.style.background = 'none';
+  btn.style.color = '#374151';
+  btn.style.borderColor = '#d1d5db';
+  btn.onclick = exportToGoogleSlides;
 }
 
 // ═══════════════════════════════════════════════
