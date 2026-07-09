@@ -2232,7 +2232,7 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
             const key = `google-export/${presentation.id}/slide-${i}-${hash}.jpg`;
             const publicUrl = await uploadToR2(jpgBuf, key, 'image/jpeg');
             screenshotUrls.push(publicUrl);
-            console.log(`[WebExport] Slide ${i + 1}/${slides.length} screenshot uploaded (${Math.round(jpgBuf.length / 1024)}KB)`);
+            console.log(`[WebExport] Slide ${i + 1}/${slides.length} screenshot uploaded (${Math.round(jpgBuf.length / 1024)}KB) URL: ${publicUrl}`);
           } catch (err) {
             console.error(`[WebExport] Screenshot failed for slide ${i}:`, err.message);
             screenshotUrls.push(slides[i].bg_image_url || '');
