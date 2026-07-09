@@ -2233,6 +2233,13 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
             const publicUrl = await uploadToR2(jpgBuf, key, 'image/jpeg');
             screenshotUrls.push(publicUrl);
             console.log(`[WebExport] Slide ${i + 1}/${slides.length} screenshot uploaded (${Math.round(jpgBuf.length / 1024)}KB) URL: ${publicUrl}`);
+            // Verify the URL is accessible
+            try {
+              const verifyResp = await fetch(publicUrl, { method: 'HEAD' });
+              console.log(`[WebExport] URL verify: ${verifyResp.status} ${verifyResp.headers.get('content-type')} ${verifyResp.headers.get('content-length')}b`);
+            } catch (vErr) {
+              console.warn(`[WebExport] URL verify FAILED: ${vErr.message}`);
+            }
           } catch (err) {
             console.error(`[WebExport] Screenshot failed for slide ${i}:`, err.message);
             screenshotUrls.push(slides[i].bg_image_url || '');
@@ -2286,9 +2293,10 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
         const slideHeight = 5143500;
 
         // Step 6a: Set backgrounds for ALL slides in one batch first
+        // Use screenshot URLs where available, fall back to original bg images
         const bgRequests = [];
         for (let i = 0; i < slides.length; i++) {
-          const bgUrl = screenshotUrls[i];
+          const bgUrl = screenshotUrls[i] || slides[i].bg_image_url || '';
           if (bgUrl) {
             bgRequests.push({
               updatePageProperties: {
