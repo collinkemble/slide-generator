@@ -2285,31 +2285,62 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
         const slideWidth = 9144000;
         const slideHeight = 5143500;
 
-        // Step 6: For each slide, set screenshot as background + add editable text boxes
+        // Step 6a: Set backgrounds for ALL slides in one batch first
+        const bgRequests = [];
         for (let i = 0; i < slides.length; i++) {
           const bgUrl = screenshotUrls[i];
-          const parsed = parsedSlides[i];
-
-          const coreRequests = [];
-
-          // Insert screenshot as a full-slide image element (more reliable than stretchedPictureFill)
           if (bgUrl) {
-            const bgImgId = `ws_bg_${i}`;
-            coreRequests.push({
-              createImage: {
-                objectId: bgImgId,
-                url: bgUrl,
-                elementProperties: {
-                  pageObjectId: `ws_slide_${i}`,
-                  size: {
-                    width: { magnitude: slideWidth, unit: 'EMU' },
-                    height: { magnitude: slideHeight, unit: 'EMU' }
-                  },
-                  transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, unit: 'EMU' }
-                }
+            bgRequests.push({
+              updatePageProperties: {
+                objectId: `ws_slide_${i}`,
+                pageProperties: {
+                  pageBackgroundFill: { stretchedPictureFill: { contentUrl: bgUrl } }
+                },
+                fields: 'pageBackgroundFill'
               }
             });
           }
+        }
+        if (bgRequests.length > 0) {
+          try {
+            await slidesService.presentations.batchUpdate({
+              presentationId,
+              requestBody: { requests: bgRequests }
+            });
+            console.log(`[WebExport] All ${bgRequests.length} slide backgrounds set`);
+          } catch (bgErr) {
+            console.error(`[WebExport] Background batch failed:`, bgErr.message);
+            // Try backgrounds one by one
+            for (let i = 0; i < slides.length; i++) {
+              const bgUrl = screenshotUrls[i];
+              if (bgUrl) {
+                try {
+                  await slidesService.presentations.batchUpdate({
+                    presentationId,
+                    requestBody: { requests: [{
+                      updatePageProperties: {
+                        objectId: `ws_slide_${i}`,
+                        pageProperties: {
+                          pageBackgroundFill: { stretchedPictureFill: { contentUrl: bgUrl } }
+                        },
+                        fields: 'pageBackgroundFill'
+                      }
+                    }] }
+                  });
+                  console.log(`[WebExport] Slide ${i + 1} background set individually`);
+                } catch (e) {
+                  console.warn(`[WebExport] Slide ${i + 1} background failed: ${e.message}`);
+                }
+              }
+            }
+          }
+        }
+
+        // Step 6b: For each slide, add editable text boxes on top
+        for (let i = 0; i < slides.length; i++) {
+          const parsed = parsedSlides[i];
+
+          const coreRequests = [];
 
           if (parsed && parsed.elements && parsed.elements.length > 0) {
             // Google Slides text boxes have ~7.2pt (91440 EMU) default padding on all sides.
@@ -2409,32 +2440,9 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
                 presentationId,
                 requestBody: { requests: coreRequests }
               });
-              console.log(`[WebExport] Slide ${i + 1}/${slides.length} exported (screenshot bg + ${parsed?.elements?.length || 0} text boxes)`);
+              console.log(`[WebExport] Slide ${i + 1}/${slides.length} text added (${parsed?.elements?.length || 0} text boxes)`);
             } catch (batchErr) {
-              console.error(`[WebExport] Batch failed for slide ${i + 1}:`, batchErr.message);
-              if (bgUrl) {
-                try {
-                  await slidesService.presentations.batchUpdate({
-                    presentationId,
-                    requestBody: { requests: [{
-                      createImage: {
-                        objectId: `ws_bg_retry_${i}`,
-                        url: bgUrl,
-                        elementProperties: {
-                          pageObjectId: `ws_slide_${i}`,
-                          size: {
-                            width: { magnitude: slideWidth, unit: 'EMU' },
-                            height: { magnitude: slideHeight, unit: 'EMU' }
-                          },
-                          transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, unit: 'EMU' }
-                        }
-                      }
-                    }] }
-                  });
-                } catch (retryErr) {
-                  console.warn(`[WebExport] Retry also failed for slide ${i + 1}: ${retryErr.message}`);
-                }
-              }
+              console.error(`[WebExport] Text batch failed for slide ${i + 1}:`, batchErr.message);
             }
           }
         }
