@@ -2388,17 +2388,16 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
                 });
               }
 
-              // Transparent text box, anchor text at top, disable autofit
+              // Transparent text box, anchor text at top
               coreRequests.push({
                 updateShapeProperties: {
                   objectId: shapeId,
                   shapeProperties: {
                     shapeBackgroundFill: { propertyState: 'NOT_RENDERED' },
                     outline: { propertyState: 'NOT_RENDERED' },
-                    contentAlignment: 'TOP',
-                    autofit: { autofitType: 'NONE' }
+                    contentAlignment: 'TOP'
                   },
-                  fields: 'shapeBackgroundFill,outline,contentAlignment,autofit'
+                  fields: 'shapeBackgroundFill,outline,contentAlignment'
                 }
               });
             }
