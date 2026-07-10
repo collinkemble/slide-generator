@@ -81,7 +81,7 @@ async function getPuppeteerBrowser() {
  * hideText: if true, hides text elements (h1-h6, p, li, span with text) so the screenshot
  * only has background, design shapes, and logos — no text baked in.
  */
-function buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, hideText = false) {
+function buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, hideText = false, hideLogos = false) {
   const html = slide.html_content || '';
   const css = slide.css_content || '';
   const bgUrl = slide.bg_image_url || '';
@@ -91,34 +91,41 @@ function buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, hideText = f
   const isPovIntro = sName.includes('pov intro');
 
   // Build logo HTML exactly like present-web.html
+  // When hideLogos is true, logos are omitted from the screenshot entirely
+  // so they can be placed as separate editable elements in Google Slides
   let logoHtml = '';
-  if (isCover) {
-    const logoTop = isPovIntro ? '30%' : isIntroSlide ? '35%' : '50%';
-    logoHtml = `<div style="position:absolute;top:${logoTop};left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:80px;pointer-events:none;">`;
-    if (brandLogoUrl) {
-      logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:200px;width:auto;object-fit:contain;">`;
-      logoHtml += '<div style="width:3px;height:160px;background:rgba(255,255,255,0.6);"></div>';
+  if (!hideLogos) {
+    if (isCover) {
+      const logoTop = isPovIntro ? '30%' : isIntroSlide ? '35%' : '50%';
+      logoHtml = `<div style="position:absolute;top:${logoTop};left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:80px;pointer-events:none;">`;
+      if (brandLogoUrl) {
+        logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:200px;width:auto;object-fit:contain;">`;
+        logoHtml += '<div style="width:3px;height:160px;background:rgba(255,255,255,0.6);"></div>';
+      }
+      if (sfLogoUrl) {
+        logoHtml += `<img src="${sfLogoUrl}" alt="Salesforce" style="height:200px;width:auto;object-fit:contain;">`;
+      }
+      logoHtml += '</div>';
+    } else {
+      logoHtml = '<div style="position:absolute;top:30px;right:30px;z-index:10;display:flex;align-items:center;gap:12px;pointer-events:none;">';
+      if (brandLogoUrl) {
+        logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:48px;width:auto;object-fit:contain;">`;
+        logoHtml += '<div style="width:1px;height:40px;background:rgba(255,255,255,0.5);"></div>';
+      }
+      if (sfLogoUrl) {
+        logoHtml += `<img src="${sfLogoUrl}" alt="Salesforce" style="height:48px;width:auto;object-fit:contain;">`;
+      }
+      logoHtml += '</div>';
     }
-    if (sfLogoUrl) {
-      logoHtml += `<img src="${sfLogoUrl}" alt="Salesforce" style="height:200px;width:auto;object-fit:contain;">`;
-    }
-    logoHtml += '</div>';
-  } else {
-    logoHtml = '<div style="position:absolute;top:30px;right:30px;z-index:10;display:flex;align-items:center;gap:12px;pointer-events:none;">';
-    if (brandLogoUrl) {
-      logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:48px;width:auto;object-fit:contain;">`;
-      logoHtml += '<div style="width:1px;height:40px;background:rgba(255,255,255,0.5);"></div>';
-    }
-    if (sfLogoUrl) {
-      logoHtml += `<img src="${sfLogoUrl}" alt="Salesforce" style="height:48px;width:auto;object-fit:contain;">`;
-    }
-    logoHtml += '</div>';
   }
 
-  // If hideText, inject CSS that hides all text elements so they don't appear in screenshots
-  // We use color:transparent instead of visibility:hidden to preserve layout spacing
+  // If hideText, inject CSS that hides ALL text so screenshots only capture design/background.
+  // We use color:transparent on everything (*) instead of targeting specific tags,
+  // because AI-generated HTML may use divs, tds, or arbitrary elements for text.
+  // We preserve layout by NOT using visibility:hidden or display:none.
   const hideTextCss = hideText ? `
-h1, h2, h3, h4, h5, h6, p, li, span, a, strong, em, b, i, u { color: transparent !important; -webkit-text-stroke: 0 !important; text-shadow: none !important; }
+* { color: transparent !important; -webkit-text-stroke: 0 !important; text-shadow: none !important; }
+*::before, *::after { color: transparent !important; -webkit-text-stroke: 0 !important; text-shadow: none !important; }
   ` : '';
 
   return `<!DOCTYPE html>
@@ -150,8 +157,8 @@ ${logoHtml}
 </html>`;
 }
 
-async function renderWebSlideToImage(slide, slideIndex, brandLogoUrl, sfLogoUrl) {
-  const fullHtml = buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, true); // hideText = true
+async function renderWebSlideToImage(slide, slideIndex, brandLogoUrl, sfLogoUrl, hideLogos = false) {
+  const fullHtml = buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, true, hideLogos); // hideText = true
 
   const browser = await getPuppeteerBrowser();
   const page = await browser.newPage();
@@ -190,14 +197,13 @@ async function extractTextPositionsFromBrowser(slide, slideIndex, brandLogoUrl, 
 
     // Extract all visible text elements with their computed positions and styles
     const elements = await page.evaluate(() => {
-      const results = [];
-      const seenTexts = new Set();
+      const rawResults = [];
       const slideW = 1920;
       const slideH = 1080;
 
       // Select all text-bearing elements inside the content area
       const contentEl = document.querySelector('.slide-html-content');
-      if (!contentEl) return results;
+      if (!contentEl) return rawResults;
 
       const textEls = contentEl.querySelectorAll('h1, h2, h3, h4, h5, h6, p, li, span, div, a, strong, em, b, i, u, td, th');
 
@@ -225,12 +231,23 @@ async function extractTextPositionsFromBrowser(slide, slideIndex, brandLogoUrl, 
           text = text.trim();
         }
 
-        if (!text || text.length < 2) continue;
+        // Check for CSS-generated content (::before / ::after pseudo-elements)
+        // This captures numbered list markers, bullet characters, etc.
+        try {
+          const beforeContent = window.getComputedStyle(el, '::before').content;
+          if (beforeContent && beforeContent !== 'none' && beforeContent !== 'normal') {
+            // Strip quotes from CSS content string
+            const beforeText = beforeContent.replace(/^["']|["']$/g, '').trim();
+            if (beforeText && beforeText !== '•' && beforeText !== '–') {
+              text = beforeText + ' ' + text;
+            }
+          }
+        } catch (e) { /* ignore */ }
 
-        // Deduplicate — skip if we've seen this exact text at a similar position
-        const key = text.substring(0, 50);
-        if (seenTexts.has(key)) continue;
-        seenTexts.add(key);
+        if (!text) continue;
+        // Allow single characters (like numbers "1", "2", "3" in circles)
+        // but skip whitespace-only strings
+        if (text.length === 0) continue;
 
         const rect = el.getBoundingClientRect();
         // Skip elements outside viewport or with zero size
@@ -243,13 +260,63 @@ async function extractTextPositionsFromBrowser(slide, slideIndex, brandLogoUrl, 
         if (computed.display === 'none' || computed.visibility === 'hidden' || computed.opacity === '0') continue;
 
         const fontSizePx = parseFloat(computed.fontSize);
-        const fontSize = fontSizePx * 0.75; // px to pt
+        // The slide renders at 1920px wide but Google Slides is 10in = 720pt wide
+        // Scale factor: 720/1920 = 0.375 (not 0.75 which is generic px→pt)
+        const fontSize = fontSizePx * (720 / 1920);
         const lineHeightPx = parseFloat(computed.lineHeight) || fontSizePx * 1.2;
         const lineSpacingRatio = lineHeightPx / fontSizePx; // e.g. 1.2, 1.5
         const color = computed.color;
         const fontWeight = computed.fontWeight;
         const fontStyle = computed.fontStyle;
         const textAlign = computed.textAlign;
+
+        // Detect vertical centering — walk up ancestors (up to 3 levels)
+        let vAlign = 'top';
+        let hCenter = false; // track if the element is horizontally centered in a flex/grid parent
+        let ancestor = el;
+        for (let lvl = 0; lvl < 4; lvl++) {
+          const target = lvl === 0 ? el : ancestor.parentElement;
+          if (!target) break;
+          ancestor = target;
+          const cs = lvl === 0 ? computed : window.getComputedStyle(target);
+          const disp = cs.display;
+          const flexDir = cs.flexDirection || 'row';
+          // Flex/grid vertical centering
+          if ((disp === 'flex' || disp === 'grid') && cs.alignItems === 'center') {
+            if (flexDir === 'row' || flexDir === 'row-reverse' || disp === 'grid') vAlign = 'middle';
+          }
+          // Flex column with justify-content: center = vertical centering
+          if (disp === 'flex' && (flexDir === 'column' || flexDir === 'column-reverse') && cs.justifyContent === 'center') {
+            vAlign = 'middle';
+          }
+          // Flex row with justify-content: center = horizontal centering
+          if (disp === 'flex' && (flexDir === 'row' || flexDir === 'row-reverse') && cs.justifyContent === 'center') {
+            hCenter = true;
+          }
+          // Grid with justify-items/place-items center
+          if (disp === 'grid' && (cs.justifyItems === 'center' || cs.placeItems === 'center')) {
+            hCenter = true;
+          }
+          // Table cell vertical-align
+          if (disp === 'table-cell' && cs.verticalAlign === 'middle') vAlign = 'middle';
+        }
+        if (computed.verticalAlign === 'middle') vAlign = 'middle';
+
+        // Detect if text has a visible border/outline (needs left padding in Google Slides)
+        let hasBorder = false;
+        const borderW = parseFloat(computed.borderLeftWidth) || 0;
+        const borderStyle = computed.borderLeftStyle;
+        if (borderW > 0 && borderStyle !== 'none') hasBorder = true;
+        // Also check parent for border (common pattern: text inside a bordered box)
+        if (!hasBorder && el.parentElement) {
+          const parentBorderCs = window.getComputedStyle(el.parentElement);
+          const pBorderW = parseFloat(parentBorderCs.borderLeftWidth) || 0;
+          if (pBorderW > 0 && parentBorderCs.borderLeftStyle !== 'none') hasBorder = true;
+        }
+
+        // Detect CSS padding on the element (to replicate in Google Slides)
+        const paddingLeftPx = parseFloat(computed.paddingLeft) || 0;
+        const paddingRightPx = parseFloat(computed.paddingRight) || 0;
 
         // Convert RGB color to hex
         let hexColor = '#FFFFFF';
@@ -261,19 +328,58 @@ async function extractTextPositionsFromBrowser(slide, slideIndex, brandLogoUrl, 
           hexColor = `#${r}${g}${b}`;
         }
 
-        results.push({
+        // Determine horizontal alignment — text-align takes priority, then flex centering
+        let hAlign = textAlign === 'center' ? 'center' : textAlign === 'right' ? 'right' : 'left';
+        if (hCenter && hAlign === 'left') hAlign = 'center';
+
+        rawResults.push({
           text,
           x: (rect.left / slideW) * 100,
           y: (rect.top / slideH) * 100,
           w: (rect.width / slideW) * 100,
           h: (rect.height / slideH) * 100,
           fontSize: Math.round(fontSize),
-          lineSpacing: Math.round(lineSpacingRatio * 100), // as percentage (e.g. 120 = 1.2x)
+          lineSpacing: Math.round(lineSpacingRatio * 100),
           color: hexColor,
           bold: fontWeight === 'bold' || parseInt(fontWeight) >= 600,
           italic: fontStyle === 'italic',
-          align: textAlign === 'center' ? 'center' : textAlign === 'right' ? 'right' : 'left'
+          align: hAlign,
+          vAlign,
+          hasBorder,
+          paddingLeftPx,
+          paddingRightPx
         });
+      }
+
+      // Smart deduplication: if a shorter text is a substring of a longer text
+      // AND their bounding boxes overlap, keep only the longer one.
+      // This prevents e.g. "10:00 AM" appearing separately when it's already
+      // part of "10:00 AM - Session Title" at the same location.
+      const results = [];
+      for (let i = 0; i < rawResults.length; i++) {
+        const a = rawResults[i];
+        let isSubsumed = false;
+        for (let j = 0; j < rawResults.length; j++) {
+          if (i === j) continue;
+          const b = rawResults[j];
+          // Check if a's text is a substring of b's text
+          if (b.text.length > a.text.length && b.text.includes(a.text)) {
+            // Check if their bounding boxes overlap (within 5% tolerance)
+            const overlapX = a.x >= b.x - 5 && a.x <= b.x + b.w + 5;
+            const overlapY = a.y >= b.y - 5 && a.y <= b.y + b.h + 5;
+            if (overlapX && overlapY) {
+              isSubsumed = true;
+              break;
+            }
+          }
+        }
+        if (!isSubsumed) {
+          // Also do basic dedup on exact text match
+          const isDupe = results.some(r => r.text === a.text && Math.abs(r.x - a.x) < 3 && Math.abs(r.y - a.y) < 3);
+          if (!isDupe) {
+            results.push(a);
+          }
+        }
       }
 
       return results;
@@ -2220,31 +2326,59 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
           console.warn('[WebExport] Could not upload SF logo to R2:', e.message);
         }
 
-        // Step 2: Screenshot all slides and upload to R2 (design layer)
+        // Step 2: Screenshot all slides, upload to Google Drive for reliable access
+        // Google Slides can always fetch images from Google Drive (R2 URLs fail silently)
         console.log(`[WebExport] Rendering ${slides.length} slide screenshots via headless browser...`);
-        const screenshotUrls = [];
+        const driveService = google.drive({ version: 'v3', auth: authClient });
+
+        // Create a folder in Drive to hold the slide images
+        let driveFolderId;
+        try {
+          const folderResp = await driveService.files.create({
+            requestBody: {
+              name: `Slide Export - ${presentation.name || 'Presentation'}`,
+              mimeType: 'application/vnd.google-apps.folder'
+            },
+            fields: 'id'
+          });
+          driveFolderId = folderResp.data.id;
+          console.log(`[WebExport] Created Drive folder: ${driveFolderId}`);
+        } catch (folderErr) {
+          console.warn(`[WebExport] Could not create Drive folder, will use root:`, folderErr.message);
+        }
+
+        // Upload screenshots to Drive, make public, store file IDs for URL construction
+        const driveFileIds = [];
         for (let i = 0; i < slides.length; i++) {
           try {
-            const pngBuf = await renderWebSlideToImage(slides[i], i, brandLogoUrl, sfLogoPublicUrl);
-            // Convert PNG to JPEG for much smaller file size (Google Slides handles JPEG better)
+            const pngBuf = await renderWebSlideToImage(slides[i], i, brandLogoUrl, sfLogoPublicUrl, true); // hideLogos for Google Slides export
             const jpgBuf = await sharp(pngBuf).jpeg({ quality: 90 }).toBuffer();
-            const hash = crypto.createHash('md5').update(jpgBuf).digest('hex').substring(0, 8);
-            const key = `google-export/${presentation.id}/slide-${i}-${hash}.jpg`;
-            const publicUrl = await uploadToR2(jpgBuf, key, 'image/jpeg');
-            screenshotUrls.push(publicUrl);
-            console.log(`[WebExport] Slide ${i + 1}/${slides.length} screenshot uploaded (${Math.round(jpgBuf.length / 1024)}KB) URL: ${publicUrl}`);
-            // Verify the URL is accessible
-            try {
-              const verifyResp = await fetch(publicUrl, { method: 'HEAD' });
-              console.log(`[WebExport] URL verify: ${verifyResp.status} ${verifyResp.headers.get('content-type')} ${verifyResp.headers.get('content-length')}b`);
-            } catch (vErr) {
-              console.warn(`[WebExport] URL verify FAILED: ${vErr.message}`);
-            }
+
+            const { Readable } = require('stream');
+            const fileMetadata = {
+              name: `slide-${i + 1}.jpg`,
+              ...(driveFolderId ? { parents: [driveFolderId] } : {})
+            };
+            const driveResp = await driveService.files.create({
+              requestBody: fileMetadata,
+              media: { mimeType: 'image/jpeg', body: Readable.from(jpgBuf) },
+              fields: 'id'
+            });
+            const fileId = driveResp.data.id;
+
+            // Make publicly accessible — required for Google Slides to fetch the image
+            await driveService.permissions.create({
+              fileId,
+              requestBody: { role: 'reader', type: 'anyone' }
+            });
+
+            driveFileIds.push(fileId);
+            console.log(`[WebExport] Slide ${i + 1}/${slides.length} uploaded to Drive + made public (${Math.round(jpgBuf.length / 1024)}KB) fileId: ${fileId}`);
           } catch (err) {
-            console.error(`[WebExport] Screenshot failed for slide ${i}:`, err.message);
-            screenshotUrls.push(slides[i].bg_image_url || '');
+            console.error(`[WebExport] Screenshot/Drive upload failed for slide ${i}:`, err.message);
+            driveFileIds.push(null);
           }
-          job.progress = i + 1; // Update progress for polling
+          job.progress = i + 1;
         }
 
         // Step 3: Extract text positions using headless browser (pixel-perfect)
@@ -2292,57 +2426,64 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
         const slideWidth = 9144000;
         const slideHeight = 5143500;
 
-        // Step 6a: Set backgrounds for ALL slides in one batch first
-        // Use screenshot URLs where available, fall back to original bg images
-        const bgRequests = [];
+        // Step 6a: Add full-slide background images using createImage
+        // Use drive.google.com/thumbnail URL — files are already public (permission set above)
+        // This URL format serves the image directly without redirects.
         for (let i = 0; i < slides.length; i++) {
-          const bgUrl = screenshotUrls[i] || slides[i].bg_image_url || '';
-          if (bgUrl) {
-            bgRequests.push({
-              updatePageProperties: {
-                objectId: `ws_slide_${i}`,
-                pageProperties: {
-                  pageBackgroundFill: { stretchedPictureFill: { contentUrl: bgUrl } }
-                },
-                fields: 'pageBackgroundFill'
-              }
-            });
-          }
-        }
-        if (bgRequests.length > 0) {
+          const fileId = driveFileIds[i];
+          // Use thumbnail URL at 1920px width (matches our screenshot resolution)
+          const bgUrl = fileId
+            ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1920`
+            : (slides[i].bg_image_url || '');
+          if (!bgUrl) continue;
           try {
             await slidesService.presentations.batchUpdate({
               presentationId,
-              requestBody: { requests: bgRequests }
-            });
-            console.log(`[WebExport] All ${bgRequests.length} slide backgrounds set`);
-          } catch (bgErr) {
-            console.error(`[WebExport] Background batch failed:`, bgErr.message);
-            // Try backgrounds one by one
-            for (let i = 0; i < slides.length; i++) {
-              const bgUrl = screenshotUrls[i];
-              if (bgUrl) {
-                try {
-                  await slidesService.presentations.batchUpdate({
-                    presentationId,
-                    requestBody: { requests: [{
-                      updatePageProperties: {
-                        objectId: `ws_slide_${i}`,
-                        pageProperties: {
-                          pageBackgroundFill: { stretchedPictureFill: { contentUrl: bgUrl } }
-                        },
-                        fields: 'pageBackgroundFill'
-                      }
-                    }] }
-                  });
-                  console.log(`[WebExport] Slide ${i + 1} background set individually`);
-                } catch (e) {
-                  console.warn(`[WebExport] Slide ${i + 1} background failed: ${e.message}`);
+              requestBody: { requests: [{
+                createImage: {
+                  url: bgUrl,
+                  elementProperties: {
+                    pageObjectId: `ws_slide_${i}`,
+                    size: {
+                      width: { magnitude: slideWidth, unit: 'EMU' },
+                      height: { magnitude: slideHeight, unit: 'EMU' }
+                    },
+                    transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, unit: 'EMU' }
+                  }
                 }
+              }] }
+            });
+            console.log(`[WebExport] Slide ${i + 1} background image placed`);
+          } catch (bgErr) {
+            console.warn(`[WebExport] Slide ${i + 1} bg (thumbnail) failed: ${bgErr.message}, trying lh3 URL...`);
+            // Fallback: try lh3.googleusercontent.com format
+            if (fileId) {
+              try {
+                const lh3Url = `https://lh3.googleusercontent.com/d/${fileId}`;
+                await slidesService.presentations.batchUpdate({
+                  presentationId,
+                  requestBody: { requests: [{
+                    createImage: {
+                      url: lh3Url,
+                      elementProperties: {
+                        pageObjectId: `ws_slide_${i}`,
+                        size: {
+                          width: { magnitude: slideWidth, unit: 'EMU' },
+                          height: { magnitude: slideHeight, unit: 'EMU' }
+                        },
+                        transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, unit: 'EMU' }
+                      }
+                    }
+                  }] }
+                });
+                console.log(`[WebExport] Slide ${i + 1} background placed via lh3 fallback`);
+              } catch (e2) {
+                console.warn(`[WebExport] Slide ${i + 1} lh3 fallback also failed: ${e2.message}`);
               }
             }
           }
         }
+        console.log(`[WebExport] All slide backgrounds processed`);
 
         // Step 6b: For each slide, add editable text boxes on top
         for (let i = 0; i < slides.length; i++) {
@@ -2365,12 +2506,21 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
               const rawW = Math.round((el.w / 100) * slideWidth);
               const rawH = Math.round((el.h / 100) * slideHeight);
 
+              // If the element has a visible border, add extra left/right padding
+              // so text doesn't butt up against the box outline
+              const borderPadEmu = el.hasBorder ? 54864 : 0; // ~0.06 inch = ~4.3pt extra
+              // Also convert any CSS padding from the web element
+              const cssLeftPadEmu = Math.round((el.paddingLeftPx || 0) * (914400 / 96)); // px to EMU
+              const cssRightPadEmu = Math.round((el.paddingRightPx || 0) * (914400 / 96));
+              const extraLeftPad = Math.max(borderPadEmu, cssLeftPadEmu);
+              const extraRightPad = Math.max(borderPadEmu, cssRightPadEmu);
+
               // Shift text box left and up by the default padding amount so text
               // renders at the correct position despite the internal margins
               const x = Math.max(0, rawX - defaultPadEmu);
               const y = Math.max(0, rawY - defaultPadEmu);
-              const w = Math.max(91440, rawW + defaultPadEmu * 2); // widen to account for left+right pad
-              const h = Math.max(91440, rawH + defaultPadEmu * 2); // taller for top+bottom pad
+              const w = Math.max(91440, rawW + defaultPadEmu * 2 + extraLeftPad + extraRightPad);
+              const h = Math.max(91440, rawH + defaultPadEmu * 2);
 
               coreRequests.push({
                 createShape: {
@@ -2417,24 +2567,36 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
                   spaceBelow: { magnitude: 0, unit: 'PT' }
                 };
 
+                // Add left indent for bordered elements so text doesn't butt against the outline
+                let paraFields = 'alignment,lineSpacing,spaceAbove,spaceBelow';
+                if (extraLeftPad > 0 && el.align !== 'center') {
+                  // Convert EMU to PT (1 inch = 914400 EMU = 72pt)
+                  paraStyle.indentStart = { magnitude: Math.round(extraLeftPad * 72 / 914400), unit: 'PT' };
+                  paraFields += ',indentStart';
+                }
+                if (extraRightPad > 0 && el.align !== 'center') {
+                  paraStyle.indentEnd = { magnitude: Math.round(extraRightPad * 72 / 914400), unit: 'PT' };
+                  paraFields += ',indentEnd';
+                }
+
                 coreRequests.push({
                   updateParagraphStyle: {
                     objectId: shapeId,
                     style: paraStyle,
                     textRange: { type: 'ALL' },
-                    fields: 'alignment,lineSpacing,spaceAbove,spaceBelow'
+                    fields: paraFields
                   }
                 });
               }
 
-              // Transparent text box, anchor text at top
+              // Transparent text box, anchor text at top (or middle for vertically-centered elements)
               coreRequests.push({
                 updateShapeProperties: {
                   objectId: shapeId,
                   shapeProperties: {
                     shapeBackgroundFill: { propertyState: 'NOT_RENDERED' },
                     outline: { propertyState: 'NOT_RENDERED' },
-                    contentAlignment: 'TOP'
+                    contentAlignment: el.vAlign === 'middle' ? 'MIDDLE' : 'TOP'
                   },
                   fields: 'shapeBackgroundFill,outline,contentAlignment'
                 }
@@ -2451,6 +2613,256 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
               console.log(`[WebExport] Slide ${i + 1}/${slides.length} text added (${parsed?.elements?.length || 0} text boxes)`);
             } catch (batchErr) {
               console.error(`[WebExport] Text batch failed for slide ${i + 1}:`, batchErr.message);
+            }
+          }
+        }
+
+        // Step 6c: Place logos as separate editable images on each slide
+        // Upload logos to Drive first, then place as createImage elements
+        const logoUrls = { brand: null, sf: null };
+        try {
+          const { Readable } = require('stream');
+          // Upload brand logo to Drive if available
+          if (brandLogoUrl) {
+            try {
+              const logoResp = await fetch(brandLogoUrl);
+              if (logoResp.ok) {
+                const logoBuf = Buffer.from(await logoResp.arrayBuffer());
+                const contentType = logoResp.headers.get('content-type') || 'image/png';
+                const ext = contentType.includes('svg') ? 'svg' : contentType.includes('jpeg') ? 'jpg' : 'png';
+                // For SVG, convert to PNG for Google Slides compatibility
+                let uploadBuf = logoBuf;
+                let uploadType = contentType;
+                if (ext === 'svg') {
+                  uploadBuf = await sharp(logoBuf).png().toBuffer();
+                  uploadType = 'image/png';
+                }
+                const driveResp = await driveService.files.create({
+                  requestBody: {
+                    name: `brand-logo.${ext === 'svg' ? 'png' : ext}`,
+                    ...(driveFolderId ? { parents: [driveFolderId] } : {})
+                  },
+                  media: { mimeType: uploadType, body: Readable.from(uploadBuf) },
+                  fields: 'id'
+                });
+                await driveService.permissions.create({
+                  fileId: driveResp.data.id,
+                  requestBody: { role: 'reader', type: 'anyone' }
+                });
+                logoUrls.brand = `https://drive.google.com/thumbnail?id=${driveResp.data.id}&sz=w800`;
+                console.log(`[WebExport] Brand logo uploaded to Drive: ${driveResp.data.id}`);
+              }
+            } catch (brandLogoErr) {
+              console.warn(`[WebExport] Brand logo upload failed: ${brandLogoErr.message}`);
+            }
+          }
+          // Upload SF logo to Drive
+          const sfLogoBuf = await getSfLogoBuffer();
+          if (sfLogoBuf) {
+            try {
+              // Use higher res SF logo — resize to 200px height for cover quality
+              const hiResSfBuf = await sharp(path.join(__dirname, 'sflogo.png'))
+                .resize({ height: 200, withoutEnlargement: false })
+                .png()
+                .toBuffer();
+              const driveResp = await driveService.files.create({
+                requestBody: {
+                  name: 'salesforce-logo.png',
+                  ...(driveFolderId ? { parents: [driveFolderId] } : {})
+                },
+                media: { mimeType: 'image/png', body: Readable.from(hiResSfBuf) },
+                fields: 'id'
+              });
+              await driveService.permissions.create({
+                fileId: driveResp.data.id,
+                requestBody: { role: 'reader', type: 'anyone' }
+              });
+              logoUrls.sf = `https://drive.google.com/thumbnail?id=${driveResp.data.id}&sz=w800`;
+              console.log(`[WebExport] SF logo uploaded to Drive: ${driveResp.data.id}`);
+            } catch (sfLogoErr) {
+              console.warn(`[WebExport] SF logo upload failed: ${sfLogoErr.message}`);
+            }
+          }
+        } catch (logoUploadErr) {
+          console.warn(`[WebExport] Logo upload phase failed: ${logoUploadErr.message}`);
+        }
+
+        // Place logos on each slide as editable images
+        if (logoUrls.brand || logoUrls.sf) {
+          for (let i = 0; i < slides.length; i++) {
+            const sName = (slides[i].slide_name || '').toLowerCase();
+            const isCover = i === 0 || sName === 'cover' || sName === 'title' || sName.includes('pov intro');
+
+            const logoRequests = [];
+
+            if (isCover) {
+              // Cover slides: large centered logos (200px height = ~952500 EMU)
+              // Logos are centered horizontally with gap between them
+              const logoH = 952500; // ~1.04 inch
+              const logoW = 1600000; // ~1.75 inch (wide to accommodate aspect ratio)
+              const gap = 731520; // ~0.8 inch gap
+              const totalWidth = (logoUrls.brand && logoUrls.sf) ? (logoW * 2 + gap) : logoW;
+              const startX = (slideWidth - totalWidth) / 2;
+              // Vertical center: isPovIntro 30%, isIntro 35%, else 50%
+              const isPovIntro = sName.includes('pov intro');
+              const isIntro = i === 0;
+              const centerPct = isPovIntro ? 0.30 : isIntro ? 0.35 : 0.50;
+              const centerY = Math.round(slideHeight * centerPct - logoH / 2);
+
+              if (logoUrls.brand) {
+                logoRequests.push({
+                  createImage: {
+                    url: logoUrls.brand,
+                    elementProperties: {
+                      pageObjectId: `ws_slide_${i}`,
+                      size: {
+                        width: { magnitude: logoW, unit: 'EMU' },
+                        height: { magnitude: logoH, unit: 'EMU' }
+                      },
+                      transform: { scaleX: 1, scaleY: 1, translateX: startX, translateY: centerY, unit: 'EMU' }
+                    }
+                  }
+                });
+              }
+              if (logoUrls.sf) {
+                const sfX = logoUrls.brand ? startX + logoW + gap : startX;
+                logoRequests.push({
+                  createImage: {
+                    url: logoUrls.sf,
+                    elementProperties: {
+                      pageObjectId: `ws_slide_${i}`,
+                      size: {
+                        width: { magnitude: logoW, unit: 'EMU' },
+                        height: { magnitude: logoH, unit: 'EMU' }
+                      },
+                      transform: { scaleX: 1, scaleY: 1, translateX: sfX, translateY: centerY, unit: 'EMU' }
+                    }
+                  }
+                });
+              }
+              // Add vertical divider line between cover logos
+              if (logoUrls.brand && logoUrls.sf) {
+                const lineX = startX + logoW + gap / 2; // center of the gap
+                const coverLineId = `ws_cover_line_${i}`;
+                logoRequests.push({
+                  createShape: {
+                    objectId: coverLineId,
+                    shapeType: 'RECTANGLE',
+                    elementProperties: {
+                      pageObjectId: `ws_slide_${i}`,
+                      size: {
+                        width: { magnitude: 12700, unit: 'EMU' }, // ~1.4px wide (slightly thicker for cover)
+                        height: { magnitude: logoH, unit: 'EMU' }
+                      },
+                      transform: { scaleX: 1, scaleY: 1, translateX: lineX, translateY: centerY, unit: 'EMU' }
+                    }
+                  }
+                });
+                logoRequests.push({
+                  updateShapeProperties: {
+                    objectId: coverLineId,
+                    shapeProperties: {
+                      shapeBackgroundFill: {
+                        solidFill: {
+                          color: { rgbColor: { red: 0.7, green: 0.7, blue: 0.7 } },
+                          alpha: 1
+                        }
+                      },
+                      outline: { propertyState: 'NOT_RENDERED' }
+                    },
+                    fields: 'shapeBackgroundFill,outline'
+                  }
+                });
+              }
+            } else {
+              // Non-cover slides: small logos at top-right (48px height = ~228600 EMU)
+              const logoH = 228600; // ~0.25 inch
+              const logoW = 457200; // ~0.5 inch (wide for aspect ratio)
+              const gap = 54864; // ~0.06 inch gap (tight spacing between logos)
+              const lineGap = 18288; // ~0.02 inch spacing on each side of divider line
+              const marginTop = 142875; // 30px / 1080 * slideHeight
+              const marginRight = 142875; // 30px / 1920 * slideWidth
+
+              if (logoUrls.sf) {
+                const sfX = slideWidth - marginRight - logoW;
+                logoRequests.push({
+                  createImage: {
+                    url: logoUrls.sf,
+                    elementProperties: {
+                      pageObjectId: `ws_slide_${i}`,
+                      size: {
+                        width: { magnitude: logoW, unit: 'EMU' },
+                        height: { magnitude: logoH, unit: 'EMU' }
+                      },
+                      transform: { scaleX: 1, scaleY: 1, translateX: sfX, translateY: marginTop, unit: 'EMU' }
+                    }
+                  }
+                });
+              }
+              if (logoUrls.brand) {
+                const sfSpace = logoUrls.sf ? (logoW + gap) : 0;
+                const brandX = slideWidth - marginRight - sfSpace - logoW;
+                logoRequests.push({
+                  createImage: {
+                    url: logoUrls.brand,
+                    elementProperties: {
+                      pageObjectId: `ws_slide_${i}`,
+                      size: {
+                        width: { magnitude: logoW, unit: 'EMU' },
+                        height: { magnitude: logoH, unit: 'EMU' }
+                      },
+                      transform: { scaleX: 1, scaleY: 1, translateX: brandX, translateY: marginTop, unit: 'EMU' }
+                    }
+                  }
+                });
+              }
+              // Add vertical divider line between brand and SF logos
+              if (logoUrls.brand && logoUrls.sf) {
+                const sfX = slideWidth - marginRight - logoW;
+                const lineX = sfX - gap / 2; // center of the gap
+                const lineShapeId = `ws_logo_line_${i}`;
+                logoRequests.push({
+                  createShape: {
+                    objectId: lineShapeId,
+                    shapeType: 'RECTANGLE',
+                    elementProperties: {
+                      pageObjectId: `ws_slide_${i}`,
+                      size: {
+                        width: { magnitude: 9144, unit: 'EMU' }, // ~1px wide
+                        height: { magnitude: logoH, unit: 'EMU' }
+                      },
+                      transform: { scaleX: 1, scaleY: 1, translateX: lineX, translateY: marginTop, unit: 'EMU' }
+                    }
+                  }
+                });
+                logoRequests.push({
+                  updateShapeProperties: {
+                    objectId: lineShapeId,
+                    shapeProperties: {
+                      shapeBackgroundFill: {
+                        solidFill: {
+                          color: { rgbColor: { red: 0.7, green: 0.7, blue: 0.7 } },
+                          alpha: 1
+                        }
+                      },
+                      outline: { propertyState: 'NOT_RENDERED' }
+                    },
+                    fields: 'shapeBackgroundFill,outline'
+                  }
+                });
+              }
+            }
+
+            if (logoRequests.length > 0) {
+              try {
+                await slidesService.presentations.batchUpdate({
+                  presentationId,
+                  requestBody: { requests: logoRequests }
+                });
+                console.log(`[WebExport] Slide ${i + 1} logos placed (${logoRequests.length} images)`);
+              } catch (logoErr) {
+                console.warn(`[WebExport] Slide ${i + 1} logo placement failed: ${logoErr.message}`);
+              }
             }
           }
         }
@@ -2475,6 +2887,37 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
   } catch (err) {
     console.error('Export web slides to Google Slides error:', err);
     res.status(500).json({ error: 'Failed to export to Google Slides: ' + err.message });
+  }
+});
+
+// GET /api/debug-slides/:presentationId — Read back a Google Slides presentation to inspect image elements
+app.get('/api/debug-slides/:presentationId', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) return res.status(400).json({ error: 'email required' });
+    const user = await getOrCreateUser(email);
+    const authClient = await getAuthenticatedClient(user.id);
+    if (!authClient) return res.status(400).json({ error: 'No Google connection' });
+
+    const slidesService = google.slides({ version: 'v1', auth: authClient });
+    const pres = await slidesService.presentations.get({ presentationId: req.params.presentationId });
+
+    // For each slide, extract image info
+    const slideInfo = (pres.data.slides || []).map((slide, idx) => {
+      const images = (slide.pageElements || []).filter(e => e.image).map(e => ({
+        objectId: e.objectId,
+        contentUrl: e.image?.contentUrl,
+        sourceUrl: e.image?.sourceUrl,
+        size: e.size,
+        transform: e.transform
+      }));
+      const bg = slide.slideProperties?.pageBackgroundFill;
+      return { slideIndex: idx, objectId: slide.objectId, imageCount: images.length, images, background: bg };
+    });
+
+    res.json({ presentationId: req.params.presentationId, slideCount: slideInfo.length, slides: slideInfo.slice(0, 3) }); // first 3 slides
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

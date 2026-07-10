@@ -87,6 +87,31 @@
       background: rgba(255,255,255,0.1);
       margin: 4px 0;
     }
+    /* Apps dropdown nav */
+    .apps-dropdown { position: relative; }
+    .apps-dropdown-btn {
+      padding: 6px 16px; border-radius: 6px; background: transparent; border: none;
+      color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; cursor: pointer;
+      transition: background 0.15s ease; display: flex; align-items: center; gap: 4px;
+    }
+    .apps-dropdown-btn:hover { background: rgba(255,255,255,0.07); }
+    .apps-dropdown-btn svg.dd-chevron { transition: transform 0.15s ease; }
+    .apps-dropdown:hover .apps-dropdown-btn svg.dd-chevron { transform: rotate(180deg); }
+    .apps-dropdown-menu {
+      display: none; position: absolute; top: 100%; left: 0; margin-top: 0;
+      background: #fff; border-radius: 10px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+      min-width: 260px; padding: 6px 0; z-index: 2000;
+    }
+    .apps-dropdown-menu::before {
+      content: ''; position: absolute; top: -8px; left: 0; right: 0; height: 8px;
+    }
+    .apps-dropdown:hover .apps-dropdown-menu { display: block; }
+    .apps-dropdown-menu a {
+      display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+      font-size: 13px; color: #333; text-decoration: none; transition: background 0.1s ease;
+    }
+    .apps-dropdown-menu a:hover { background: #f0f6ff; }
+    .apps-dropdown-menu a.apps-current { color: #0176D3; font-weight: 700; background: #E8F4FD; }
   </style>
 </head>
 <body class="bg-surface min-h-screen font-sans">
@@ -193,6 +218,27 @@
           </div>
         </a>
 
+        <!-- Apps dropdown -->
+        <div class="apps-dropdown nav-desktop">
+          <button class="apps-dropdown-btn">
+            Aubrey Demo AI Apps
+            <svg class="dd-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div class="apps-dropdown-menu">
+            <a href="https://demoforge.aubreydemo.com"><span style="font-size: 16px; flex-shrink: 0;">⚡</span> DemoForge</a>
+            <a href="https://brandkit-builder.aubreydemo.com"><span style="font-size: 16px; flex-shrink: 0;">🎨</span> Brand Kit Builder</a>
+            <a href="https://deep-research.aubreydemo.com"><span style="font-size: 16px; flex-shrink: 0;">🔍</span> Deep Research</a>
+            <a href="https://scriptwriter.aubreydemo.com"><span style="font-size: 16px; flex-shrink: 0;">📝</span> Script Writer</a>
+            <a href="https://saleo-builder.aubreydemo.com"><img src="https://saleo.io/wp-content/uploads/2022/03/Saleo-logo-only.png" alt="Saleo" style="width: 16px; height: 16px; flex-shrink: 0; object-fit: contain;"> Saleo Builder</a>
+            <a href="https://pocketsic.aubreydemo.com"><span style="font-size: 16px; flex-shrink: 0;">📱</span> PocketSIC</a>
+            <a href="https://installer.aubreydemo.com"><span style="font-size: 16px; flex-shrink: 0;">🚀</span> Installer</a>
+            <a href="https://org-builder.aubreydemo.com"><span style="font-size: 16px; flex-shrink: 0;">🏗️</span> Org Builder</a>
+            <a href="https://slide-generator.aubreydemo.com" class="apps-current"><span style="font-size: 16px; flex-shrink: 0;">📊</span> Slide Generator</a>
+            <a href="https://video-builder.aubreydemo.com"><span style="font-size: 16px; flex-shrink: 0;">🎬</span> Video Builder</a>
+            <a href="https://leave-behind-generator.aubreydemo.com"><span style="font-size: 16px; flex-shrink: 0;">🎁</span> Leave Behind Generator</a>
+          </div>
+        </div>
+
         <!-- Center — Navigation (desktop only) -->
         <div class="nav-desktop flex items-center gap-1">
           <button id="nav-items" onclick="showPage('items')" class="cursor-pointer" style="padding: 6px 16px; border-radius: 6px; background: rgba(255,255,255,0.12); border: none; color: #FFFFFF; font-size: 13px; font-weight: 700; transition: background 0.15s ease;">Presentations</button>
@@ -218,6 +264,19 @@
 
       <!-- Mobile dropdown menu -->
       <div id="mobile-menu" class="mobile-menu">
+        <div style="padding: 8px 24px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: rgba(255,255,255,0.35); font-weight: 600;">Aubrey Demo AI Apps</div>
+        <a href="https://demoforge.aubreydemo.com">⚡ DemoForge</a>
+        <a href="https://brandkit-builder.aubreydemo.com">🎨 Brand Kit Builder</a>
+        <a href="https://deep-research.aubreydemo.com">🔍 Deep Research</a>
+        <a href="https://scriptwriter.aubreydemo.com">📝 Script Writer</a>
+        <a href="https://saleo-builder.aubreydemo.com" style="display: flex !important; align-items: center; gap: 6px;"><img src="https://saleo.io/wp-content/uploads/2022/03/Saleo-logo-only.png" alt="" style="width: 14px; height: 14px; object-fit: contain; flex-shrink: 0;"> Saleo Builder</a>
+        <a href="https://pocketsic.aubreydemo.com">📱 PocketSIC</a>
+        <a href="https://installer.aubreydemo.com">🚀 Installer</a>
+        <a href="https://org-builder.aubreydemo.com">🏗️ Org Builder</a>
+        <a href="https://slide-generator.aubreydemo.com" class="mobile-nav-active">📊 Slide Generator</a>
+        <a href="https://video-builder.aubreydemo.com">🎬 Video Builder</a>
+        <a href="https://leave-behind-generator.aubreydemo.com">🎁 Leave Behind Generator</a>
+        <div class="mobile-divider"></div>
         <button id="mob-nav-items" onclick="showPage('items'); closeMobileMenu();">📝 Presentations</button>
         <button id="mob-nav-api-keys" onclick="showPage('api-keys'); closeMobileMenu();">🔑 API Keys</button>
         <button id="mob-nav-feedback" onclick="showPage('feedback'); closeMobileMenu();" style="display:none;">📋 Feedback</button>
@@ -277,6 +336,28 @@
           <p style="font-size: 14px; color: #888; margin-bottom: 16px;">Create your first AI-powered presentation to get started.</p>
           <button onclick="openNewPresentationDialog()" class="cursor-pointer" style="background: #0176D3; color: white; font-weight: 500; font-size: 15px; height: 40px; padding: 0 16px; border-radius: 8px; border: none;">+ Create Presentation</button>
         </div>
+      </div>
+
+      <!-- DemoForge Promo Banner -->
+      <div style="background: linear-gradient(135deg, #032D60 0%, #0176D3 100%); border-radius: 16px; padding: 24px 32px; margin-top: 32px; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap;">
+        <div style="position: absolute; top: -30px; right: -30px; width: 140px; height: 140px; border-radius: 50%; background: rgba(255,255,255,0.05);"></div>
+        <div style="position: absolute; bottom: -40px; left: -20px; width: 100px; height: 100px; border-radius: 50%; background: rgba(255,255,255,0.04);"></div>
+        <div style="position: relative; z-index: 1; flex: 1; min-width: 240px;">
+          <h3 style="font-size: 18px; font-weight: 700; color: #fff; margin: 0 0 6px 0;">⚡ Part of the Aubrey Demo AI Platform</h3>
+          <p style="font-size: 13px; line-height: 20px; color: rgba(255,255,255,0.75); margin: 0; max-width: 520px;">Slide Generator is just one tool in the Aubrey Demo AI suite. Visit DemoForge to bring all the tools together and create full end-to-end demos in minutes.</p>
+        </div>
+        <a href="https://demoforge.aubreydemo.com" target="_blank" rel="noopener noreferrer" style="position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.15); color: #fff; font-size: 14px; font-weight: 700; padding: 10px 20px; border-radius: 8px; text-decoration: none; white-space: nowrap; transition: background 0.15s ease; flex-shrink: 0;" onmouseenter="this.style.background='rgba(255,255,255,0.25)'" onmouseleave="this.style.background='rgba(255,255,255,0.15)'">⚡ Open DemoForge</a>
+      </div>
+
+      <!-- Slack Community Banner -->
+      <div style="background: linear-gradient(135deg, #032D60 0%, #0176D3 100%); border-radius: 16px; padding: 24px 32px; margin-top: 16px; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap;">
+        <div style="position: absolute; top: -30px; right: -30px; width: 140px; height: 140px; border-radius: 50%; background: rgba(255,255,255,0.05);"></div>
+        <div style="position: absolute; bottom: -40px; left: -20px; width: 100px; height: 100px; border-radius: 50%; background: rgba(255,255,255,0.04);"></div>
+        <div style="position: relative; z-index: 1; flex: 1; min-width: 240px;">
+          <h3 style="font-size: 18px; font-weight: 700; color: #fff; margin: 0 0 6px 0;">💬 Join the Aubrey Demo AI Slack Channel</h3>
+          <p style="font-size: 13px; line-height: 20px; color: rgba(255,255,255,0.75); margin: 0; max-width: 520px;">Get the latest platform updates, share feedback, and connect with the community.</p>
+        </div>
+        <a href="https://salesforce.enterprise.slack.com/archives/C0ASK718E1L" target="_blank" rel="noopener noreferrer" style="position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.15); color: #fff; font-size: 14px; font-weight: 700; padding: 10px 20px; border-radius: 8px; text-decoration: none; white-space: nowrap; transition: background 0.15s ease; flex-shrink: 0;" onmouseenter="this.style.background='rgba(255,255,255,0.25)'" onmouseleave="this.style.background='rgba(255,255,255,0.15)'">💬 Open in Slack</a>
       </div>
     </div>
 
