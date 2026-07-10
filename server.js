@@ -535,6 +535,21 @@ function hashApiKey(key) {
   return crypto.createHash('sha256').update(key).digest('hex');
 }
 
+async function authenticateByApiKey(apiKeyValue) {
+  const keyHash = hashApiKey(apiKeyValue);
+  const rows = await query(
+    `SELECT ak.*, u.id AS uid, u.email, u.name AS user_name, u.is_admin
+     FROM api_keys ak
+     JOIN users u ON ak.user_id = u.id
+     WHERE ak.key_hash = ?`,
+    [keyHash]
+  );
+  if (rows.length === 0) return null;
+  const row = rows[0];
+  query('UPDATE api_keys SET last_used_at = NOW() WHERE id = ?', [row.id]).catch(() => {});
+  return { id: row.uid, email: row.email, name: row.user_name, is_admin: !!row.is_admin };
+}
+
 // GET /api/api-keys — list keys for a user
 app.get('/api/api-keys', async (req, res) => {
   try {
@@ -1167,6 +1182,14 @@ app.get('/api/presentations/:id', async (req, res) => {
 app.post('/api/presentations', async (req, res) => {
   try {
     const { email, name, data } = req.body;
+
+    // Support X-API-Key authentication with email delegation
+    const apiKey = req.headers['x-api-key'];
+    if (apiKey) {
+      const keyUser = await authenticateByApiKey(apiKey);
+      if (!keyUser) return res.status(401).json({ error: 'Invalid API key' });
+    }
+
     if (!email || !name) {
       return res.status(400).json({ error: 'Missing required fields: email, name' });
     }
