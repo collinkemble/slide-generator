@@ -370,7 +370,11 @@
         <div class="flex items-center gap-3">
           <button onclick="showPage('items')" class="cursor-pointer" style="background: none; border: none; color: #0176D3; font-size: 14px; font-weight: 600; padding: 0;">← Back</button>
           <span style="color: #ccc;">|</span>
-          <h2 id="detail-breadcrumb" style="font-size: 20px; font-weight: 700; color: #032D60; margin: 0;"></h2>
+          <h2 id="detail-breadcrumb" style="font-size: 20px; font-weight: 700; color: #032D60; margin: 0; cursor: pointer;" onclick="startInlineRename()" title="Click to rename"></h2>
+          <input id="detail-rename-input" type="text" class="hidden" style="font-size: 20px; font-weight: 700; color: #032D60; margin: 0; border: 1px solid #0176D3; border-radius: 6px; padding: 2px 8px; outline: none; width: 320px;">
+          <button id="detail-rename-icon" onclick="startInlineRename()" class="cursor-pointer" title="Rename" style="background: none; border: none; padding: 2px; color: #9CA3AF; transition: color 0.15s;" onmouseenter="this.style.color='#0176D3'" onmouseleave="this.style.color='#9CA3AF'">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
         </div>
         <div class="flex items-center gap-2">
           <button id="detail-present-btn" onclick="openPresentation()" class="hidden cursor-pointer" style="background: #10B981; color: white; font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: none; display: inline-flex; align-items: center; gap: 4px;">▶ Present</button>
@@ -406,6 +410,70 @@
             </div>
           </div>
           <button onclick="connectGoogle()" class="cursor-pointer" style="background: #0176D3; color: white; font-size: 13px; font-weight: 700; padding: 8px 18px; border-radius: 8px; border: none; white-space: nowrap;">🔄 Reconnect Google</button>
+        </div>
+      </div>
+
+      <!-- Brand Kit & Logos Card (for web slides presentations) -->
+      <div id="detail-brandkit-card" class="hidden mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <p class="font-bold mb-4" style="font-size: 15px; color: #032D60;">Brand Kit & Logos</p>
+
+        <!-- Current Brand Kit -->
+        <div style="margin-bottom: 16px;">
+          <label class="block text-xs font-bold mb-2" style="color: #032D60;">Brand Kit</label>
+          <div style="position: relative; display: inline-block;">
+            <div id="detail-brandkit-badge" style="display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; background: #F0F9FF; border: 1px solid #BAE6FD; border-radius: 8px; font-size: 13px; color: #0C4A6E; font-weight: 600;">
+              <span id="detail-brandkit-name">No brand kit selected</span>
+            </div>
+            <button onclick="toggleDetailBrandKitPicker()" class="cursor-pointer" style="margin-left: 8px; padding: 6px 14px; font-size: 12px; font-weight: 600; color: #0176D3; background: rgba(1,118,211,0.08); border: none; border-radius: 6px; transition: background 0.15s;" onmouseenter="this.style.background='rgba(1,118,211,0.15)'" onmouseleave="this.style.background='rgba(1,118,211,0.08)'">Change</button>
+            <!-- Brand Kit Picker Dropdown -->
+            <div id="detail-brandkit-picker" class="hidden" style="position: absolute; top: 100%; left: 0; margin-top: 6px; width: 280px; max-height: 240px; overflow-y: auto; background: #fff; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); border: 1px solid #e5e7eb; z-index: 100;">
+              <div id="detail-brandkit-picker-content" style="padding: 20px; text-align: center; font-size: 13px; color: #888;">⏳ Loading...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Logos -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+          <!-- Brand Logo -->
+          <div>
+            <label class="block text-xs font-bold mb-2" style="color: #032D60;">Brand Logo</label>
+            <div style="background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 12px; text-align: center;">
+              <img id="detail-brand-logo-img" src="" alt="Brand Logo" style="max-height: 48px; max-width: 120px; object-fit: contain; margin: 0 auto 8px; display: block;">
+              <p id="detail-brand-logo-none" class="hidden" style="font-size: 12px; color: #9CA3AF; margin-bottom: 8px;">No logo set</p>
+              <div style="display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;">
+                <label class="cursor-pointer" style="font-size: 11px; font-weight: 600; color: #0176D3; padding: 4px 10px; background: rgba(1,118,211,0.08); border-radius: 5px;">📁 Upload<input type="file" accept="image/*" onchange="uploadDetailLogo('brand', this)" hidden></label>
+                <button onclick="promptDetailLogoUrl('brand')" class="cursor-pointer" style="font-size: 11px; font-weight: 600; color: #0176D3; padding: 4px 10px; background: rgba(1,118,211,0.08); border: none; border-radius: 5px;">🔗 Paste URL</button>
+              </div>
+            </div>
+          </div>
+          <!-- SF Logo -->
+          <div>
+            <label class="block text-xs font-bold mb-2" style="color: #032D60;">Salesforce Logo</label>
+            <div style="background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 12px; text-align: center;">
+              <img id="detail-sf-logo-img" src="/sflogo.png" alt="Salesforce Logo" style="max-height: 48px; max-width: 120px; object-fit: contain; margin: 0 auto 8px; display: block;">
+              <div style="display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;">
+                <label class="cursor-pointer" style="font-size: 11px; font-weight: 600; color: #0176D3; padding: 4px 10px; background: rgba(1,118,211,0.08); border-radius: 5px;">📁 Upload<input type="file" accept="image/*" onchange="uploadDetailLogo('sf', this)" hidden></label>
+                <button onclick="promptDetailLogoUrl('sf')" class="cursor-pointer" style="font-size: 11px; font-weight: 600; color: #0176D3; padding: 4px 10px; background: rgba(1,118,211,0.08); border: none; border-radius: 5px;">🔗 Paste URL</button>
+                <button onclick="resetSfLogo()" class="cursor-pointer" style="font-size: 11px; font-weight: 600; color: #9CA3AF; padding: 4px 10px; background: none; border: none;">Reset</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p id="detail-logo-status" style="font-size: 12px; color: #16A34A; margin-top: 8px; display: none;"></p>
+      </div>
+
+      <!-- Regenerate All Slides Card (for web slides presentations) -->
+      <div id="detail-regen-all-card" class="hidden mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <p class="font-bold" style="font-size: 15px; color: #032D60;">Regenerate All Slides</p>
+            <p style="font-size: 13px; color: #888; margin-top: 4px;">Regenerate all slide backgrounds. Useful after changing brand kit or to apply a new visual theme.</p>
+          </div>
+        </div>
+        <textarea id="regen-all-prompt" rows="2" placeholder="Optional: describe the visual style, e.g. 'make background images of people playing basketball' or 'use abstract blue gradients'" style="width: 100%; padding: 10px 14px; border: 1px solid #D1D5DB; border-radius: 8px; font-size: 13px; resize: vertical; margin-bottom: 12px; font-family: inherit;"></textarea>
+        <div class="flex items-center gap-3">
+          <button id="regen-all-btn" onclick="regenerateAllSlides()" class="cursor-pointer" style="background: #0176D3; color: white; font-weight: 700; font-size: 14px; height: 40px; padding: 0 20px; border-radius: 8px; border: none;">🔄 Regenerate All Backgrounds</button>
+          <span id="regen-all-status" style="font-size: 13px; color: #6B7280;"></span>
         </div>
       </div>
 
@@ -2126,12 +2194,71 @@ async function viewItem(id, skipPush) {
       if (generateCard) { generateCard.classList.add('hidden'); generateCard.style.display = 'none'; }
       if (googleBanner) { googleBanner.classList.add('hidden'); googleBanner.style.display = 'none'; }
 
+      // Show brand kit & logos card
+      const brandKitCard = document.getElementById('detail-brandkit-card');
+      if (brandKitCard) {
+        brandKitCard.classList.remove('hidden');
+        brandKitCard.style.display = '';
+
+        // Populate brand kit info from web_brand_data
+        let brandData = presentation.web_brand_data;
+        if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch(e) { brandData = {}; } }
+        brandData = brandData || {};
+
+        const brandNameEl = document.getElementById('detail-brandkit-name');
+        if (brandNameEl) {
+          brandNameEl.textContent = brandData.brandKitSource || brandData.brandName
+            ? `✓ ${brandData.brandKitSource || brandData.brandName}`
+            : 'No brand kit selected';
+        }
+
+        // Populate brand logo
+        const brandLogoImg = document.getElementById('detail-brand-logo-img');
+        const brandLogoNone = document.getElementById('detail-brand-logo-none');
+        if (brandLogoImg && brandLogoNone) {
+          if (brandData.brandLogoUrl) {
+            brandLogoImg.src = brandData.brandLogoUrl;
+            brandLogoImg.style.display = 'block';
+            brandLogoNone.classList.add('hidden');
+          } else {
+            brandLogoImg.style.display = 'none';
+            brandLogoNone.classList.remove('hidden');
+          }
+        }
+
+        // Populate SF logo
+        const sfLogoImg = document.getElementById('detail-sf-logo-img');
+        if (sfLogoImg) {
+          sfLogoImg.src = brandData.sfLogoUrl || '/sflogo.png';
+        }
+      }
+
+      // Show regenerate all card
+      const regenCard = document.getElementById('detail-regen-all-card');
+      if (regenCard) {
+        regenCard.classList.remove('hidden');
+        regenCard.style.display = '';
+        // Reset state
+        const regenBtn = document.getElementById('regen-all-btn');
+        const regenStatus = document.getElementById('regen-all-status');
+        const regenPrompt = document.getElementById('regen-all-prompt');
+        if (regenBtn) { regenBtn.disabled = false; regenBtn.textContent = '🔄 Regenerate All Backgrounds'; }
+        if (regenStatus) { regenStatus.textContent = ''; }
+        if (regenPrompt) { regenPrompt.value = ''; }
+      }
+
       // Load the web slide editor
       await loadWebSlideEditor(presentation);
     } else {
       // Legacy image-based flow — hide web editor if it was visible
       const webEditor = document.getElementById('web-slides-editor');
       if (webEditor) { webEditor.classList.add('hidden'); webEditor.style.display = 'none'; }
+
+      // Hide web-slides-only cards
+      const brandKitCard = document.getElementById('detail-brandkit-card');
+      if (brandKitCard) { brandKitCard.classList.add('hidden'); brandKitCard.style.display = 'none'; }
+      const regenCard = document.getElementById('detail-regen-all-card');
+      if (regenCard) { regenCard.classList.add('hidden'); regenCard.style.display = 'none'; }
 
       if (settingsCard) { settingsCard.classList.remove('hidden'); settingsCard.style.display = ''; }
       if (generateCard) { generateCard.classList.remove('hidden'); generateCard.style.display = ''; }
@@ -2405,7 +2532,314 @@ document.addEventListener('click', (e) => {
   if (wrap && picker && !wrap.contains(e.target) && !picker.classList.contains('hidden')) {
     picker.classList.add('hidden');
   }
+  // Also close detail page brand kit picker
+  const detailPicker = document.getElementById('detail-brandkit-picker');
+  if (detailPicker && !detailPicker.classList.contains('hidden')) {
+    const detailCard = document.getElementById('detail-brandkit-card');
+    if (detailCard && !detailCard.contains(e.target)) {
+      detailPicker.classList.add('hidden');
+    }
+  }
 });
+
+// ═══════════════════════════════════════════════
+// DETAIL PAGE: Inline Rename
+// ═══════════════════════════════════════════════
+function startInlineRename() {
+  const breadcrumb = document.getElementById('detail-breadcrumb');
+  const input = document.getElementById('detail-rename-input');
+  const icon = document.getElementById('detail-rename-icon');
+  input.value = breadcrumb.textContent;
+  breadcrumb.classList.add('hidden');
+  icon.classList.add('hidden');
+  input.classList.remove('hidden');
+  input.focus();
+  input.select();
+}
+
+async function finishInlineRename() {
+  const breadcrumb = document.getElementById('detail-breadcrumb');
+  const input = document.getElementById('detail-rename-input');
+  const icon = document.getElementById('detail-rename-icon');
+  const newName = input.value.trim();
+  if (!newName || newName === breadcrumb.textContent) {
+    // Cancel — revert
+    input.classList.add('hidden');
+    breadcrumb.classList.remove('hidden');
+    icon.classList.remove('hidden');
+    return;
+  }
+  // Save via PUT
+  const email = document.getElementById('user-email').textContent;
+  try {
+    const resp = await fetch(`/api/presentations/${currentPresentationId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, name: newName })
+    });
+    if (!resp.ok) throw new Error('Failed to rename');
+    breadcrumb.textContent = newName;
+    currentItemName = newName;
+  } catch (err) {
+    alert('Failed to rename: ' + err.message);
+  }
+  input.classList.add('hidden');
+  breadcrumb.classList.remove('hidden');
+  icon.classList.remove('hidden');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const renameInput = document.getElementById('detail-rename-input');
+  if (renameInput) {
+    renameInput.addEventListener('blur', finishInlineRename);
+    renameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); renameInput.blur(); }
+      if (e.key === 'Escape') { renameInput.value = document.getElementById('detail-breadcrumb').textContent; renameInput.blur(); }
+    });
+  }
+});
+
+// ═══════════════════════════════════════════════
+// DETAIL PAGE: Brand Kit Selector
+// ═══════════════════════════════════════════════
+async function toggleDetailBrandKitPicker() {
+  const picker = document.getElementById('detail-brandkit-picker');
+  if (!picker.classList.contains('hidden')) { picker.classList.add('hidden'); return; }
+  picker.classList.remove('hidden');
+  const content = document.getElementById('detail-brandkit-picker-content');
+  content.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 13px; color: #888;">⏳ Loading brand kits...</div>';
+
+  const email = document.getElementById('user-email').textContent;
+  try {
+    const resp = await fetch(`/api/brandkit-builder/items?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to load');
+    const data = await resp.json();
+    const items = data.items || [];
+    if (items.length === 0) {
+      content.innerHTML = '<div style="padding: 20px; text-align: center;"><div style="font-size: 13px; color: #888; margin-bottom: 8px;">No brand kits found</div><a href="https://brandkit-builder.aubreydemo.com/" target="_blank" style="font-size: 12px; color: #0176D3; font-weight: 600; text-decoration: none;">Create one in Brand Kit Builder →</a></div>';
+      return;
+    }
+    let html = '<div style="padding: 4px 0;">';
+    html += '<div style="padding: 8px 14px; font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.05em;">Your Brand Kits</div>';
+    items.forEach(item => {
+      const initial = (item.name || 'B').charAt(0).toUpperCase();
+      html += `<button onclick="selectDetailBrandKit(${item.id}, this)" style="display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; border: none; background: none; cursor: pointer; font-size: 13px; color: #333; text-align: left;" onmouseenter="this.style.background='#f5f3ff'" onmouseleave="this.style.background='none'"><span style="width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, #7c3aed, #a78bfa); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; flex-shrink: 0;">${initial}</span><span style="flex: 1; font-weight: 600;">${item.name || 'Untitled'}</span></button>`;
+    });
+    html += '</div>';
+    content.innerHTML = html;
+  } catch (err) {
+    content.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 13px; color: #C23934;">Failed to load brand kits.</div>';
+  }
+}
+
+async function selectDetailBrandKit(itemId, btnEl) {
+  const email = document.getElementById('user-email').textContent;
+  if (!email || !currentPresentationId) return;
+  if (btnEl) { const ns = btnEl.querySelector('span:last-child'); if (ns) ns.textContent = '⏳ Applying...'; btnEl.disabled = true; }
+
+  try {
+    const resp = await fetch(`/api/brandkit-builder/items/${itemId}?email=${encodeURIComponent(email)}`);
+    if (!resp.ok) throw new Error('Failed to fetch brand kit');
+    const data = await resp.json();
+    const bk = data?.item?.data?.brandKit || data?.item?.brandKit || {};
+    const newBrandData = {
+      brandName: bk.brand_name || '',
+      brandColorPrimary: bk.visual_style?.primary_color || '',
+      brandColorSecondary: bk.visual_style?.secondary_color || bk.visual_style?.accent_color || '',
+      brandTone: bk.tone?.summary || '',
+      brandVisualStyle: bk.visual_style?.summary || '',
+      brandLogoUrl: bk.logo_url || '',
+      brandWebsiteUrl: bk.website_url || bk.website || '',
+      brandDescription: bk.elevator_pitch || bk.mission || '',
+      brandKitId: String(itemId),
+      brandKitSource: bk.brand_name || ''
+    };
+
+    // Save to server
+    const saveResp = await fetch(`/api/presentations/${currentPresentationId}/update-brand`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, brandData: newBrandData })
+    });
+    if (!saveResp.ok) throw new Error('Failed to save brand kit');
+
+    // Update UI
+    document.getElementById('detail-brandkit-name').textContent = `✓ ${newBrandData.brandName || 'Brand Kit Applied'}`;
+    document.getElementById('detail-brandkit-picker').classList.add('hidden');
+    // Update logo display
+    if (newBrandData.brandLogoUrl) {
+      document.getElementById('detail-brand-logo-img').src = newBrandData.brandLogoUrl;
+      document.getElementById('detail-brand-logo-img').style.display = 'block';
+      document.getElementById('detail-brand-logo-none').classList.add('hidden');
+    }
+    userWebBrandLogoUrl = newBrandData.brandLogoUrl || '';
+    userWebBrandData = newBrandData;
+
+    // Refresh slide previews
+    if (typeof refreshAllUserSlidePreviews === 'function') refreshAllUserSlidePreviews();
+  } catch (err) {
+    alert('Failed to apply brand kit: ' + err.message);
+  }
+}
+
+// ═══════════════════════════════════════════════
+// DETAIL PAGE: Logo Upload & URL Override
+// ═══════════════════════════════════════════════
+async function uploadDetailLogo(type, fileInput) {
+  const file = fileInput.files[0];
+  if (!file) return;
+  const email = document.getElementById('user-email').textContent;
+  const statusEl = document.getElementById('detail-logo-status');
+  statusEl.textContent = 'Uploading...';
+  statusEl.style.display = 'block';
+  statusEl.style.color = '#6B7280';
+
+  const formData = new FormData();
+  formData.append('image', file);
+  formData.append('email', email);
+  formData.append('logoType', type);
+
+  try {
+    const resp = await fetch(`/api/presentations/${currentPresentationId}/upload-logo`, { method: 'POST', body: formData });
+    const result = await resp.json();
+    if (!resp.ok) throw new Error(result.error || 'Upload failed');
+    applyLogoUpdate(type, result.url);
+    statusEl.textContent = '✓ Logo updated';
+    statusEl.style.color = '#16A34A';
+    setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
+  } catch (err) {
+    statusEl.textContent = '✕ ' + err.message;
+    statusEl.style.color = '#EF4444';
+  }
+  fileInput.value = '';
+}
+
+async function promptDetailLogoUrl(type) {
+  const url = prompt(`Paste the ${type === 'brand' ? 'brand' : 'Salesforce'} logo URL:`);
+  if (!url || !url.trim()) return;
+  const email = document.getElementById('user-email').textContent;
+  const statusEl = document.getElementById('detail-logo-status');
+  statusEl.textContent = 'Saving...';
+  statusEl.style.display = 'block';
+  statusEl.style.color = '#6B7280';
+
+  try {
+    const resp = await fetch(`/api/presentations/${currentPresentationId}/update-logo-url`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, logoType: type, url: url.trim() })
+    });
+    if (!resp.ok) throw new Error('Failed to update');
+    applyLogoUpdate(type, url.trim());
+    statusEl.textContent = '✓ Logo updated';
+    statusEl.style.color = '#16A34A';
+    setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
+  } catch (err) {
+    statusEl.textContent = '✕ ' + err.message;
+    statusEl.style.color = '#EF4444';
+  }
+}
+
+function applyLogoUpdate(type, url) {
+  if (type === 'brand') {
+    document.getElementById('detail-brand-logo-img').src = url;
+    document.getElementById('detail-brand-logo-img').style.display = 'block';
+    document.getElementById('detail-brand-logo-none').classList.add('hidden');
+    userWebBrandLogoUrl = url;
+  } else {
+    document.getElementById('detail-sf-logo-img').src = url;
+  }
+  // Refresh slide previews without regenerating
+  if (typeof refreshAllUserSlidePreviews === 'function') refreshAllUserSlidePreviews();
+}
+
+async function resetSfLogo() {
+  const email = document.getElementById('user-email').textContent;
+  try {
+    await fetch(`/api/presentations/${currentPresentationId}/update-logo-url`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, logoType: 'sf', url: '' })
+    });
+    document.getElementById('detail-sf-logo-img').src = '/sflogo.png';
+    if (typeof refreshAllUserSlidePreviews === 'function') refreshAllUserSlidePreviews();
+  } catch (err) { console.error('Reset SF logo failed:', err); }
+}
+
+// ═══════════════════════════════════════════════
+// DETAIL PAGE: Regenerate All Slides
+// ═══════════════════════════════════════════════
+async function regenerateAllSlides() {
+  if (!currentPresentationId) return;
+  const btn = document.getElementById('regen-all-btn');
+  const statusEl = document.getElementById('regen-all-status');
+  const prompt = document.getElementById('regen-all-prompt').value.trim();
+  const email = document.getElementById('user-email').textContent;
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Regenerating...';
+  statusEl.textContent = 'Starting regeneration...';
+  statusEl.style.color = '#0176D3';
+
+  try {
+    const resp = await fetch(`/api/presentations/${currentPresentationId}/regenerate-all`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, prompt })
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Regeneration failed');
+
+    statusEl.textContent = 'Regenerating backgrounds...';
+    // Poll for completion
+    pollRegenAllStatus(currentPresentationId, btn, statusEl);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = '🔄 Regenerate All Backgrounds';
+    statusEl.textContent = '✕ ' + err.message;
+    statusEl.style.color = '#EF4444';
+  }
+}
+
+function pollRegenAllStatus(presId, btn, statusEl) {
+  const email = document.getElementById('user-email').textContent;
+  const poll = async () => {
+    try {
+      const resp = await fetch(`/api/presentations/${presId}?email=${encodeURIComponent(email)}`);
+      const result = await resp.json();
+      if (result.presentation.status === 'generating') {
+        statusEl.textContent = '⏳ Generating background images...';
+        setTimeout(poll, 3000);
+      } else if (result.presentation.status === 'completed') {
+        btn.disabled = false;
+        btn.textContent = '🔄 Regenerate All Backgrounds';
+        statusEl.textContent = '✓ All backgrounds regenerated!';
+        statusEl.style.color = '#16A34A';
+        // Reload the slide editor to show new backgrounds
+        viewItem(presId, true);
+      } else {
+        btn.disabled = false;
+        btn.textContent = '🔄 Regenerate All Backgrounds';
+        statusEl.textContent = '✕ Generation failed';
+        statusEl.style.color = '#EF4444';
+      }
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = '🔄 Regenerate All Backgrounds';
+      statusEl.textContent = '✕ Error checking status';
+      statusEl.style.color = '#EF4444';
+    }
+  };
+  setTimeout(poll, 3000);
+}
+
+// Helper to refresh all user slide previews
+function refreshAllUserSlidePreviews() {
+  if (!userWebSlides || userWebSlides.length === 0) return;
+  for (let i = 0; i < userWebSlides.length; i++) {
+    if (typeof refreshUserSlidePreview === 'function') refreshUserSlidePreview(i);
+  }
+}
 
 function openNewPresentationDialog() {
   document.getElementById('np-name').value = '';

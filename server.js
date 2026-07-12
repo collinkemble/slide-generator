@@ -1334,6 +1334,263 @@ app.delete('/api/presentations/:id', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════
+// APP-SPECIFIC — Detail Page: Brand, Logos, Regenerate All
+// ═══════════════════════════════════════════════
+
+// PUT /api/presentations/:id/update-brand — Save brand kit data to web_brand_data
+app.put('/api/presentations/:id/update-brand', async (req, res) => {
+  try {
+    const { email, brandData } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!brandData) return res.status(400).json({ error: 'brandData required' });
+
+    const user = await getOrCreateUser(email);
+    const rows = await query('SELECT id, web_brand_data FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    // Merge new brand data with existing (preserve fields not being updated)
+    let existing = rows[0].web_brand_data;
+    if (typeof existing === 'string') { try { existing = JSON.parse(existing); } catch(e) { existing = {}; } }
+    existing = existing || {};
+
+    const merged = { ...existing, ...brandData };
+
+    await query('UPDATE presentations SET web_brand_data = ?, updated_at = NOW() WHERE id = ?',
+      [JSON.stringify(merged), req.params.id]);
+
+    res.json({ success: true, brandData: merged });
+  } catch (err) {
+    console.error('Update brand data error:', err);
+    res.status(500).json({ error: 'Failed to update brand data' });
+  }
+});
+
+// POST /api/presentations/:id/upload-logo — Upload a logo image to R2, update web_brand_data
+app.post('/api/presentations/:id/upload-logo', memUpload.single('image'), async (req, res) => {
+  try {
+    const email = req.body.email;
+    const logoType = req.body.logoType || 'brand'; // 'brand' or 'sf'
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    if (!req.file) return res.status(400).json({ error: 'No image file provided' });
+
+    const user = await getOrCreateUser(email);
+    const rows = await query('SELECT id, web_brand_data FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    // Process and resize the logo
+    const processed = await sharp(req.file.buffer)
+      .resize({ height: 200, withoutEnlargement: true })
+      .png()
+      .toBuffer();
+
+    const hash = crypto.createHash('md5').update(processed).digest('hex').substring(0, 14);
+    const r2Key = `user-logos/${req.params.id}/${logoType}-${hash}.png`;
+    const publicUrl = await uploadToR2(processed, r2Key, 'image/png');
+
+    // Update web_brand_data with the new logo URL
+    let brandData = rows[0].web_brand_data;
+    if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch(e) { brandData = {}; } }
+    brandData = brandData || {};
+
+    if (logoType === 'brand') {
+      brandData.brandLogoUrl = publicUrl;
+    } else {
+      brandData.sfLogoUrl = publicUrl;
+    }
+
+    await query('UPDATE presentations SET web_brand_data = ?, updated_at = NOW() WHERE id = ?',
+      [JSON.stringify(brandData), req.params.id]);
+
+    res.json({ success: true, url: publicUrl });
+  } catch (err) {
+    console.error('Upload logo error:', err);
+    res.status(500).json({ error: 'Failed to upload logo' });
+  }
+});
+
+// PUT /api/presentations/:id/update-logo-url — Save a logo URL to web_brand_data
+app.put('/api/presentations/:id/update-logo-url', async (req, res) => {
+  try {
+    const { email, logoType, url } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+    const rows = await query('SELECT id, web_brand_data FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    let brandData = rows[0].web_brand_data;
+    if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch(e) { brandData = {}; } }
+    brandData = brandData || {};
+
+    if (logoType === 'brand') {
+      brandData.brandLogoUrl = url || '';
+    } else {
+      // For SF logo, empty string means reset to default
+      brandData.sfLogoUrl = url || '';
+    }
+
+    await query('UPDATE presentations SET web_brand_data = ?, updated_at = NOW() WHERE id = ?',
+      [JSON.stringify(brandData), req.params.id]);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Update logo URL error:', err);
+    res.status(500).json({ error: 'Failed to update logo URL' });
+  }
+});
+
+// POST /api/presentations/:id/regenerate-all — Regenerate all background images with optional custom prompt
+app.post('/api/presentations/:id/regenerate-all', async (req, res) => {
+  try {
+    const { email, prompt } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    const user = await getOrCreateUser(email);
+    const rows = await query('SELECT * FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+
+    const presentation = rows[0];
+    if (!presentation.is_web_slides) return res.status(400).json({ error: 'Not a web slides presentation' });
+
+    // Mark as generating
+    await query('UPDATE presentations SET status = ? WHERE id = ?', ['generating', req.params.id]);
+
+    // Get brand data
+    let brandData = presentation.web_brand_data;
+    if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch(e) { brandData = {}; } }
+    brandData = brandData || {};
+
+    // Respond immediately
+    res.json({ success: true, status: 'generating' });
+
+    // Run regeneration in background with optional custom prompt
+    regenerateAllBackgroundsInBackground(parseInt(req.params.id), brandData, prompt || '').catch(err => {
+      console.error(`[RegenAll] Background regeneration failed for presentation ${req.params.id}:`, err);
+    });
+  } catch (err) {
+    console.error('Regenerate all error:', err);
+    res.status(500).json({ error: 'Failed to start regeneration' });
+  }
+});
+
+/**
+ * Regenerate all background images for a presentation.
+ * If customPrompt is provided, it overrides the AI-generated prompts with a user-specified style direction.
+ */
+async function regenerateAllBackgroundsInBackground(presentationId, brandData, customPrompt) {
+  try {
+    console.log(`[RegenAll] Starting full regeneration for presentation ${presentationId}${customPrompt ? ` with custom prompt: "${customPrompt}"` : ''}`);
+
+    const slides = await query(
+      'SELECT slide_index, bg_image_prompt, slide_name FROM presentation_slides WHERE presentation_id = ? ORDER BY slide_index',
+      [presentationId]
+    );
+
+    if (slides.length === 0) {
+      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentationId]);
+      return;
+    }
+
+    // If custom prompt is provided, use it to influence all slide backgrounds
+    // Otherwise, regenerate fresh prompts from scratch
+    if (customPrompt) {
+      // Use the custom prompt as a style override for each slide
+      for (const slide of slides) {
+        const baseDesc = slide.bg_image_prompt || `Professional background for "${slide.slide_name}"`;
+        slide.bg_image_prompt = `${customPrompt}. For a slide titled "${slide.slide_name}". Original context: ${baseDesc}`;
+      }
+    } else {
+      // Generate fresh prompts from AI
+      try {
+        const freshPrompts = await generateFreshBackgroundPrompts(slides, brandData);
+        for (const slide of slides) {
+          if (freshPrompts[slide.slide_index]) {
+            slide.bg_image_prompt = freshPrompts[slide.slide_index];
+            await query('UPDATE presentation_slides SET bg_image_prompt = ? WHERE presentation_id = ? AND slide_index = ?',
+              [slide.bg_image_prompt, presentationId, slide.slide_index]);
+          }
+        }
+      } catch (err) {
+        console.warn('[RegenAll] Failed to generate fresh prompts:', err.message);
+      }
+    }
+
+    // Generate photo style directive
+    const photoDescriptions = slides.filter(s => s.bg_image_prompt).map(s => s.bg_image_prompt);
+    let photoStyleDirective = '';
+    if (photoDescriptions.length >= 2) {
+      try {
+        photoStyleDirective = await generatePhotoStyleDirective(photoDescriptions, brandData);
+      } catch (err) {
+        console.warn('[RegenAll] Failed to generate photo style directive:', err.message);
+      }
+    }
+
+    // Generate backgrounds for each slide
+    let sharedTransitionBgUrl = null;
+    const duplicateCache = {};
+
+    for (let i = 0; i < slides.length; i++) {
+      const slide = slides[i];
+      const slideName = (slide.slide_name || '').toLowerCase();
+
+      // Skip duplicate cache for custom prompt (user wants fresh images)
+      if (!customPrompt) {
+        if (duplicateCache[slideName]) {
+          await query('UPDATE presentation_slides SET bg_image_url = ? WHERE presentation_id = ? AND slide_index = ?',
+            [duplicateCache[slideName], presentationId, slide.slide_index]);
+          continue;
+        }
+
+        const isTransition = slideName.includes('demo chapter intro') || slideName.includes('demo chapter closing') || slideName.includes('chapter intro') || slideName.includes('chapter closing');
+        if (isTransition && sharedTransitionBgUrl) {
+          await query('UPDATE presentation_slides SET bg_image_url = ? WHERE presentation_id = ? AND slide_index = ?',
+            [sharedTransitionBgUrl, presentationId, slide.slide_index]);
+          continue;
+        }
+      }
+
+      const description = slide.bg_image_prompt || `Professional business background for "${slide.slide_name}"`;
+      const photoPrompt = buildPhotoOnlyPrompt(description, brandData, photoStyleDirective);
+
+      try {
+        console.log(`[RegenAll] Generating background for slide ${i} ("${slide.slide_name}")...`);
+        const imageResult = await generateSlideImage(photoPrompt, null);
+
+        if (imageResult && imageResult.imageBase64) {
+          const imageBuffer = Buffer.from(imageResult.imageBase64, 'base64');
+          const resized = await sharp(imageBuffer).resize(1920, 1080, { fit: 'cover', position: 'center' }).png().toBuffer();
+          const hash = crypto.createHash('md5').update(resized).digest('hex').substring(0, 14);
+          const r2Key = `user-slides/${presentationId}/${slide.slide_index}-${hash}.png`;
+          const publicUrl = await uploadToR2(resized, r2Key, 'image/png');
+
+          await query('UPDATE presentation_slides SET bg_image_url = ?, updated_at = NOW() WHERE presentation_id = ? AND slide_index = ?',
+            [publicUrl, presentationId, slide.slide_index]);
+
+          if (!customPrompt) {
+            if (slideName) duplicateCache[slideName] = publicUrl;
+            const isTransition = slideName.includes('chapter intro') || slideName.includes('chapter closing');
+            if (isTransition && !sharedTransitionBgUrl) sharedTransitionBgUrl = publicUrl;
+          }
+
+          console.log(`[RegenAll] Slide ${i} background regenerated`);
+        }
+      } catch (err) {
+        console.error(`[RegenAll] Failed to generate background for slide ${i}:`, err.message);
+      }
+
+      if (i < slides.length - 1) await new Promise(r => setTimeout(r, 2000));
+    }
+
+    await query('UPDATE presentations SET status = ? WHERE id = ?', ['completed', presentationId]);
+    console.log(`[RegenAll] Regeneration completed for presentation ${presentationId}`);
+  } catch (err) {
+    console.error(`[RegenAll] Fatal error:`, err);
+    await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentationId]);
+  }
+}
+
+// ═══════════════════════════════════════════════
 // APP-SPECIFIC — Share Presentations
 // ═══════════════════════════════════════════════
 
@@ -2417,23 +2674,80 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
           }
         }
 
-        // Step 4: Create Google Slides presentation
+        // Step 4: Create or reuse Google Slides presentation
         const slidesService = google.slides({ version: 'v1', auth: authClient });
-        const createResp = await slidesService.presentations.create({
-          requestBody: { title: presentation.name || 'Presentation' }
-        });
+        let presentationId;
+        let presentationUrl;
 
-        const presentationId = createResp.data.presentationId;
-        const presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
-        console.log(`[WebExport] Created Google Slides: ${presentationId}`);
+        // Check if we already have a Google Slides presentation to overwrite
+        const existingGoogleId = presentation.google_presentation_id;
+        if (existingGoogleId) {
+          // Overwrite: delete all existing slides and recreate
+          try {
+            const existingPres = await slidesService.presentations.get({ presentationId: existingGoogleId });
+            const existingSlides = existingPres.data.slides || [];
+            console.log(`[WebExport] Overwriting existing Google Slides: ${existingGoogleId} (${existingSlides.length} existing slides)`);
 
-        // Step 5: Set up slides — delete default slide, create blank slides
-        const setupRequests = [];
-        if (createResp.data.slides && createResp.data.slides.length > 0) {
-          setupRequests.push({ deleteObject: { objectId: createResp.data.slides[0].objectId } });
+            // Delete ALL existing slides
+            if (existingSlides.length > 0) {
+              const deleteRequests = existingSlides.map(s => ({ deleteObject: { objectId: s.objectId } }));
+              await slidesService.presentations.batchUpdate({
+                presentationId: existingGoogleId,
+                requestBody: { requests: deleteRequests }
+              });
+            }
+
+            // Update title if changed
+            await slidesService.presentations.batchUpdate({
+              presentationId: existingGoogleId,
+              requestBody: { requests: [{
+                updatePresentationProperties: {
+                  properties: { title: presentation.name || 'Presentation' },
+                  fields: 'title'
+                }
+              }] }
+            });
+
+            presentationId = existingGoogleId;
+            presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
+            console.log(`[WebExport] Reusing existing Google Slides: ${presentationId}`);
+          } catch (reuseErr) {
+            console.warn(`[WebExport] Could not reuse existing presentation ${existingGoogleId}: ${reuseErr.message}. Creating new one.`);
+            // Fall through to create new
+            const createResp = await slidesService.presentations.create({
+              requestBody: { title: presentation.name || 'Presentation' }
+            });
+            presentationId = createResp.data.presentationId;
+            presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
+            // Delete the default slide from the new presentation
+            if (createResp.data.slides && createResp.data.slides.length > 0) {
+              await slidesService.presentations.batchUpdate({
+                presentationId,
+                requestBody: { requests: [{ deleteObject: { objectId: createResp.data.slides[0].objectId } }] }
+              });
+            }
+          }
+        } else {
+          // No existing presentation — create a new one
+          const createResp = await slidesService.presentations.create({
+            requestBody: { title: presentation.name || 'Presentation' }
+          });
+          presentationId = createResp.data.presentationId;
+          presentationUrl = `https://docs.google.com/presentation/d/${presentationId}/edit`;
+          console.log(`[WebExport] Created new Google Slides: ${presentationId}`);
+          // Delete the default slide from the new presentation
+          if (createResp.data.slides && createResp.data.slides.length > 0) {
+            await slidesService.presentations.batchUpdate({
+              presentationId,
+              requestBody: { requests: [{ deleteObject: { objectId: createResp.data.slides[0].objectId } }] }
+            });
+          }
         }
+
+        // Step 5: Create blank slides
+        const createSlideRequests = [];
         for (let i = 0; i < slides.length; i++) {
-          setupRequests.push({
+          createSlideRequests.push({
             createSlide: {
               objectId: `ws_slide_${i}`,
               insertionIndex: i,
@@ -2443,7 +2757,7 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
         }
         await slidesService.presentations.batchUpdate({
           presentationId,
-          requestBody: { requests: setupRequests }
+          requestBody: { requests: createSlideRequests }
         });
 
         const slideWidth = 9144000;
@@ -2679,15 +2993,32 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
               console.warn(`[WebExport] Brand logo upload failed: ${brandLogoErr.message}`);
             }
           }
-          // Upload SF logo to Drive
-          const sfLogoBuf = await getSfLogoBuffer();
-          if (sfLogoBuf) {
+          // Upload SF logo to Drive (use custom SF logo from brand data if set)
+          let sfLogoSource = brandData.sfLogoUrl || '';
+          let hiResSfBuf = null;
+          if (sfLogoSource && sfLogoSource !== '/sflogo.png') {
+            // Custom SF logo URL — fetch and process it
             try {
-              // Use higher res SF logo — resize to 200px height for cover quality
-              const hiResSfBuf = await sharp(path.join(__dirname, 'sflogo.png'))
+              const sfResp = await fetch(sfLogoSource);
+              if (sfResp.ok) {
+                const sfBuf = Buffer.from(await sfResp.arrayBuffer());
+                hiResSfBuf = await sharp(sfBuf).resize({ height: 200, withoutEnlargement: true }).png().toBuffer();
+              }
+            } catch (e) {
+              console.warn('[WebExport] Custom SF logo fetch failed, falling back to default:', e.message);
+            }
+          }
+          if (!hiResSfBuf) {
+            // Default SF logo from disk
+            try {
+              hiResSfBuf = await sharp(path.join(__dirname, 'sflogo.png'))
                 .resize({ height: 200, withoutEnlargement: false })
                 .png()
                 .toBuffer();
+            } catch (e) { console.warn('[WebExport] Default SF logo load failed:', e.message); }
+          }
+          if (hiResSfBuf) {
+            try {
               const driveResp = await driveService.files.create({
                 requestBody: {
                   name: 'salesforce-logo.png',
