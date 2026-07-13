@@ -2189,10 +2189,12 @@ async function viewItem(id, skipPush) {
     const googleBanner = document.getElementById('detail-google-banner');
 
     if (presentation.is_web_slides) {
-      // Hide legacy controls
+      // Hide legacy controls (but keep Google banner visible for connect/reconnect)
       if (settingsCard) { settingsCard.classList.add('hidden'); settingsCard.style.display = 'none'; }
       if (generateCard) { generateCard.classList.add('hidden'); generateCard.style.display = 'none'; }
-      if (googleBanner) { googleBanner.classList.add('hidden'); googleBanner.style.display = 'none'; }
+
+      // Check Google connection status (needed for export button on web slides too)
+      await checkGoogleStatus();
 
       // Show brand kit & logos card
       const brandKitCard = document.getElementById('detail-brandkit-card');
