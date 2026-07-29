@@ -4920,11 +4920,12 @@ RULES:
 2. Photos should be professional, high-quality, and visually compelling
 3. Vary the compositions: use close-ups, wide shots, aerial views, lifestyle scenes, product details, textures, etc.
 4. Keep descriptions concise (2-3 sentences each)
-5. NO TEXT in the photos — these are background images only
-6. NO LOGOS in the photos
-7. The photos should work well as backgrounds with text overlay (slight blur, good contrast areas)
-8. Match the slide purpose: cover slides need dramatic/hero images, data slides need subtle/clean backgrounds, closing slides need warm/inviting imagery
-9. CRITICAL: Every single photo must unmistakably be about "${brandName}" — if someone saw just the photo, they should be able to guess the brand's industry
+5. ABSOLUTELY NO TEXT of any kind in the photos — no words, letters, numbers, labels, captions, or typography. These are background images only.
+6. ABSOLUTELY NO LOGOS or brand marks — do NOT recreate or depict the "${brandName}" logo, wordmark, or any brand symbol in the image
+7. DO NOT include the brand name "${brandName}" as text in the image — the brand name and logo are added separately as overlays
+8. The photos should work well as backgrounds with text overlay (slight blur, good contrast areas)
+9. Match the slide purpose: cover slides need dramatic/hero images, data slides need subtle/clean backgrounds, closing slides need warm/inviting imagery
+10. CRITICAL: Every single photo must unmistakably be about "${brandName}" — if someone saw just the photo, they should be able to guess the brand's industry. Show the INDUSTRY, not the brand name or logo.
 
 SLIDES:
 ${slideList}
@@ -4999,9 +5000,10 @@ RULES:
 1. Keep the same SLIDE PURPOSE (e.g., if the original is for a "cover" slide, keep it as a cover-worthy image)
 2. Keep a similar COMPOSITION and MOOD (e.g., if original uses "close-up product shot", keep it as a close-up but of ${brandName}'s products)
 3. COMPLETELY REPLACE any product/industry references with ${brandName}'s actual products, services, or industry
-4. Keep the "no text, no logos" instructions — these are background photos only
-5. Keep descriptions concise (2-4 sentences each)
-6. Make the photos feel authentic to ${brandName}'s brand identity and industry
+4. ABSOLUTELY NO TEXT of any kind — no words, letters, numbers, labels, captions, or typography in the photos
+5. ABSOLUTELY NO LOGOS or brand marks — do NOT recreate or depict the "${brandName}" logo, wordmark, or any brand symbol. The brand name and logo are added separately as overlays.
+6. Keep descriptions concise (2-4 sentences each)
+7. Make the photos feel authentic to ${brandName}'s brand identity and industry — show the INDUSTRY, not the brand name or logo
 
 SLIDES TO REWRITE:
 ${slideEntries.map(s => `[Slide ${s.slideIndex}] "${s.slideName}": ${s.originalPrompt}`).join('\n\n')}
@@ -5059,7 +5061,8 @@ IMAGE REQUIREMENTS:
 - This is a BACKGROUND PHOTOGRAPH only — it will have text overlaid on top of it later
 - MUST be a WIDE LANDSCAPE image (16:9 widescreen). Target: 1920x1080 pixels.
 - DO NOT include ANY text, words, numbers, letters, labels, captions, watermarks, or typography of any kind
-- DO NOT include ANY logos, brand marks, icons, or symbols
+- DO NOT include ANY logos, brand marks, icons, or symbols — do NOT recreate or depict the brand logo or brand name in the image
+- DO NOT render the brand name as text in the image — logos and names are added separately as overlays
 - The image should be a beautiful, professional photograph or high-quality illustration
 - Use slight blur or darken/lighten effects that make text readable when overlaid
 - HIGH RESOLUTION — crisp, sharp, professional quality`;
@@ -5088,8 +5091,8 @@ You MUST follow this style directive precisely so this photo looks like it belon
   }
 
   prompt += `\n\nCRITICAL REMINDERS:
-- ZERO TEXT in the image — absolutely no words, letters, or numbers
-- ZERO LOGOS — no brand marks or symbols
+- ZERO TEXT in the image — absolutely no words, letters, numbers, or typography of any kind
+- ZERO LOGOS — no brand marks, symbols, or brand name rendered as text. Do NOT attempt to recreate the brand logo or spell out the brand name.
 - Professional photograph quality — not illustration or clip art (unless the description specifically calls for abstract/geometric design)
 - WIDE LANDSCAPE orientation (width is ~1.78x the height)
 - Must visually match the unified style directive above — same color grading, same photographic treatment, same mood`;
