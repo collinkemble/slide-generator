@@ -702,7 +702,7 @@ app.post('/api/generate', async (req, res) => {
     return res.status(400).json({ error: 'Missing "contents" in request body' });
   }
 
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
   // Set up SSE headers so Heroku sees data flowing
@@ -3675,7 +3675,7 @@ async function uploadToR2(buffer, key, contentType) {
  */
 async function generateSlideImage(prompt, refImages) {
   const ai = getGenAIClient();
-  const imageModel = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image';
+  const imageModel = process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
 
   // Build content parts: optional reference images first, then prompt
   const contentParts = [];
@@ -4190,7 +4190,7 @@ Return ONLY valid JSON, no markdown fences.`;
       throw new Error('GEMINI_API_KEY not configured');
     }
 
-    const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
 
     console.log(`Calling Gemini (${model}) for presentation ${presentation.id}...`);
@@ -4929,7 +4929,7 @@ app.get('/api/present-web/item/:presId/data', async (req, res) => {
  */
 async function generateFreshBackgroundPrompts(slides, brandData) {
   const ai = getGenAIClient();
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 
   const brandName = brandData.brandName || brandData.brand || '';
   const brandDescription = brandData.brandDescription || '';
@@ -5001,7 +5001,7 @@ No markdown, no code fences, no explanation — just the JSON array.`;
 
 async function recontextualizeBackgroundPrompts(slides, brandData) {
   const ai = getGenAIClient();
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 
   const brandName = brandData.brandName || brandData.brand || '';
   const brandDescription = brandData.brandDescription || '';
@@ -5143,7 +5143,7 @@ You MUST follow this style directive precisely so this photo looks like it belon
  */
 async function generatePhotoStyleDirective(slideDescriptions, brandData) {
   const ai = getGenAIClient();
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 
   const brandName = brandData.brandName || brandData.brand || '';
   const brandColorPrimary = brandData.brandColorPrimary || '#0176D3';
@@ -5585,7 +5585,7 @@ function buildFallbackSlideHtml(slide, brandData, slideIndex, totalSlides) {
  */
 async function generateSlideHtml(slide, brandData, slideIndex, totalSlides, chapterTitles = [], userInstructions = '') {
   const ai = getGenAIClient();
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
 
   const brandName = brandData.brandName || brandData.brand || '';
   const brandColorPrimary = brandData.brandColorPrimary || '#0176D3';
