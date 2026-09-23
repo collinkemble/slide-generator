@@ -3,6 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 const { query } = require('./src/db/connection');
 const { migrate } = require('./src/db/migrate');
@@ -396,6 +397,42 @@ const PORT = process.env.PORT || 3000;
 // ─── Middleware ───
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+
+// ─── Staging Banner ───
+const STAGING_BANNER_HTML = '<div style="background:#f59e0b;color:#000;text-align:center;padding:4px;font-size:12px;font-weight:700;position:fixed;top:0;left:0;right:0;z-index:99999;">⚠️ STAGING ENVIRONMENT</div><div style="height:28px;"></div>';
+let spaHtml = '';
+try {
+  spaHtml = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf-8');
+  if (process.env.STAGING_BANNER === 'true') {
+    spaHtml = spaHtml.replace(/<body([^>]*)>/, '<body$1>' + STAGING_BANNER_HTML);
+  }
+} catch (e) { /* index.html loaded later via sendFile fallback */ }
+
+// ─── Dynamic App URLs (env-driven for staging/prod) ───
+const APP_URL_MAP = {
+  'https://demoforge.aubreydemo.com':        process.env.DEMOFORGE_URL        || 'https://demoforge.aubreydemo.com',
+  'https://brandkit-builder.aubreydemo.com': process.env.BRANDKIT_BUILDER_URL || 'https://brandkit-builder.aubreydemo.com',
+  'https://deep-research.aubreydemo.com':    process.env.DEEP_RESEARCH_URL    || 'https://deep-research.aubreydemo.com',
+  'https://scriptwriter.aubreydemo.com':     process.env.SCRIPTWRITER_URL     || 'https://scriptwriter.aubreydemo.com',
+  'https://org-builder.aubreydemo.com':      process.env.ORGBUILDER_URL       || 'https://org-builder.aubreydemo.com',
+  'https://slide-generator.aubreydemo.com':  process.env.SLIDE_GENERATOR_URL  || 'https://slide-generator.aubreydemo.com',
+  'https://installer.aubreydemo.com':        process.env.INSTALLER_URL        || 'https://installer.aubreydemo.com',
+  'https://pocketsic.aubreydemo.com':        process.env.POCKETSIC_URL        || 'https://pocketsic.aubreydemo.com',
+  'https://saleo-builder.aubreydemo.com':    process.env.SALEOBUILDER_URL     || 'https://saleo-builder.aubreydemo.com',
+  'https://video-builder.aubreydemo.com':    process.env.VIDEO_BUILDER_URL    || 'https://video-builder.aubreydemo.com',
+  'https://leave-behind-generator.aubreydemo.com': process.env.LEAVE_BEHIND_URL || 'https://leave-behind-generator.aubreydemo.com',
+};
+if (spaHtml) {
+  for (const [prodUrl, envUrl] of Object.entries(APP_URL_MAP)) {
+    spaHtml = spaHtml.replaceAll(prodUrl, envUrl);
+  }
+}
+
+// Serve processed index.html with staging banner and dynamic URLs
+app.get('/', (req, res) => {
+  if (spaHtml) return res.type('html').send(spaHtml);
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 // Serve static files (index.html, etc.)
 app.use(express.static(path.join(__dirname)));
@@ -5801,6 +5838,7 @@ app.get('/privacy', (req, res) => {
 
 // SPA catch-all — serve index.html for any non-API route (enables deep links like /views/:id)
 app.get('/{*splat}', (req, res) => {
+  if (spaHtml) return res.type('html').send(spaHtml);
   res.sendFile(path.join(__dirname, 'index.html'));
 });
 
