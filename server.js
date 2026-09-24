@@ -685,12 +685,16 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
+// ─── Gemini API: Fallback model chain ───
+const GEMINI_FALLBACK_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash'];
+
 // ═══════════════════════════════════════════════
 // SHARED ROUTES — Gemini Streaming Proxy
 // ═══════════════════════════════════════════════
 
 // POST /api/generate — SSE proxy to Gemini API
 // Streams from Gemini to keep Heroku's connection alive, then sends assembled response.
+// Uses retry + fallback model chain for resilience.
 app.post('/api/generate', async (req, res) => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -702,8 +706,8 @@ app.post('/api/generate', async (req, res) => {
     return res.status(400).json({ error: 'Missing "contents" in request body' });
   }
 
-  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
-  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+  const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+  const modelsToTry = [primaryModel, ...GEMINI_FALLBACK_MODELS.filter(m => m !== primaryModel)];
 
   // Set up SSE headers so Heroku sees data flowing
   res.setHeader('Content-Type', 'text/event-stream');
@@ -714,86 +718,119 @@ app.post('/api/generate', async (req, res) => {
   // Send a keepalive comment immediately so Heroku knows we're alive
   res.write(': keepalive\n\n');
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 270000);
+  let lastError = null;
 
-    const geminiResp = await fetch(geminiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents, generationConfig }),
-      signal: controller.signal,
-    });
+  for (const model of modelsToTry) {
+    const MAX_RETRIES = 3;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 270000);
 
-    clearTimeout(timeout);
+        console.log(`[Gemini Proxy] Trying model=${model} attempt=${attempt}/${MAX_RETRIES}`);
 
-    if (!geminiResp.ok) {
-      const errData = await geminiResp.json().catch(() => ({}));
-      const errMsg = errData.error?.message || `Gemini API returned ${geminiResp.status}`;
-      res.write(`data: ${JSON.stringify({ error: errMsg })}\n\n`);
-      res.write('data: [DONE]\n\n');
-      return res.end();
-    }
+        const geminiResp = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents, generationConfig }),
+          signal: controller.signal,
+        });
 
-    // Collect all text parts to send a final assembled response
-    let allText = '';
-    const reader = geminiResp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
+        clearTimeout(timeout);
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+        if (!geminiResp.ok) {
+          const errData = await geminiResp.json().catch(() => ({}));
+          const errMsg = errData.error?.message || `Gemini API returned ${geminiResp.status}`;
+          lastError = errMsg;
 
-      buffer += decoder.decode(value, { stream: true });
+          // Retry on 503/429 with exponential backoff
+          if ((geminiResp.status === 503 || geminiResp.status === 429) && attempt < MAX_RETRIES) {
+            const backoff = Math.pow(2, attempt) * 1000;
+            console.warn(`[Gemini Proxy] ${geminiResp.status} from ${model}, retrying in ${backoff}ms (attempt ${attempt}/${MAX_RETRIES})`);
+            res.write(`: retry ${attempt} after ${geminiResp.status}\n\n`);
+            await new Promise(r => setTimeout(r, backoff));
+            continue;
+          }
+          // Non-retryable error or exhausted retries — try next model
+          console.warn(`[Gemini Proxy] ${model} failed: ${errMsg}`);
+          break;
+        }
 
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+        // Success — stream the response
+        let allText = '';
+        const reader = geminiResp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const dataStr = line.slice(6).trim();
-          if (dataStr === '[DONE]') continue;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-          try {
-            const chunk = JSON.parse(dataStr);
-            const textPart = chunk.candidates?.[0]?.content?.parts?.[0]?.text || '';
-            if (textPart) {
-              allText += textPart;
-              res.write(`: chunk received\n\n`);
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const dataStr = line.slice(6).trim();
+              if (dataStr === '[DONE]') continue;
+
+              try {
+                const chunk = JSON.parse(dataStr);
+                const textPart = chunk.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                if (textPart) {
+                  allText += textPart;
+                  res.write(`: chunk received\n\n`);
+                }
+              } catch (e) {
+                // Skip non-JSON lines
+              }
             }
-          } catch (e) {
-            // Skip non-JSON lines
           }
         }
+
+        const finalResponse = {
+          candidates: [{
+            content: {
+              parts: [{ text: allText }],
+              role: 'model'
+            },
+            finishReason: 'STOP'
+          }]
+        };
+
+        console.log(`[Gemini Proxy] Success with model=${model}`);
+        res.write(`data: ${JSON.stringify(finalResponse)}\n\n`);
+        res.write('data: [DONE]\n\n');
+        return res.end();
+
+      } catch (err) {
+        lastError = err.message;
+        if (err.name === 'AbortError') {
+          console.error(`[Gemini Proxy] Request timed out with model=${model}`);
+          break; // Don't retry timeouts, try next model
+        }
+        // Retry on transient errors
+        if (attempt < MAX_RETRIES) {
+          const backoff = Math.pow(2, attempt) * 1000;
+          console.warn(`[Gemini Proxy] Error with ${model}: ${err.message}, retrying in ${backoff}ms`);
+          res.write(`: retry ${attempt}\n\n`);
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
+        console.error(`[Gemini Proxy] ${model} exhausted retries: ${err.message}`);
+        break;
       }
     }
-
-    const finalResponse = {
-      candidates: [{
-        content: {
-          parts: [{ text: allText }],
-          role: 'model'
-        },
-        finishReason: 'STOP'
-      }]
-    };
-
-    res.write(`data: ${JSON.stringify(finalResponse)}\n\n`);
-    res.write('data: [DONE]\n\n');
-    res.end();
-
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      console.error('[Gemini Proxy] Request timed out');
-      res.write(`data: ${JSON.stringify({ error: 'Request timed out. Try a shorter prompt.' })}\n\n`);
-    } else {
-      console.error('[Gemini Proxy] Error:', err.message);
-      res.write(`data: ${JSON.stringify({ error: 'Failed to reach Gemini API' })}\n\n`);
-    }
-    res.write('data: [DONE]\n\n');
-    res.end();
   }
+
+  // All models exhausted
+  console.error(`[Gemini Proxy] All models failed. Last error: ${lastError}`);
+  res.write(`data: ${JSON.stringify({ error: lastError || 'Failed to reach Gemini API' })}\n\n`);
+  res.write('data: [DONE]\n\n');
+  res.end();
 });
 
 // ═══════════════════════════════════════════════
@@ -4190,28 +4227,67 @@ Return ONLY valid JSON, no markdown fences.`;
       throw new Error('GEMINI_API_KEY not configured');
     }
 
-    const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
-    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
+    const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+    const modelsToTry = [primaryModel, ...GEMINI_FALLBACK_MODELS.filter(m => m !== primaryModel)];
 
-    console.log(`Calling Gemini (${model}) for presentation ${presentation.id}...`);
-    const geminiResp = await fetch(geminiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: systemPrompt }, ...refImageParts] }],
-        generationConfig: { temperature: hasRefToClone ? 0.1 : 0.7, maxOutputTokens: 16384 }
-      })
-    });
+    let geminiData = null;
+    let lastError = null;
 
-    if (!geminiResp.ok) {
-      const errData = await geminiResp.json().catch(() => ({}));
-      console.error('Gemini API error:', errData.error?.message);
-      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
-      throw new Error(errData.error?.message || 'Gemini API error');
+    for (const model of modelsToTry) {
+      const MAX_RETRIES = 3;
+      let succeeded = false;
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
+        console.log(`Calling Gemini (${model}) attempt=${attempt}/${MAX_RETRIES} for presentation ${presentation.id}...`);
+
+        try {
+          const geminiResp = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: systemPrompt }, ...refImageParts] }],
+              generationConfig: { temperature: hasRefToClone ? 0.1 : 0.7, maxOutputTokens: 16384 }
+            })
+          });
+
+          if (!geminiResp.ok) {
+            const errData = await geminiResp.json().catch(() => ({}));
+            lastError = errData.error?.message || `Gemini API returned ${geminiResp.status}`;
+            // Retry on 503/429 with exponential backoff
+            if ((geminiResp.status === 503 || geminiResp.status === 429) && attempt < MAX_RETRIES) {
+              const backoff = Math.pow(2, attempt) * 1000;
+              console.warn(`[Presentation Gen] ${geminiResp.status} from ${model}, retrying in ${backoff}ms`);
+              await new Promise(r => setTimeout(r, backoff));
+              continue;
+            }
+            console.error(`[Presentation Gen] ${model} failed: ${lastError}`);
+            break; // try next model
+          }
+
+          geminiData = await geminiResp.json();
+          console.log(`Gemini (${model}) responded for presentation ${presentation.id}`);
+          succeeded = true;
+          break;
+        } catch (fetchErr) {
+          lastError = fetchErr.message;
+          if (attempt < MAX_RETRIES) {
+            const backoff = Math.pow(2, attempt) * 1000;
+            console.warn(`[Presentation Gen] Error with ${model}: ${fetchErr.message}, retrying in ${backoff}ms`);
+            await new Promise(r => setTimeout(r, backoff));
+            continue;
+          }
+          console.error(`[Presentation Gen] ${model} exhausted retries: ${fetchErr.message}`);
+          break;
+        }
+      }
+      if (succeeded) break;
     }
 
-    const geminiData = await geminiResp.json();
-    console.log(`Gemini responded for presentation ${presentation.id}`);
+    if (!geminiData) {
+      console.error('All Gemini models failed for presentation generation:', lastError);
+      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
+      throw new Error(lastError || 'Gemini API error');
+    }
 
     // Extract text parts (skip thought parts) and concatenate
     const parts = geminiData.candidates?.[0]?.content?.parts || [];
@@ -4929,7 +5005,8 @@ app.get('/api/present-web/item/:presId/data', async (req, res) => {
  */
 async function generateFreshBackgroundPrompts(slides, brandData) {
   const ai = getGenAIClient();
-  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+  const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+  const modelsToTry = [primaryModel, ...GEMINI_FALLBACK_MODELS.filter(m => m !== primaryModel)];
 
   const brandName = brandData.brandName || brandData.brand || '';
   const brandDescription = brandData.brandDescription || '';
@@ -4971,37 +5048,60 @@ Return ONLY valid JSON — an array of objects with "slideIndex" (number) and "p
 Example: [{"slideIndex": 0, "prompt": "A luxurious close-up of..."}, {"slideIndex": 1, "prompt": "..."}]
 No markdown, no code fences, no explanation — just the JSON array.`;
 
-  const response = await ai.models.generateContent({
-    model,
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    config: { temperature: 0.8, maxOutputTokens: 4096 },
-  });
+  let lastError = null;
+  for (const model of modelsToTry) {
+    const MAX_RETRIES = 3;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        console.log(`[WebBG Fresh] Trying model=${model} attempt=${attempt}/${MAX_RETRIES}`);
+        const response = await ai.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: { temperature: 0.8, maxOutputTokens: 4096 },
+        });
 
-  const parts = response.candidates?.[0]?.content?.parts || [];
-  let text = parts
-    .filter(p => p.text !== undefined && !p.thought)
-    .map(p => p.text)
-    .join('\n')
-    .trim();
+        const parts = response.candidates?.[0]?.content?.parts || [];
+        let text = parts
+          .filter(p => p.text !== undefined && !p.thought)
+          .map(p => p.text)
+          .join('\n')
+          .trim();
 
-  // Strip markdown code fences if present
-  text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+        // Strip markdown code fences if present
+        text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
-  const parsed = JSON.parse(text);
-  const result = {};
-  for (const item of parsed) {
-    if (typeof item.slideIndex === 'number' && typeof item.prompt === 'string') {
-      result[item.slideIndex] = item.prompt;
+        const parsed = JSON.parse(text);
+        const result = {};
+        for (const item of parsed) {
+          if (typeof item.slideIndex === 'number' && typeof item.prompt === 'string') {
+            result[item.slideIndex] = item.prompt;
+          }
+        }
+
+        console.log(`[WebBG] Generated ${Object.keys(result).length} fresh prompts for "${brandName}" using ${model}`);
+        return result;
+      } catch (err) {
+        lastError = err;
+        const errMsg = err.message || String(err);
+        const retryable = /429|503|overloaded|exceeded|rate.limit|resource.exhausted|unavailable/i.test(errMsg);
+        if (retryable && attempt < MAX_RETRIES) {
+          const backoff = Math.pow(2, attempt) * 1000;
+          console.warn(`[WebBG Fresh] Retryable error with ${model}: ${errMsg}, retrying in ${backoff}ms`);
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
+        console.warn(`[WebBG Fresh] ${model} failed: ${errMsg}`);
+        break; // try next model
+      }
     }
   }
-
-  console.log(`[WebBG] Generated ${Object.keys(result).length} fresh prompts for "${brandName}"`);
-  return result;
+  throw lastError || new Error('All Gemini models failed for generateFreshBackgroundPrompts');
 }
 
 async function recontextualizeBackgroundPrompts(slides, brandData) {
   const ai = getGenAIClient();
-  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+  const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+  const modelsToTry = [primaryModel, ...GEMINI_FALLBACK_MODELS.filter(m => m !== primaryModel)];
 
   const brandName = brandData.brandName || brandData.brand || '';
   const brandDescription = brandData.brandDescription || '';
@@ -5049,37 +5149,55 @@ Return ONLY valid JSON — an array of objects with "slideIndex" (number) and "p
 Example: [{"slideIndex": 0, "prompt": "A luxurious close-up of..."}, {"slideIndex": 1, "prompt": "..."}]
 No markdown, no code fences, no explanation — just the JSON array.`;
 
-  try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: { temperature: 0.7, maxOutputTokens: 4096 },
-    });
+  let lastError = null;
+  for (const model of modelsToTry) {
+    const MAX_RETRIES = 3;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        console.log(`[WebBG Recontextualize] Trying model=${model} attempt=${attempt}/${MAX_RETRIES}`);
+        const response = await ai.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: { temperature: 0.7, maxOutputTokens: 4096 },
+        });
 
-    const parts = response.candidates?.[0]?.content?.parts || [];
-    let text = parts
-      .filter(p => p.text !== undefined && !p.thought)
-      .map(p => p.text)
-      .join('\n')
-      .trim();
+        const parts = response.candidates?.[0]?.content?.parts || [];
+        let text = parts
+          .filter(p => p.text !== undefined && !p.thought)
+          .map(p => p.text)
+          .join('\n')
+          .trim();
 
-    // Strip markdown code fences if present
-    text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+        // Strip markdown code fences if present
+        text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
-    const parsed = JSON.parse(text);
-    const result = {};
-    for (const item of parsed) {
-      if (typeof item.slideIndex === 'number' && typeof item.prompt === 'string') {
-        result[item.slideIndex] = item.prompt;
+        const parsed = JSON.parse(text);
+        const result = {};
+        for (const item of parsed) {
+          if (typeof item.slideIndex === 'number' && typeof item.prompt === 'string') {
+            result[item.slideIndex] = item.prompt;
+          }
+        }
+
+        console.log(`[WebBG] Recontextualized ${Object.keys(result).length} prompts for "${brandName}" using ${model}`);
+        return result;
+      } catch (err) {
+        lastError = err;
+        const errMsg = err.message || String(err);
+        const retryable = /429|503|overloaded|exceeded|rate.limit|resource.exhausted|unavailable/i.test(errMsg);
+        if (retryable && attempt < MAX_RETRIES) {
+          const backoff = Math.pow(2, attempt) * 1000;
+          console.warn(`[WebBG Recontextualize] Retryable error with ${model}: ${errMsg}, retrying in ${backoff}ms`);
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
+        console.warn(`[WebBG Recontextualize] ${model} failed: ${errMsg}`);
+        break; // try next model
       }
     }
-
-    console.log(`[WebBG] Recontextualized ${Object.keys(result).length} prompts for "${brandName}"`);
-    return result;
-  } catch (err) {
-    console.error('[WebBG] Failed to recontextualize prompts:', err.message);
-    throw err;
   }
+  console.error('[WebBG] Failed to recontextualize prompts:', lastError?.message);
+  throw lastError || new Error('All Gemini models failed for recontextualizeBackgroundPrompts');
 }
 
 /**
@@ -5143,7 +5261,8 @@ You MUST follow this style directive precisely so this photo looks like it belon
  */
 async function generatePhotoStyleDirective(slideDescriptions, brandData) {
   const ai = getGenAIClient();
-  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+  const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+  const modelsToTry = [primaryModel, ...GEMINI_FALLBACK_MODELS.filter(m => m !== primaryModel)];
 
   const brandName = brandData.brandName || brandData.brand || '';
   const brandColorPrimary = brandData.brandColorPrimary || '#0176D3';
@@ -5175,26 +5294,44 @@ Based on these slides and the brand, define a SINGLE unified photo style directi
 
 Return ONLY the style directive as a plain text paragraph (3-5 sentences). No JSON, no markdown, no headings — just the directive text that will be injected into each photo generation prompt.`;
 
-  try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: { temperature: 0.4, maxOutputTokens: 1024 },
-    });
+  let lastError = null;
+  for (const model of modelsToTry) {
+    const MAX_RETRIES = 3;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        console.log(`[PhotoStyle] Trying model=${model} attempt=${attempt}/${MAX_RETRIES}`);
+        const response = await ai.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: { temperature: 0.4, maxOutputTokens: 1024 },
+        });
 
-    const parts = response.candidates?.[0]?.content?.parts || [];
-    const directive = parts
-      .filter(p => p.text !== undefined && !p.thought)
-      .map(p => p.text)
-      .join('\n')
-      .trim();
+        const parts = response.candidates?.[0]?.content?.parts || [];
+        const directive = parts
+          .filter(p => p.text !== undefined && !p.thought)
+          .map(p => p.text)
+          .join('\n')
+          .trim();
 
-    console.log(`[WebVersion] Generated unified photo style directive: ${directive.substring(0, 200)}...`);
-    return directive;
-  } catch (err) {
-    console.warn('[WebVersion] Failed to generate photo style directive, falling back to independent generation:', err.message);
-    return null;
+        console.log(`[WebVersion] Generated unified photo style directive using ${model}: ${directive.substring(0, 200)}...`);
+        return directive;
+      } catch (err) {
+        lastError = err;
+        const errMsg = err.message || String(err);
+        const retryable = /429|503|overloaded|exceeded|rate.limit|resource.exhausted|unavailable/i.test(errMsg);
+        if (retryable && attempt < MAX_RETRIES) {
+          const backoff = Math.pow(2, attempt) * 1000;
+          console.warn(`[PhotoStyle] Retryable error with ${model}: ${errMsg}, retrying in ${backoff}ms`);
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
+        console.warn(`[PhotoStyle] ${model} failed: ${errMsg}`);
+        break; // try next model
+      }
+    }
   }
+  console.warn('[WebVersion] Failed to generate photo style directive, falling back to independent generation:', lastError?.message);
+  return null;
 }
 
 /**
@@ -5585,7 +5722,8 @@ function buildFallbackSlideHtml(slide, brandData, slideIndex, totalSlides) {
  */
 async function generateSlideHtml(slide, brandData, slideIndex, totalSlides, chapterTitles = [], userInstructions = '') {
   const ai = getGenAIClient();
-  const model = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+  const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+  const modelsToTry = [primaryModel, ...GEMINI_FALLBACK_MODELS.filter(m => m !== primaryModel)];
 
   const brandName = brandData.brandName || brandData.brand || '';
   const brandColorPrimary = brandData.brandColorPrimary || '#0176D3';
@@ -5713,36 +5851,67 @@ IMPORTANT CONTEXT for interpreting user instructions:
   }
   contentParts.push({ text: systemPrompt });
 
-  const response = await ai.models.generateContent({
-    model,
-    contents: contentParts,
-    config: { temperature: 0.3, maxOutputTokens: 8192 },
-  });
-
-  const parts = response.candidates?.[0]?.content?.parts || [];
-  let content = parts
-    .filter(p => p.text !== undefined && !p.thought)
-    .map(p => p.text)
-    .join('\n')
-    .trim();
-
-  // Parse JSON
   let result;
-  try {
-    result = JSON.parse(content);
-  } catch (e) {
-    const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (jsonMatch) {
-      result = JSON.parse(jsonMatch[1].trim());
-    } else {
-      const firstBrace = content.indexOf('{');
-      const lastBrace = content.lastIndexOf('}');
-      if (firstBrace !== -1 && lastBrace > firstBrace) {
-        result = JSON.parse(content.substring(firstBrace, lastBrace + 1));
-      } else {
-        throw new Error('Failed to parse slide HTML response');
+  let lastError = null;
+
+  for (const model of modelsToTry) {
+    const MAX_RETRIES = 3;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        console.log(`[SlideHtml] Trying model=${model} attempt=${attempt}/${MAX_RETRIES} for slide ${slideIndex}`);
+        const response = await ai.models.generateContent({
+          model,
+          contents: contentParts,
+          config: { temperature: 0.3, maxOutputTokens: 8192 },
+        });
+
+        const parts = response.candidates?.[0]?.content?.parts || [];
+        let content = parts
+          .filter(p => p.text !== undefined && !p.thought)
+          .map(p => p.text)
+          .join('\n')
+          .trim();
+
+        // Parse JSON
+        try {
+          result = JSON.parse(content);
+        } catch (e) {
+          const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+          if (jsonMatch) {
+            result = JSON.parse(jsonMatch[1].trim());
+          } else {
+            const firstBrace = content.indexOf('{');
+            const lastBrace = content.lastIndexOf('}');
+            if (firstBrace !== -1 && lastBrace > firstBrace) {
+              result = JSON.parse(content.substring(firstBrace, lastBrace + 1));
+            } else {
+              throw new Error('Failed to parse slide HTML response');
+            }
+          }
+        }
+        // Success — break out of both loops
+        lastError = null;
+        break;
+      } catch (err) {
+        lastError = err;
+        const errMsg = err.message || String(err);
+        const retryable = /429|503|overloaded|exceeded|rate.limit|resource.exhausted|unavailable/i.test(errMsg);
+        if (retryable && attempt < MAX_RETRIES) {
+          const backoff = Math.pow(2, attempt) * 1000;
+          console.warn(`[SlideHtml] Retryable error with ${model}: ${errMsg}, retrying in ${backoff}ms`);
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
+        console.warn(`[SlideHtml] ${model} failed for slide ${slideIndex}: ${errMsg}`);
+        result = null;
+        break; // try next model
       }
     }
+    if (result && !lastError) break;
+  }
+
+  if (!result) {
+    throw lastError || new Error('All Gemini models failed for generateSlideHtml');
   }
 
   // Post-process: aggressively strip placeholder boxes and <img> tags that the AI may still generate
