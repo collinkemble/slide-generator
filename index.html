@@ -1193,12 +1193,22 @@ function deleteCookie(name, domain) {
 }
 
 // ═══════════════════════════════════════════════
-// SHARED: Magic Link Auth
+// SHARED: Auth (Magic Link + SSO auto-login)
 // ═══════════════════════════════════════════════
 let magic = null;
 let cookieDomain = null;
 
-// Initialize Magic and check auth — fetches config from the server
+function mintSessionToken(email) {
+  return fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email })
+  })
+  .then(r => r.json())
+  .then(d => { if (d.token) setCookie('sessionToken', d.token, cookieDomain); return d; })
+  .catch(() => null);
+}
+
 async function initAndCheckAuth() {
   try {
     const configResp = await fetch('/api/auth/config');
@@ -1207,19 +1217,45 @@ async function initAndCheckAuth() {
     const magicKey = config.magicPublishableKey;
     cookieDomain = config.cookieDomain || null;
     if (magicKey) magic = new Magic(magicKey);
+
+    // 1) SSO auto-login (x-forwarded-user header)
+    if (config.ssoSessionToken && config.ssoEmail) {
+      setCookie('sessionToken', config.ssoSessionToken, cookieDomain);
+      showApp(config.ssoEmail);
+      return;
+    }
   } catch (err) {
     console.warn('Config fetch failed:', err.message);
   }
 
-  if (!magic) return; // Magic key not configured
+  // 2) JWT sessionToken cookie
+  const sessionToken = getCookie('sessionToken');
+  if (sessionToken) {
+    try {
+      const resp = await fetch('/api/auth/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: sessionToken })
+      });
+      const data = await resp.json();
+      if (data.valid) {
+        showApp(data.email);
+        return;
+      }
+    } catch (e) { /* fall through */ }
+    deleteCookie('sessionToken', cookieDomain);
+  }
 
-  // Check for a shared cookie token from another subdomain
+  if (!magic) return;
+
+  // 3) Magic didToken cookie
   const sharedToken = getCookie('didToken');
   if (sharedToken) {
     try {
       const isLoggedIn = await magic.user.isLoggedIn();
       if (isLoggedIn) {
         const { email } = await magic.user.getInfo();
+        await mintSessionToken(email);
         showApp(email);
         return;
       }
@@ -1228,7 +1264,7 @@ async function initAndCheckAuth() {
     }
   }
 
-  // Fall back to checking Magic's own session
+  // 4) Magic own session
   try {
     const isLoggedIn = await magic.user.isLoggedIn();
     if (isLoggedIn) {
@@ -1237,6 +1273,7 @@ async function initAndCheckAuth() {
         const didToken = await magic.user.getIdToken();
         if (didToken) setCookie('didToken', didToken, cookieDomain);
       } catch (e) { /* token fetch optional */ }
+      await mintSessionToken(email);
       showApp(email);
     }
   } catch (err) {
@@ -1258,15 +1295,17 @@ async function handleLogin() {
   loginBtn.textContent = 'Sending...';
 
   try {
-    loginForm.classList.add('hidden');
-    loginLoading.classList.remove('hidden');
+    if (magic) {
+      loginForm.classList.add('hidden');
+      loginLoading.classList.remove('hidden');
 
-    const didToken = await magic.auth.loginWithEmailOTP({ email, showUI: true });
+      const didToken = await magic.auth.loginWithEmailOTP({ email, showUI: true });
+      if (didToken) setCookie('didToken', didToken, cookieDomain);
+    }
 
-    // Store token in shared cookie for cross-subdomain SSO
-    if (didToken) setCookie('didToken', didToken, cookieDomain);
+    await mintSessionToken(email);
 
-    const userInfo = await magic.user.getInfo();
+    const userInfo = magic ? await magic.user.getInfo() : { email };
     showApp(userInfo.email);
   } catch (err) {
     loginForm.classList.remove('hidden');
@@ -1284,8 +1323,11 @@ async function handleLogin() {
 }
 
 async function handleLogout() {
-  await magic.user.logout();
+  if (magic) {
+    try { await magic.user.logout(); } catch(e) {}
+  }
   deleteCookie('didToken', cookieDomain);
+  deleteCookie('sessionToken', cookieDomain);
   document.getElementById('app-section').style.display = 'none';
   document.getElementById('login-section').classList.remove('hidden');
   document.getElementById('login-form').classList.remove('hidden');

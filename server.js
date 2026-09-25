@@ -5,7 +5,8 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const { query } = require('./src/db/connection');
+const jwt = require('jsonwebtoken');
+const { query, isPostgres } = require('./src/db/connection');
 const { migrate } = require('./src/db/migrate');
 const { google } = require('googleapis');
 const { GoogleGenAI } = require('@google/genai');
@@ -475,11 +476,62 @@ async function getOrCreateUser(email) {
 
 // Returns public app configuration for the frontend (Magic key, cookie domain).
 // No auth required — the frontend fetches this on load.
-app.get('/api/auth/config', (req, res) => {
+app.get('/api/auth/config', async (req, res) => {
+  const ssoEmail = req.headers['x-forwarded-user'];
+  let ssoSessionToken = null;
+
+  if (ssoEmail) {
+    try {
+      const user = await getOrCreateUser(ssoEmail);
+      const secret = process.env.SESSION_SECRET || process.env.MAGIC_SECRET_KEY || 'fallback-secret';
+      ssoSessionToken = jwt.sign(
+        { userId: user.id, email: ssoEmail },
+        secret,
+        { expiresIn: '7d', subject: `slidegenerator-session:${user.id}` }
+      );
+    } catch (err) {
+      console.error('SSO auto-login failed:', err.message);
+    }
+  }
+
   res.json({
     magicPublishableKey: process.env.MAGIC_PUBLISHABLE_KEY || process.env.VITE_MAGIC_LINK_KEY || null,
     cookieDomain: process.env.COOKIE_DOMAIN || null,
+    ssoSessionToken,
+    ssoEmail,
   });
+});
+
+// POST /api/auth/login — mint a JWT session token (Magic-link or email-only)
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+    const user = await getOrCreateUser(email);
+    const secret = process.env.SESSION_SECRET || process.env.MAGIC_SECRET_KEY || 'fallback-secret';
+    const token = jwt.sign(
+      { userId: user.id, email },
+      secret,
+      { expiresIn: '7d', subject: `slidegenerator-session:${user.id}` }
+    );
+    res.json({ token, user: { id: user.id, email: user.email, is_admin: user.is_admin } });
+  } catch (err) {
+    console.error('Login error:', err.message);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// POST /api/auth/validate — verify a JWT session token
+app.post('/api/auth/validate', async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ valid: false });
+    const secret = process.env.SESSION_SECRET || process.env.MAGIC_SECRET_KEY || 'fallback-secret';
+    const decoded = jwt.verify(token, secret);
+    res.json({ valid: true, email: decoded.email, userId: decoded.userId });
+  } catch (err) {
+    res.json({ valid: false });
+  }
 });
 
 // Check if current user is admin
@@ -6023,6 +6075,42 @@ async function start() {
   } catch (err) {
     console.error('⚠️  Database migration failed:', err.message);
     console.warn('  Features requiring a database will not work until JAWSDB_URL is configured');
+  }
+
+  // ─── One-time MySQL → PostgreSQL data migration ───
+  if (isPostgres && process.env.RUN_DATA_MIGRATION === 'true') {
+    console.log('Starting MySQL → PostgreSQL data migration...');
+    const mysql = require('mysql2/promise');
+    const jawsUrl = process.env.JAWSDB_URL;
+    if (jawsUrl) {
+      const src = await mysql.createConnection(jawsUrl);
+      try {
+        const tables = ['users', 'api_keys', 'presentations', 'google_tokens', 'reference_presentations', 'presentation_slides', 'reference_web_slides', 'feedback', 'shared_presentations'];
+        for (const table of tables) {
+          try {
+            const [rows] = await src.query(`SELECT * FROM ${table}`);
+            if (rows.length === 0) { console.log(`  ${table}: 0 rows — skip`); continue; }
+            const cols = Object.keys(rows[0]);
+            for (const row of rows) {
+              const vals = cols.map(c => row[c]);
+              const placeholders = cols.map((_, i) => `$${i + 1}`).join(',');
+              const onConflict = table === 'users' ? ' ON CONFLICT (email) DO NOTHING'
+                : table === 'api_keys' ? ' ON CONFLICT (key_hash) DO NOTHING'
+                : '';
+              await query(`INSERT INTO ${table} (${cols.join(',')}) VALUES (${placeholders})${onConflict} RETURNING id`, vals);
+            }
+            console.log(`  ✓ ${table}: ${rows.length} rows copied`);
+          } catch (e) { console.error(`  ✗ ${table}: ${e.message}`); }
+        }
+        // Reset sequences
+        for (const table of tables) {
+          try { await query(`SELECT setval(pg_get_serial_sequence('${table}','id'), COALESCE((SELECT MAX(id) FROM ${table}),1))`); } catch(e) {}
+        }
+        console.log('✓ Data migration complete');
+      } finally { await src.end(); }
+    } else {
+      console.warn('JAWSDB_URL not set — skipping data migration');
+    }
   }
 
   const server = app.listen(PORT, () => {

@@ -1,21 +1,52 @@
 require('dotenv').config();
 const fs = require('fs').promises;
 const path = require('path');
-const { getPool } = require('./connection');
+const { getPool, isPostgres } = require('./connection');
 
+/**
+ * Run database migrations from schema.sql (MySQL) or schema-pg.sql (PostgreSQL)
+ */
 async function migrate() {
   try {
-    console.log('Starting database migration...');
+    console.log(`Starting database migration (${isPostgres ? 'PostgreSQL' : 'MySQL'})...`);
 
-    const schemaPath = path.join(__dirname, 'schema.sql');
+    const schemaFile = isPostgres ? 'schema-pg.sql' : 'schema.sql';
+    const schemaPath = path.join(__dirname, schemaFile);
     const schema = await fs.readFile(schemaPath, 'utf-8');
 
+    const pool = getPool();
+
+    if (isPostgres) {
+      // ─── PostgreSQL migration ───
+      const client = await pool.connect();
+      try {
+        await client.query(schema);
+        console.log('✓ PostgreSQL schema applied');
+
+        // Auto-promote admin users from ADMIN_EMAILS env var
+        const adminEmails = (process.env.ADMIN_EMAILS || '').split(',').map(e => e.trim()).filter(Boolean);
+        if (adminEmails.length > 0) {
+          const placeholders = adminEmails.map((_, i) => `$${i + 1}`).join(',');
+          await client.query(
+            `UPDATE users SET is_admin = TRUE WHERE email IN (${placeholders})`,
+            adminEmails
+          );
+          console.log(`✓ Admin users promoted: ${adminEmails.join(', ')}`);
+        }
+
+        console.log('✓ Database migration completed successfully');
+      } finally {
+        client.release();
+      }
+      return true;
+    }
+
+    // ─── MySQL migration (existing logic, unchanged) ───
     const statements = schema
       .split(';')
       .map(stmt => stmt.trim())
       .filter(stmt => stmt.length > 0);
 
-    const pool = getPool();
     const connection = await pool.getConnection();
 
     try {
@@ -30,8 +61,7 @@ async function migrate() {
       ];
 
       // =============================================
-      // APP-SPECIFIC ALTER statements — Add yours here
-      // Example: adding share columns to your asset table
+      // APP-SPECIFIC ALTER statements — Slide Generator
       // =============================================
       const appAlters = [
         "ALTER TABLE reference_presentations ADD COLUMN google_slides_url VARCHAR(512)",
