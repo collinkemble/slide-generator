@@ -409,19 +409,25 @@ try {
   }
 } catch (e) { /* index.html loaded later via sendFile fallback */ }
 
+// Browser-facing links need .herokuapp-internal.com so users can reach them via VPN/SSO proxy.
+function toBrowserUrl(url) {
+  if (!url) return url;
+  return url.replace(/\.herokuapp\.com\b/, '.herokuapp-internal.com');
+}
+
 // ─── Dynamic App URLs (env-driven for staging/prod) ───
 const APP_URL_MAP = {
-  'https://demoforge.aubreydemo.com':        process.env.DEMOFORGE_URL        || 'https://demoforge.aubreydemo.com',
-  'https://brandkit-builder.aubreydemo.com': process.env.BRANDKIT_BUILDER_URL || 'https://brandkit-builder.aubreydemo.com',
-  'https://deep-research.aubreydemo.com':    process.env.DEEP_RESEARCH_URL    || 'https://deep-research.aubreydemo.com',
-  'https://scriptwriter.aubreydemo.com':     process.env.SCRIPTWRITER_URL     || 'https://scriptwriter.aubreydemo.com',
-  'https://org-builder.aubreydemo.com':      process.env.ORGBUILDER_URL       || 'https://org-builder.aubreydemo.com',
-  'https://slide-generator.aubreydemo.com':  process.env.SLIDE_GENERATOR_URL  || 'https://slide-generator.aubreydemo.com',
-  'https://installer.aubreydemo.com':        process.env.INSTALLER_URL        || 'https://installer.aubreydemo.com',
-  'https://pocketsic.aubreydemo.com':        process.env.POCKETSIC_URL        || 'https://pocketsic.aubreydemo.com',
-  'https://saleo-builder.aubreydemo.com':    process.env.SALEOBUILDER_URL     || 'https://saleo-builder.aubreydemo.com',
-  'https://video-builder.aubreydemo.com':    process.env.VIDEO_BUILDER_URL    || 'https://video-builder.aubreydemo.com',
-  'https://leave-behind-generator.aubreydemo.com': process.env.LEAVE_BEHIND_URL || 'https://leave-behind-generator.aubreydemo.com',
+  'https://demoforge.aubreydemo.com':        toBrowserUrl(process.env.DEMOFORGE_URL)        || 'https://demoforge.aubreydemo.com',
+  'https://brandkit-builder.aubreydemo.com': toBrowserUrl(process.env.BRANDKIT_BUILDER_URL) || 'https://brandkit-builder.aubreydemo.com',
+  'https://deep-research.aubreydemo.com':    toBrowserUrl(process.env.DEEP_RESEARCH_URL)    || 'https://deep-research.aubreydemo.com',
+  'https://scriptwriter.aubreydemo.com':     toBrowserUrl(process.env.SCRIPTWRITER_URL)     || 'https://scriptwriter.aubreydemo.com',
+  'https://org-builder.aubreydemo.com':      toBrowserUrl(process.env.ORGBUILDER_URL)       || 'https://org-builder.aubreydemo.com',
+  'https://slide-generator.aubreydemo.com':  toBrowserUrl(process.env.SLIDE_GENERATOR_URL)  || 'https://slide-generator.aubreydemo.com',
+  'https://installer.aubreydemo.com':        toBrowserUrl(process.env.INSTALLER_URL)        || 'https://installer.aubreydemo.com',
+  'https://pocketsic.aubreydemo.com':        toBrowserUrl(process.env.POCKETSIC_URL)        || 'https://pocketsic.aubreydemo.com',
+  'https://saleo-builder.aubreydemo.com':    toBrowserUrl(process.env.SALEOBUILDER_URL)     || 'https://saleo-builder.aubreydemo.com',
+  'https://video-builder.aubreydemo.com':    toBrowserUrl(process.env.VIDEO_BUILDER_URL)    || 'https://video-builder.aubreydemo.com',
+  'https://leave-behind-generator.aubreydemo.com': toBrowserUrl(process.env.LEAVE_BEHIND_URL) || 'https://leave-behind-generator.aubreydemo.com',
 };
 if (spaHtml) {
   for (const [prodUrl, envUrl] of Object.entries(APP_URL_MAP)) {
