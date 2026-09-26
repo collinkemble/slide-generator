@@ -1269,7 +1269,7 @@ app.get('/api/presentations', async (req, res) => {
 
     const user = await getOrCreateUser(email);
     const presentations = await query(
-      'SELECT id, name, status, google_presentation_url, shared_by_email, shared_at, created_at, updated_at FROM presentations WHERE user_id = ? ORDER BY COALESCE(updated_at, created_at, '1970-01-01') DESC',
+      `SELECT id, name, status, google_presentation_url, shared_by_email, shared_at, created_at, updated_at FROM presentations WHERE user_id = ? ORDER BY COALESCE(updated_at, created_at, '1970-01-01') DESC`,
       [user.id]
     );
     res.json({ presentations });
