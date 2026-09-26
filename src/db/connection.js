@@ -5,8 +5,12 @@ let pool;
 /**
  * Convert MySQL ? placeholders to PostgreSQL $1, $2, $3...
  * Also translates MySQL-specific date functions to PostgreSQL equivalents.
+ *
+ * When params are provided, any param that is a JSON-stringified string
+ * (starts with { or [) gets its placeholder cast to ::jsonb automatically.
+ * This prevents implicit text→jsonb cast failures on JSONB columns.
  */
-function toPostgresParams(sql) {
+function toPostgresParams(sql, params) {
   let idx = 0;
   let pgSql = sql.replace(/\?/g, () => `$${++idx}`);
   // DATE_SUB(NOW(), INTERVAL ? MINUTE) → NOW() - MAKE_INTERVAL(mins => $N)
@@ -24,6 +28,33 @@ function toPostgresParams(sql) {
       return `NOW() - INTERVAL '${num} ${pgUnit}'`;
     }
   );
+
+  // Auto-detect JSON string params and add ::jsonb cast to their placeholders.
+  // Skip params that already have ::jsonb in the SQL (manually cast).
+  if (params && params.length > 0) {
+    for (let i = 0; i < params.length; i++) {
+      const val = params[i];
+      if (typeof val === 'string' && val.length > 1) {
+        const first = val[0];
+        if (first === '{' || first === '[') {
+          try {
+            JSON.parse(val); // validate it's actual JSON
+            const placeholder = `$${i + 1}`;
+            // Only add ::jsonb if not already cast
+            const castPattern = new RegExp(`\\$${i + 1}::jsonb`, 'g');
+            if (!castPattern.test(pgSql)) {
+              // Replace the bare placeholder (not followed by :: or another digit) with placeholder::jsonb
+              const barePattern = new RegExp(`\\$${i + 1}(?!\\d|::)`, 'g');
+              pgSql = pgSql.replace(barePattern, `${placeholder}::jsonb`);
+            }
+          } catch (_) {
+            // Not valid JSON, leave as-is
+          }
+        }
+      }
+    }
+  }
+
   return pgSql;
 }
 
@@ -96,7 +127,7 @@ async function query(sql, params = []) {
   const p = getPool();
   try {
     if (isPostgres) {
-      let pgSql = toPostgresParams(sql);
+      let pgSql = toPostgresParams(sql, params);
       const isInsert = pgSql.trimStart().toUpperCase().startsWith('INSERT');
       if (isInsert && !pgSql.toUpperCase().includes('RETURNING')) {
         pgSql += ' RETURNING id';
@@ -130,7 +161,7 @@ async function getConnection() {
 
     return {
       async execute(sql, params = []) {
-        let pgSql = toPostgresParams(sql);
+        let pgSql = toPostgresParams(sql, params);
         const isInsert = pgSql.trimStart().toUpperCase().startsWith('INSERT');
         if (isInsert && !pgSql.toUpperCase().includes('RETURNING')) {
           pgSql += ' RETURNING id';
@@ -145,7 +176,7 @@ async function getConnection() {
         return [rows, result.fields];
       },
       async query(sql, params = []) {
-        let pgSql = toPostgresParams(sql);
+        let pgSql = toPostgresParams(sql, params);
         const isInsert = pgSql.trimStart().toUpperCase().startsWith('INSERT');
         if (isInsert && !pgSql.toUpperCase().includes('RETURNING')) {
           pgSql += ' RETURNING id';
