@@ -450,13 +450,15 @@ function isAdmin(email) {
 
 // Get or create user — upserts, stamps last_login_at, syncs admin flag
 async function getOrCreateUser(email) {
-  let users = await query('SELECT * FROM users WHERE email = ?', [email]);
+  // Normalize email to lowercase — PostgreSQL string comparisons are case-sensitive
+  const normalizedEmail = (email || '').trim().toLowerCase();
+  let users = await query('SELECT * FROM users WHERE email = ?', [normalizedEmail]);
   if (users.length === 0) {
     const result = await query(
       'INSERT INTO users (email, is_admin) VALUES (?, ?)',
-      [email, isAdmin(email)]
+      [normalizedEmail, isAdmin(normalizedEmail)]
     );
-    return { id: result.insertId, email, is_admin: isAdmin(email) };
+    return { id: result.insertId, email: normalizedEmail, is_admin: isAdmin(normalizedEmail) };
   }
   // Sync admin status and update last_login_at on each login
   const user = users[0];
@@ -477,7 +479,8 @@ async function getOrCreateUser(email) {
 // Returns public app configuration for the frontend (Magic key, cookie domain).
 // No auth required — the frontend fetches this on load.
 app.get('/api/auth/config', async (req, res) => {
-  const ssoEmail = req.headers['x-forwarded-user'];
+  const rawSsoEmail = req.headers['x-forwarded-user'];
+  const ssoEmail = rawSsoEmail ? rawSsoEmail.trim().toLowerCase() : null;
   let ssoSessionToken = null;
 
   if (ssoEmail) {
