@@ -1269,7 +1269,7 @@ app.get('/api/presentations', async (req, res) => {
 
     const user = await getOrCreateUser(email);
     const presentations = await query(
-      'SELECT id, name, status, google_presentation_url, shared_by_email, shared_at, created_at, updated_at FROM presentations WHERE user_id = ? ORDER BY updated_at DESC',
+      'SELECT id, name, status, google_presentation_url, shared_by_email, shared_at, created_at, updated_at FROM presentations WHERE user_id = ? ORDER BY COALESCE(updated_at, created_at) DESC',
       [user.id]
     );
     res.json({ presentations });
@@ -1881,9 +1881,13 @@ async function copyTemplateSlides(presentationId, brandData) {
     // and contaminate AI image generation even after recontextualization attempts.
     // Instead, set both to NULL — fresh prompts will be generated from slide names + target brand.
     await query(
-      `INSERT INTO presentation_slides (presentation_id, slide_index, html_content, css_content, bg_image_url, bg_image_prompt, template_type, slide_name)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE html_content=VALUES(html_content), css_content=VALUES(css_content), bg_image_url=VALUES(bg_image_url), bg_image_prompt=VALUES(bg_image_prompt), template_type=VALUES(template_type), slide_name=VALUES(slide_name)`,
+      isPostgres
+        ? `INSERT INTO presentation_slides (presentation_id, slide_index, html_content, css_content, bg_image_url, bg_image_prompt, template_type, slide_name)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (presentation_id, slide_index) DO UPDATE SET html_content=EXCLUDED.html_content, css_content=EXCLUDED.css_content, bg_image_url=EXCLUDED.bg_image_url, bg_image_prompt=EXCLUDED.bg_image_prompt, template_type=EXCLUDED.template_type, slide_name=EXCLUDED.slide_name`
+        : `INSERT INTO presentation_slides (presentation_id, slide_index, html_content, css_content, bg_image_url, bg_image_prompt, template_type, slide_name)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE html_content=VALUES(html_content), css_content=VALUES(css_content), bg_image_url=VALUES(bg_image_url), bg_image_prompt=VALUES(bg_image_prompt), template_type=VALUES(template_type), slide_name=VALUES(slide_name)`,
       [presentationId, slide.slide_index, html, css, null, null, ann.templateType || '', ann.name || '']
     );
   }
@@ -2121,9 +2125,13 @@ app.post('/api/presentations/:id/slides/:slideIndex/regenerate-image', async (re
     // Update the presentation_slides row
     try {
       await query(
-        `INSERT INTO presentation_slides (presentation_id, slide_index, image_url, title, heading, body, speaker_notes, layout_type)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE image_url = VALUES(image_url), updated_at = NOW()`,
+        isPostgres
+          ? `INSERT INTO presentation_slides (presentation_id, slide_index, image_url, title, heading, body, speaker_notes, layout_type)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (presentation_id, slide_index) DO UPDATE SET image_url = EXCLUDED.image_url, updated_at = NOW()`
+          : `INSERT INTO presentation_slides (presentation_id, slide_index, image_url, title, heading, body, speaker_notes, layout_type)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE image_url = VALUES(image_url), updated_at = NOW()`,
         [presentation.id, slideIndex, publicUrl, slide.title || '', slide.heading || '', slide.body || '', slide.speakerNotes || '', slide.layoutType || slide.layout || 'CONTENT']
       );
     } catch (dbErr) {
@@ -4422,9 +4430,13 @@ Return ONLY valid JSON, no markdown fences.`;
           if (publicUrl) {
             try {
               await query(
-                `INSERT INTO presentation_slides (presentation_id, slide_index, image_url, title, heading, body, speaker_notes, layout_type)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE image_url = VALUES(image_url), title = VALUES(title), heading = VALUES(heading), body = VALUES(body), speaker_notes = VALUES(speaker_notes), layout_type = VALUES(layout_type), updated_at = NOW()`,
+                isPostgres
+                  ? `INSERT INTO presentation_slides (presentation_id, slide_index, image_url, title, heading, body, speaker_notes, layout_type)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT (presentation_id, slide_index) DO UPDATE SET image_url = EXCLUDED.image_url, title = EXCLUDED.title, heading = EXCLUDED.heading, body = EXCLUDED.body, speaker_notes = EXCLUDED.speaker_notes, layout_type = EXCLUDED.layout_type, updated_at = NOW()`
+                  : `INSERT INTO presentation_slides (presentation_id, slide_index, image_url, title, heading, body, speaker_notes, layout_type)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE image_url = VALUES(image_url), title = VALUES(title), heading = VALUES(heading), body = VALUES(body), speaker_notes = VALUES(speaker_notes), layout_type = VALUES(layout_type), updated_at = NOW()`,
                 [presentation.id, i, publicUrl, slide.title || '', slide.heading || '', slide.body || '', slide.speakerNotes || '', slide.layoutType || 'CONTENT']
               );
             } catch (dbErr) {
@@ -5463,9 +5475,13 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
 
       // Save HTML immediately so the progress counter updates in real time
       await query(
-        `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
-         VALUES (?, ?, ?, ?, NULL, ?)
-         ON DUPLICATE KEY UPDATE html_content = VALUES(html_content), css_content = VALUES(css_content), background_image_prompt = VALUES(background_image_prompt), updated_at = NOW()`,
+        isPostgres
+          ? `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
+             VALUES (?, ?, ?, ?, NULL, ?)
+             ON CONFLICT (reference_id, slide_index) DO UPDATE SET html_content = EXCLUDED.html_content, css_content = EXCLUDED.css_content, background_image_prompt = EXCLUDED.background_image_prompt, updated_at = NOW()`
+          : `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
+             VALUES (?, ?, ?, ?, NULL, ?)
+             ON DUPLICATE KEY UPDATE html_content = VALUES(html_content), css_content = VALUES(css_content), background_image_prompt = VALUES(background_image_prompt), updated_at = NOW()`,
         [refId, i, slideHtmlData.html, slideHtmlData.css, slideHtmlData.backgroundImageDescription || '']
       );
 
@@ -5535,9 +5551,13 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
         const cached = duplicateSlideCache[fingerprint];
         console.log(`[WebVersion] Slide ${index + 1} is duplicate of cached "${fingerprint}" — reusing HTML + photo`);
         await query(
-          `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE html_content = VALUES(html_content), css_content = VALUES(css_content), background_image_url = VALUES(background_image_url), background_image_prompt = VALUES(background_image_prompt), updated_at = NOW()`,
+          isPostgres
+            ? `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT (reference_id, slide_index) DO UPDATE SET html_content = EXCLUDED.html_content, css_content = EXCLUDED.css_content, background_image_url = EXCLUDED.background_image_url, background_image_prompt = EXCLUDED.background_image_prompt, updated_at = NOW()`
+            : `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE html_content = VALUES(html_content), css_content = VALUES(css_content), background_image_url = VALUES(background_image_url), background_image_prompt = VALUES(background_image_prompt), updated_at = NOW()`,
           [refId, index, cached.html, cached.css, cached.bgUrl, cached.bgPrompt]
         );
         console.log(`[WebVersion] Slide ${index + 1} saved (duplicate) successfully`);
@@ -5589,9 +5609,13 @@ async function generateWebVersionInBackground(refId, refData, brandData) {
 
       // Save to database
       await query(
-        `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE html_content = VALUES(html_content), css_content = VALUES(css_content), background_image_url = VALUES(background_image_url), background_image_prompt = VALUES(background_image_prompt), updated_at = NOW()`,
+        isPostgres
+          ? `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT (reference_id, slide_index) DO UPDATE SET html_content = EXCLUDED.html_content, css_content = EXCLUDED.css_content, background_image_url = EXCLUDED.background_image_url, background_image_prompt = EXCLUDED.background_image_prompt, updated_at = NOW()`
+          : `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE html_content = VALUES(html_content), css_content = VALUES(css_content), background_image_url = VALUES(background_image_url), background_image_prompt = VALUES(background_image_prompt), updated_at = NOW()`,
         [refId, index, slideHtmlData.html, slideHtmlData.css, backgroundImageUrl, slideHtmlData.backgroundImageDescription || '']
       );
 
@@ -5679,9 +5703,13 @@ async function regenerateSingleSlideInBackground(refId, slideIndex, annotations,
 
     // Step 4: Upsert into database
     await query(
-      `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
-       VALUES (?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE html_content = VALUES(html_content), css_content = VALUES(css_content), background_image_url = VALUES(background_image_url), background_image_prompt = VALUES(background_image_prompt), updated_at = NOW()`,
+      isPostgres
+        ? `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT (reference_id, slide_index) DO UPDATE SET html_content = EXCLUDED.html_content, css_content = EXCLUDED.css_content, background_image_url = EXCLUDED.background_image_url, background_image_prompt = EXCLUDED.background_image_prompt, updated_at = NOW()`
+        : `INSERT INTO reference_web_slides (reference_id, slide_index, html_content, css_content, background_image_url, background_image_prompt)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE html_content = VALUES(html_content), css_content = VALUES(css_content), background_image_url = VALUES(background_image_url), background_image_prompt = VALUES(background_image_prompt), updated_at = NOW()`,
       [refId, slideIndex, slideHtmlData.html, slideHtmlData.css, backgroundImageUrl, slideHtmlData.backgroundImageDescription || '']
     );
 
