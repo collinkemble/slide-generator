@@ -6094,17 +6094,6 @@ app.get('/privacy', (req, res) => {
 </html>`);
 });
 
-// Temporary diagnostic endpoint for DB seed verification (remove after confirming)
-app.get('/api/db-check-refs', async (req, res) => {
-  try {
-    const refs = await query('SELECT id, name, slide_count, web_version_status FROM reference_presentations ORDER BY id');
-    const slides = await query('SELECT COUNT(*) as cnt FROM reference_web_slides');
-    res.json({ reference_presentations: refs, web_slides_count: slides[0]?.cnt || 0 });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
 // SPA catch-all — serve index.html for any non-API route (enables deep links like /views/:id)
 app.get('/{*splat}', (req, res) => {
   if (spaHtml) return res.type('html').send(spaHtml);
