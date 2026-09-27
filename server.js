@@ -6187,14 +6187,15 @@ async function start() {
     }
   }
 
-  // ─── One-time reference data seed from production MySQL ───
+  // ─── One-time reference data seed from bundled JSON ───
   if (isPostgres && process.env.SEED_REFERENCES === 'true') {
-    console.log('Starting reference data seed from production MySQL...');
-    const prodJawsUrl = process.env.PROD_JAWSDB_URL;
-    if (prodJawsUrl) {
-      const mysql = require('mysql2/promise');
-      try {
-        const mysqlConn = await mysql.createConnection(prodJawsUrl);
+    console.log('Starting reference data seed from bundled JSON...');
+    try {
+      const seedPath = path.join(__dirname, 'scripts', 'seed-data.json');
+      if (!fs.existsSync(seedPath)) {
+        console.warn('scripts/seed-data.json not found — skipping reference seed');
+      } else {
+        const seedData = JSON.parse(fs.readFileSync(seedPath, 'utf-8'));
         const { Pool } = require('pg');
         const pgPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
         const pgClient = await pgPool.connect();
@@ -6202,14 +6203,10 @@ async function start() {
         try {
           await pgClient.query('BEGIN');
 
-          // Migrate reference_presentations
-          const [refs] = await mysqlConn.execute('SELECT * FROM reference_presentations');
-          console.log(`  Found ${refs.length} reference_presentations in production`);
-
-          for (const ref of refs) {
-            // Check if already exists by name
+          for (const ref of seedData.reference_presentations) {
+            // Check if already exists by id or name
             const existing = await pgClient.query(
-              'SELECT id FROM reference_presentations WHERE name = $1', [ref.name]
+              'SELECT id FROM reference_presentations WHERE id = $1 OR name = $2', [ref.id, ref.name]
             );
             if (existing.rows.length > 0) {
               console.log(`  Skipping "${ref.name}" — already exists (id=${existing.rows[0].id})`);
@@ -6223,7 +6220,6 @@ async function start() {
               ? (typeof ref.web_version_brand_data === 'string' ? ref.web_version_brand_data : JSON.stringify(ref.web_version_brand_data))
               : null;
 
-            // Insert with explicit id to preserve ID=4 (MASTER_TEMPLATE_REF_ID)
             await pgClient.query(
               `INSERT INTO reference_presentations
                 (id, name, content, content_length, industry_tag, presentation_type_tag, synopsis,
@@ -6241,10 +6237,8 @@ async function start() {
             );
             console.log(`  Inserted reference "${ref.name}" with id=${ref.id}`);
 
-            // Migrate reference_web_slides
-            const [slides] = await mysqlConn.execute(
-              'SELECT * FROM reference_web_slides WHERE reference_id = ? ORDER BY slide_index', [ref.id]
-            );
+            // Seed reference_web_slides for this reference
+            const slides = seedData.reference_web_slides.filter(s => s.reference_id === ref.id);
             for (const slide of slides) {
               await pgClient.query(
                 `INSERT INTO reference_web_slides
@@ -6262,7 +6256,7 @@ async function start() {
             console.log(`  Inserted ${slides.length} web slides for reference_id=${ref.id}`);
           }
 
-          // Reset sequence to max id
+          // Reset sequences
           await pgClient.query(
             `SELECT setval(pg_get_serial_sequence('reference_presentations','id'), COALESCE((SELECT MAX(id) FROM reference_presentations),1))`
           );
@@ -6278,13 +6272,10 @@ async function start() {
         } finally {
           pgClient.release();
           await pgPool.end();
-          await mysqlConn.end();
         }
-      } catch (connErr) {
-        console.error('Reference seed connection error:', connErr.message);
       }
-    } else {
-      console.warn('PROD_JAWSDB_URL not set — skipping reference seed');
+    } catch (seedErr) {
+      console.error('Reference seed error:', seedErr.message);
     }
   }
 
