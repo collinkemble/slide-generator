@@ -2951,7 +2951,8 @@ function pollRegenAllStatus(presId, btn, statusEl) {
       } else {
         btn.disabled = false;
         btn.textContent = '🔄 Regenerate All Backgrounds';
-        statusEl.textContent = '✕ Generation failed';
+        const errMsg = pres.status_message ? ` — ${pres.status_message}` : '';
+        statusEl.textContent = '✕ Generation failed' + errMsg;
         statusEl.style.color = '#EF4444';
       }
     } catch (err) {
@@ -3492,8 +3493,9 @@ async function pollGenerationStatus(presId, email, btn, progress, statusEl) {
         btn.disabled = false;
         btn.textContent = '🚀 Generate Slides';
         progress.classList.add('hidden');
-        statusEl.textContent = 'Generation failed.';
-        alert('Generation failed. Please try again.');
+        const errorDetail = pres.status_message ? ` (${pres.status_message})` : '';
+        statusEl.textContent = 'Generation failed.' + errorDetail;
+        alert('Generation failed.' + errorDetail + ' Please try again.');
         return;
       }
 

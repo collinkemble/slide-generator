@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS presentations (
   google_presentation_id VARCHAR(255),
   google_presentation_url VARCHAR(512),
   status VARCHAR(20) DEFAULT 'draft',
+  status_message TEXT,
   is_web_slides BOOLEAN DEFAULT FALSE,
   web_brand_data JSONB,
   shared_by_email VARCHAR(255) DEFAULT NULL,
@@ -85,6 +86,12 @@ EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 CREATE INDEX IF NOT EXISTS idx_presentations_user_id ON presentations (user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_presentations_share_token ON presentations (share_token);
+
+-- Add status_message column for error diagnostics (idempotent)
+DO $$ BEGIN
+  ALTER TABLE presentations ADD COLUMN status_message TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
 
 -- Google OAuth tokens (per user)
 CREATE TABLE IF NOT EXISTS google_tokens (

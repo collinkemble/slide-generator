@@ -1366,7 +1366,7 @@ app.post('/api/presentations', async (req, res) => {
         });
       } catch (copyErr) {
         console.error(`[WebTemplate] Failed to copy template slides:`, copyErr);
-        await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presId]);
+        await query('UPDATE presentations SET status = ?, status_message = ? WHERE id = ?', ['failed', `[WebTemplate] ${copyErr.message}`, presId]);
       }
     }
 
@@ -1588,7 +1588,7 @@ app.post('/api/presentations/:id/regenerate-all', async (req, res) => {
     if (!presentation.is_web_slides) return res.status(400).json({ error: 'Not a web slides presentation' });
 
     // Mark as generating
-    await query('UPDATE presentations SET status = ? WHERE id = ?', ['generating', req.params.id]);
+    await query('UPDATE presentations SET status = ?, status_message = ? WHERE id = ?', ['generating', 'Starting regeneration...', req.params.id]);
 
     // Get brand data
     let brandData = presentation.web_brand_data;
@@ -1622,7 +1622,7 @@ async function regenerateAllBackgroundsInBackground(presentationId, brandData, c
     );
 
     if (slides.length === 0) {
-      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentationId]);
+      await query('UPDATE presentations SET status = ?, status_message = ? WHERE id = ?', ['failed', '[RegenAll] No slides found', presentationId]);
       return;
     }
 
@@ -1721,7 +1721,7 @@ async function regenerateAllBackgroundsInBackground(presentationId, brandData, c
     console.log(`[RegenAll] Regeneration completed for presentation ${presentationId}`);
   } catch (err) {
     console.error(`[RegenAll] Fatal error:`, err);
-    await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentationId]);
+    await query('UPDATE presentations SET status = ?, status_message = ? WHERE id = ?', ['failed', `[RegenAll] ${err.message}`, presentationId]);
   }
 }
 
@@ -1918,7 +1918,7 @@ async function generateUserBackgroundsInBackground(presentationId, brandData) {
     );
 
     if (slides.length === 0) {
-      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentationId]);
+      await query('UPDATE presentations SET status = ?, status_message = ? WHERE id = ?', ['failed', '[WebBG] No slides found', presentationId]);
       return;
     }
 
@@ -2028,7 +2028,7 @@ async function generateUserBackgroundsInBackground(presentationId, brandData) {
     console.log(`[WebBG] Background generation completed for presentation ${presentationId}`);
   } catch (err) {
     console.error(`[WebBG] Fatal error generating backgrounds for presentation ${presentationId}:`, err);
-    await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentationId]);
+    await query('UPDATE presentations SET status = ?, status_message = ? WHERE id = ?', ['failed', `[WebBG] ${err.message}`, presentationId]);
   }
 }
 
@@ -4292,7 +4292,7 @@ Return ONLY valid JSON, no markdown fences.`;
     // Call Gemini for text generation
     const geminiApiKey = process.env.GEMINI_API_KEY;
     if (!geminiApiKey) {
-      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
+      await query('UPDATE presentations SET status = ?, status_message = ? WHERE id = ?', ['failed', 'GEMINI_API_KEY not configured', presentation.id]);
       throw new Error('GEMINI_API_KEY not configured');
     }
 
@@ -4354,7 +4354,7 @@ Return ONLY valid JSON, no markdown fences.`;
 
     if (!geminiData) {
       console.error('All Gemini models failed for presentation generation:', lastError);
-      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
+      await query('UPDATE presentations SET status = ?, status_message = ? WHERE id = ?', ['failed', `[Generate] Text gen failed: ${lastError?.message || 'unknown'}`, presentation.id]);
       throw new Error(lastError || 'Gemini API error');
     }
 
@@ -4367,7 +4367,7 @@ Return ONLY valid JSON, no markdown fences.`;
 
     if (!content) {
       console.error('No text content from Gemini. Parts:', JSON.stringify(parts.map(p => ({ thought: !!p.thought, hasText: p.text !== undefined, textLen: p.text?.length }))));
-      await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
+      await query('UPDATE presentations SET status = ?, status_message = ? WHERE id = ?', ['failed', `[Generate] JSON parse failed: ${lastError?.message || 'unknown'}`, presentation.id]);
       throw new Error('No content returned from AI');
     }
 
@@ -4395,7 +4395,7 @@ Return ONLY valid JSON, no markdown fences.`;
       }
       if (!slideData) {
         console.error('Failed to parse Gemini response as JSON. Content preview:', content.substring(0, 500));
-        await query('UPDATE presentations SET status = ? WHERE id = ?', ['failed', presentation.id]);
+        await query('UPDATE presentations SET status = ?, status_message = ? WHERE id = ?', ['failed', `[Generate] JSON parse failed: ${e1?.message || 'unknown'}`, presentation.id]);
         throw new Error('Failed to parse AI response as JSON');
       }
     }
