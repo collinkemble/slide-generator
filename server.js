@@ -6176,6 +6176,107 @@ async function start() {
     }
   }
 
+  // ─── One-time reference data seed from production MySQL ───
+  if (isPostgres && process.env.SEED_REFERENCES === 'true') {
+    console.log('Starting reference data seed from production MySQL...');
+    const prodJawsUrl = process.env.PROD_JAWSDB_URL;
+    if (prodJawsUrl) {
+      const mysql = require('mysql2/promise');
+      try {
+        const mysqlConn = await mysql.createConnection(prodJawsUrl);
+        const { Pool } = require('pg');
+        const pgPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+        const pgClient = await pgPool.connect();
+
+        try {
+          await pgClient.query('BEGIN');
+
+          // Migrate reference_presentations
+          const [refs] = await mysqlConn.execute('SELECT * FROM reference_presentations');
+          console.log(`  Found ${refs.length} reference_presentations in production`);
+
+          for (const ref of refs) {
+            // Check if already exists by name
+            const existing = await pgClient.query(
+              'SELECT id FROM reference_presentations WHERE name = $1', [ref.name]
+            );
+            if (existing.rows.length > 0) {
+              console.log(`  Skipping "${ref.name}" — already exists (id=${existing.rows[0].id})`);
+              continue;
+            }
+
+            const annotations = ref.slide_annotations
+              ? (typeof ref.slide_annotations === 'string' ? ref.slide_annotations : JSON.stringify(ref.slide_annotations))
+              : null;
+            const brandData = ref.web_version_brand_data
+              ? (typeof ref.web_version_brand_data === 'string' ? ref.web_version_brand_data : JSON.stringify(ref.web_version_brand_data))
+              : null;
+
+            // Insert with explicit id to preserve ID=4 (MASTER_TEMPLATE_REF_ID)
+            await pgClient.query(
+              `INSERT INTO reference_presentations
+                (id, name, content, content_length, industry_tag, presentation_type_tag, synopsis,
+                 slide_count, uploaded_by, google_slides_url, slide_annotations,
+                 web_version_status, web_version_generated_at, web_version_brand_data, created_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14::jsonb, $15)
+               ON CONFLICT (id) DO NOTHING`,
+              [
+                ref.id, ref.name, ref.content, ref.content_length,
+                ref.industry_tag, ref.presentation_type_tag, ref.synopsis,
+                ref.slide_count, ref.uploaded_by, ref.google_slides_url,
+                annotations, ref.web_version_status || 'none',
+                ref.web_version_generated_at || null, brandData, ref.created_at,
+              ]
+            );
+            console.log(`  Inserted reference "${ref.name}" with id=${ref.id}`);
+
+            // Migrate reference_web_slides
+            const [slides] = await mysqlConn.execute(
+              'SELECT * FROM reference_web_slides WHERE reference_id = ? ORDER BY slide_index', [ref.id]
+            );
+            for (const slide of slides) {
+              await pgClient.query(
+                `INSERT INTO reference_web_slides
+                  (reference_id, slide_index, html_content, css_content,
+                   background_image_url, background_image_prompt, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 ON CONFLICT (reference_id, slide_index) DO NOTHING`,
+                [
+                  ref.id, slide.slide_index, slide.html_content, slide.css_content,
+                  slide.background_image_url, slide.background_image_prompt,
+                  slide.created_at, slide.updated_at,
+                ]
+              );
+            }
+            console.log(`  Inserted ${slides.length} web slides for reference_id=${ref.id}`);
+          }
+
+          // Reset sequence to max id
+          await pgClient.query(
+            `SELECT setval(pg_get_serial_sequence('reference_presentations','id'), COALESCE((SELECT MAX(id) FROM reference_presentations),1))`
+          );
+          await pgClient.query(
+            `SELECT setval(pg_get_serial_sequence('reference_web_slides','id'), COALESCE((SELECT MAX(id) FROM reference_web_slides),1))`
+          );
+
+          await pgClient.query('COMMIT');
+          console.log('✓ Reference data seed complete');
+        } catch (seedErr) {
+          await pgClient.query('ROLLBACK');
+          console.error('Reference seed failed, rolled back:', seedErr.message);
+        } finally {
+          pgClient.release();
+          await pgPool.end();
+          await mysqlConn.end();
+        }
+      } catch (connErr) {
+        console.error('Reference seed connection error:', connErr.message);
+      }
+    } else {
+      console.warn('PROD_JAWSDB_URL not set — skipping reference seed');
+    }
+  }
+
   const server = app.listen(PORT, () => {
     console.log(`Slide Generator running on http://localhost:${PORT}`);
     if (!process.env.GEMINI_API_KEY) {
