@@ -2951,7 +2951,7 @@ function pollRegenAllStatus(presId, btn, statusEl) {
       } else {
         btn.disabled = false;
         btn.textContent = '🔄 Regenerate All Backgrounds';
-        const errMsg = pres.status_message ? ` — ${pres.status_message}` : '';
+        const errMsg = result.presentation.status_message ? ` — ${result.presentation.status_message}` : '';
         statusEl.textContent = '✕ Generation failed' + errMsg;
         statusEl.style.color = '#EF4444';
       }
