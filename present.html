@@ -117,7 +117,7 @@
     <a id="error-link" href="/" style="display:none">Go to Slide Builder →</a>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/magic-sdk/dist/magic.js"></script>
+  <!-- Magic SDK removed — SSO-only auth -->
   <script>
     let slides = [];
     let currentSlide = 0;
@@ -131,7 +131,7 @@
       return match ? decodeURIComponent(match[2]) : null;
     }
 
-    // ─── Init: use existing Magic Link session ───
+    // ─── Init: use existing session ───
     async function init() {
       if (!shareToken) return showError('Invalid presentation link');
 
@@ -139,24 +139,23 @@
       const publicResult = await loadPresentation();
       if (publicResult === 'ok') return;
 
-      // Step 2: If auth is required, check existing Magic Link session
-      // (same SSO session used by the main Slide Builder app)
+      // Step 2: If auth is required, check existing session cookie
       let userEmail = null;
       try {
-        const configResp = await fetch('/api/auth/config');
-        const config = await configResp.json();
-        const magicKey = config.magicPublishableKey;
-
-        if (magicKey) {
-          const magic = new Magic(magicKey);
-          const isLoggedIn = await magic.user.isLoggedIn();
-          if (isLoggedIn) {
-            const info = await magic.user.getInfo();
-            userEmail = info.email;
+        const sessionToken = getCookie('sessionToken');
+        if (sessionToken) {
+          const resp = await fetch('/api/auth/validate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: sessionToken }),
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.valid && data.email) userEmail = data.email;
           }
         }
       } catch (err) {
-        console.log('Magic session check:', err.message);
+        console.log('Session check:', err.message);
       }
 
       if (userEmail) {

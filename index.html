@@ -20,7 +20,7 @@
     body { font-family: 'Salesforce Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
   </style>
   <script src="https://assets.meshmesh.io/system/tailwindcss-browser-4.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/magic-sdk/dist/magic.js"></script>
+  <!-- Magic SDK removed — SSO-only auth -->
   <style type="text/tailwindcss">
     @theme {
       --color-brand: #0176D3;
@@ -119,84 +119,19 @@
   <!-- ═══════════════════════════════════════════════ -->
   <!-- LOGIN SCREEN (shared — do not modify)          -->
   <!-- ═══════════════════════════════════════════════ -->
-  <div id="login-section" class="min-h-screen flex items-center justify-center p-5 relative overflow-hidden" style="background: #032D60;">
-    <!-- Background dot pattern -->
-    <div class="absolute inset-0" style="background-image: radial-gradient(rgba(1,118,211,0.15) 1px, transparent 1px); background-size: 30px 30px; opacity: 0.6;"></div>
-    <!-- Accent glow top-right -->
-    <div class="absolute" style="top: -20%; right: -10%; width: 600px; height: 600px; border-radius: 50%; background: radial-gradient(circle, rgba(0,179,255,0.12) 0%, transparent 70%);"></div>
-    <!-- Accent glow bottom-left -->
-    <div class="absolute" style="bottom: -15%; left: -10%; width: 500px; height: 500px; border-radius: 50%; background: radial-gradient(circle, rgba(1,118,211,0.15) 0%, transparent 70%);"></div>
-
-    <div class="bg-white w-full max-w-[420px] relative z-10" style="border-radius: 16px; padding: 48px 40px; box-shadow: 0 24px 80px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.05);">
-      <!-- Logo + branding -->
-      <div class="text-center mb-9">
-        <img src="/sflogo.png" alt="Salesforce" class="mx-auto mb-5 block" style="width: 56px; height: 56px; object-fit: contain;">
-        <h1 class="text-3xl font-bold" style="color: #032D60; letter-spacing: -0.03em;">Slide Generator</h1>
-        <p class="text-sm mt-1.5" style="color: #444;">AI-powered presentations</p>
+  <div id="login-section" class="min-h-screen flex items-center justify-center p-5" style="background: #032D60;">
+    <div id="auth-checking" class="text-center">
+      <div class="flex justify-center gap-1.5 mb-4">
+        <div class="w-2.5 h-2.5 rounded-full bg-white/70" style="animation: pulse-dot 1.4s infinite ease-in-out both;"></div>
+        <div class="w-2.5 h-2.5 rounded-full bg-white/70" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.2s;"></div>
+        <div class="w-2.5 h-2.5 rounded-full bg-white/70" style="animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.4s;"></div>
       </div>
-
-      <div id="login-form">
-        <div class="mb-4">
-          <label for="login-email" class="block font-bold mb-2" style="color: #032D60; font-size: 13px;">Work Email</label>
-          <input id="login-email" type="email" placeholder="name@salesforce.com"
-            class="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-gray-800" style="font-size: 15px;">
-        </div>
-
-        <p id="login-error" class="hidden mb-3 text-sm" style="background: #FEF2F2; border: 1px solid #FEE2E2; border-radius: 8px; padding: 10px 14px; color: #C23934;"></p>
-
-        <button id="login-btn" onclick="handleLogin()"
-          class="w-full text-white font-bold rounded-lg transition cursor-pointer" style="background: #0176D3; height: 44px; font-size: 15px;">
-          Sign In with Magic Link
-        </button>
-        <p id="login-status" class="text-sm text-gray-500 mt-4 hidden"></p>
-      </div>
-
-      <div id="login-loading" class="hidden py-6">
-        <div class="flex gap-2 justify-center mb-4">
-          <div class="w-3 h-3 rounded-full" style="background: #0176D3; animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0s;"></div>
-          <div class="w-3 h-3 rounded-full" style="background: #0176D3; animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.2s;"></div>
-          <div class="w-3 h-3 rounded-full" style="background: #0176D3; animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.4s;"></div>
-        </div>
-        <p class="text-sm" style="color: #888;">Check your email for the login code...</p>
-      </div>
-
-      <p class="text-center mt-5 leading-relaxed" style="font-size: 12px; color: #888;">
-        We'll send a secure login link to your email.<br>Only @salesforce.com addresses are allowed.
-      </p>
-
-      <div class="flex items-center justify-center gap-2 mt-6" style="opacity: 0.4;">
-        <div class="flex-1" style="height: 1px; background: #D8DDE6;"></div>
-        <span style="color: #888; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;">Salesforce Internal</span>
-        <div class="flex-1" style="height: 1px; background: #D8DDE6;"></div>
-      </div>
+      <p class="text-white/60 text-sm">Authenticating...</p>
     </div>
-
-    <!-- Public app info section (visible without login for Google verification) -->
-    <div class="w-full max-w-[680px] relative z-10 mt-10 mb-12 px-4">
-      <div class="text-center mb-8">
-        <h2 class="text-xl font-bold" style="color: rgba(255,255,255,0.95);">What is Slide Generator?</h2>
-        <p class="mt-2" style="color: rgba(255,255,255,0.65); font-size: 14px; line-height: 22px; max-width: 520px; margin-left: auto; margin-right: auto;">Slide Generator is an AI-powered tool that creates polished presentations in seconds. Describe your topic, choose a style, and get a shareable presentation link instantly.</p>
-      </div>
-      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
-        <div style="background: rgba(255,255,255,0.08); border-radius: 12px; padding: 20px; text-align: center;">
-          <p style="font-size: 24px; margin-bottom: 8px;">✨</p>
-          <h3 style="font-size: 14px; font-weight: 700; color: rgba(255,255,255,0.9); margin-bottom: 4px;">AI-Powered</h3>
-          <p style="font-size: 12px; color: rgba(255,255,255,0.55); line-height: 18px;">Generate professional slides from a simple topic description</p>
-        </div>
-        <div style="background: rgba(255,255,255,0.08); border-radius: 12px; padding: 20px; text-align: center;">
-          <p style="font-size: 24px; margin-bottom: 8px;">🔗</p>
-          <h3 style="font-size: 14px; font-weight: 700; color: rgba(255,255,255,0.9); margin-bottom: 4px;">Shareable</h3>
-          <p style="font-size: 12px; color: rgba(255,255,255,0.55); line-height: 18px;">Present directly in the browser with a shareable link — no downloads needed</p>
-        </div>
-        <div style="background: rgba(255,255,255,0.08); border-radius: 12px; padding: 20px; text-align: center;">
-          <p style="font-size: 24px; margin-bottom: 8px;">🎨</p>
-          <h3 style="font-size: 14px; font-weight: 700; color: rgba(255,255,255,0.9); margin-bottom: 4px;">Customizable</h3>
-          <p style="font-size: 12px; color: rgba(255,255,255,0.55); line-height: 18px;">Choose industry, audience, style, and slide count tailored to your needs</p>
-        </div>
-      </div>
-      <div class="text-center mt-6">
-        <a href="/privacy" style="color: rgba(255,255,255,0.4); font-size: 12px; text-decoration: none;" onmouseenter="this.style.color='rgba(255,255,255,0.7)'" onmouseleave="this.style.color='rgba(255,255,255,0.4)'">Privacy Policy</a>
-      </div>
+    <div id="auth-failed" class="hidden text-center">
+      <img src="/sflogo.png" alt="Salesforce" class="mx-auto mb-5 block" style="width: 56px; height: 56px; object-fit: contain;">
+      <p class="text-white text-lg font-semibold mb-2">Authentication Required</p>
+      <p class="text-white/60 text-sm">Please access this app through DemoForge to sign in.</p>
     </div>
   </div>
 
@@ -1193,149 +1128,71 @@ function deleteCookie(name, domain) {
 }
 
 // ═══════════════════════════════════════════════
-// SHARED: Auth (Magic Link + SSO auto-login)
+// SHARED: Auth (SSO-only)
 // ═══════════════════════════════════════════════
-let magic = null;
 let cookieDomain = null;
 
-function mintSessionToken(email) {
-  return fetch('/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email })
-  })
-  .then(r => r.json())
-  .then(d => { if (d.token) setCookie('sessionToken', d.token, cookieDomain); return d; })
-  .catch(() => null);
+async function mintSessionToken(email) {
+  try {
+    const resp = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.token) setCookie('sessionToken', data.token, cookieDomain);
+    }
+  } catch (err) {
+    console.warn('Failed to mint session token:', err.message);
+  }
 }
 
 async function initAndCheckAuth() {
   try {
     const configResp = await fetch('/api/auth/config');
     const config = await configResp.json();
-
-    const magicKey = config.magicPublishableKey;
     cookieDomain = config.cookieDomain || null;
-    if (magicKey) magic = new Magic(magicKey);
 
-    // 1) SSO auto-login (x-forwarded-user header)
-    if (config.ssoSessionToken && config.ssoEmail) {
-      setCookie('sessionToken', config.ssoSessionToken, cookieDomain);
+    // SSO auto-login
+    const ssoToken = config.ssoToken || config.ssoSessionToken;
+    if (ssoToken && config.ssoEmail) {
+      setCookie('sessionToken', ssoToken, cookieDomain);
       showApp(config.ssoEmail);
       return;
     }
-  } catch (err) {
-    console.warn('Config fetch failed:', err.message);
-  }
 
-  // 2) JWT sessionToken cookie
-  const sessionToken = getCookie('sessionToken');
-  if (sessionToken) {
-    try {
+    // Existing session cookie
+    const sessionToken = getCookie('sessionToken');
+    if (sessionToken) {
       const resp = await fetch('/api/auth/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: sessionToken })
+        body: JSON.stringify({ token: sessionToken }),
       });
-      const data = await resp.json();
-      if (data.valid) {
-        showApp(data.email);
-        return;
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.valid && data.email) { showApp(data.email); return; }
       }
-    } catch (e) { /* fall through */ }
-    deleteCookie('sessionToken', cookieDomain);
-  }
-
-  if (!magic) return;
-
-  // 3) Magic didToken cookie
-  const sharedToken = getCookie('didToken');
-  if (sharedToken) {
-    try {
-      const isLoggedIn = await magic.user.isLoggedIn();
-      if (isLoggedIn) {
-        const { email } = await magic.user.getInfo();
-        await mintSessionToken(email);
-        showApp(email);
-        return;
-      }
-    } catch (err) {
-      console.log('Magic session check failed:', err.message);
+      deleteCookie('sessionToken', cookieDomain);
     }
-  }
 
-  // 4) Magic own session
-  try {
-    const isLoggedIn = await magic.user.isLoggedIn();
-    if (isLoggedIn) {
-      const { email } = await magic.user.getInfo();
-      try {
-        const didToken = await magic.user.getIdToken();
-        if (didToken) setCookie('didToken', didToken, cookieDomain);
-      } catch (e) { /* token fetch optional */ }
-      await mintSessionToken(email);
-      showApp(email);
-    }
+    // No auth — show error
+    document.getElementById('auth-checking').classList.add('hidden');
+    document.getElementById('auth-failed').classList.remove('hidden');
   } catch (err) {
-    console.log('Auth check:', err.message);
+    console.error('[Auth] Error:', err);
+    document.getElementById('auth-checking').classList.add('hidden');
+    document.getElementById('auth-failed').classList.remove('hidden');
   }
 }
 
-async function handleLogin() {
-  const email = document.getElementById('login-email').value.trim();
-  if (!email) { alert('Please enter your email address.'); return; }
-
-  const loginBtn = document.getElementById('login-btn');
-  const loginError = document.getElementById('login-error');
-  const loginForm = document.getElementById('login-form');
-  const loginLoading = document.getElementById('login-loading');
-
-  loginError.classList.add('hidden');
-  loginBtn.disabled = true;
-  loginBtn.textContent = 'Sending...';
-
-  try {
-    if (magic) {
-      loginForm.classList.add('hidden');
-      loginLoading.classList.remove('hidden');
-
-      const didToken = await magic.auth.loginWithEmailOTP({ email, showUI: true });
-      if (didToken) setCookie('didToken', didToken, cookieDomain);
-    }
-
-    await mintSessionToken(email);
-
-    const userInfo = magic ? await magic.user.getInfo() : { email };
-    showApp(userInfo.email);
-  } catch (err) {
-    loginForm.classList.remove('hidden');
-    loginLoading.classList.add('hidden');
-    loginBtn.disabled = false;
-    loginBtn.textContent = 'Sign In with Magic Link';
-
-    if (err.message && err.message.includes('cancel')) {
-      // User cancelled — do nothing
-    } else {
-      loginError.textContent = err.message || 'Login failed. Please try again.';
-      loginError.classList.remove('hidden');
-    }
-  }
-}
-
-async function handleLogout() {
-  if (magic) {
-    try { await magic.user.logout(); } catch(e) {}
-  }
-  deleteCookie('didToken', cookieDomain);
+function handleLogout() {
   deleteCookie('sessionToken', cookieDomain);
   document.getElementById('app-section').style.display = 'none';
   document.getElementById('login-section').classList.remove('hidden');
-  document.getElementById('login-form').classList.remove('hidden');
-  document.getElementById('login-loading').classList.add('hidden');
-  document.getElementById('login-email').value = '';
-  const loginBtn = document.getElementById('login-btn');
-  loginBtn.disabled = false;
-  loginBtn.textContent = 'Sign In with Magic Link';
+  document.getElementById('auth-checking').classList.add('hidden');
+  document.getElementById('auth-failed').classList.remove('hidden');
 }
 
 async function showApp(email) {
@@ -1396,11 +1253,6 @@ async function showApp(email) {
 
 // Check auth on page load
 initAndCheckAuth();
-
-// Allow Enter key to trigger login
-document.getElementById('login-email').addEventListener('keydown', function(e) {
-  if (e.key === 'Enter') handleLogin();
-});
 
 // ═══════════════════════════════════════════════
 // SHARED: Utility

@@ -492,7 +492,7 @@ app.get('/api/auth/config', async (req, res) => {
   if (ssoEmail) {
     try {
       const user = await getOrCreateUser(ssoEmail);
-      const secret = process.env.SESSION_SECRET || process.env.MAGIC_SECRET_KEY || 'fallback-secret';
+      const secret = process.env.SESSION_SECRET || 'fallback-secret';
       ssoSessionToken = jwt.sign(
         { userId: user.id, email: ssoEmail },
         secret,
@@ -504,7 +504,6 @@ app.get('/api/auth/config', async (req, res) => {
   }
 
   res.json({
-    magicPublishableKey: process.env.MAGIC_PUBLISHABLE_KEY || process.env.VITE_MAGIC_LINK_KEY || null,
     cookieDomain: process.env.COOKIE_DOMAIN || null,
     ssoSessionToken,
     ssoEmail,
