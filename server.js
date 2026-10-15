@@ -10,7 +10,6 @@ const { query, isPostgres } = require('./src/db/connection');
 const { migrate } = require('./src/db/migrate');
 const { google } = require('googleapis');
 const { GoogleGenAI } = require('@google/genai');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const sharp = require('sharp');
 const multer = require('multer');
 const puppeteer = require('puppeteer');
@@ -1461,6 +1460,9 @@ app.delete('/api/presentations/:id', async (req, res) => {
     }
 
     res.json({ success: true });
+
+    // Previously files were never removed. Delete our own files that no other presentation uses.
+    deletePresentationFiles(req.params.id).catch(err => console.warn('[storage] Presentation cleanup error:', err.message));
   } catch (err) {
     console.error('Failed to delete presentation:', err);
     res.status(500).json({ error: 'Failed to delete presentation' });
@@ -3733,20 +3735,11 @@ function isLightColor(hex) {
 // R2 Storage + AI Image Generation
 // ═══════════════════════════════════════════════
 
-let r2Client = null;
 let genAIClient = null;
 
-function getR2Client() {
-  if (r2Client) return r2Client;
-  const { R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY } = process.env;
-  if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY_ID || !R2_SECRET_ACCESS_KEY) return null;
-  r2Client = new S3Client({
-    region: 'auto',
-    endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-    credentials: { accessKeyId: R2_ACCESS_KEY_ID, secretAccessKey: R2_SECRET_ACCESS_KEY },
-  });
-  return r2Client;
-}
+// Storage: provider-neutral helper (R2 or S3 via STORAGE_PROVIDER); writes/deletes limited to own prefixes.
+const storage = require('./src/utils/storage');
+const getR2Client = () => storage.getClient();
 
 function getGenAIClient() {
   if (genAIClient) return genAIClient;
@@ -3756,22 +3749,34 @@ function getGenAIClient() {
   return genAIClient;
 }
 
-/**
- * Upload a buffer to Cloudflare R2 and return a public URL.
- */
+/** Upload a buffer to file storage (R2 or S3) and return its public URL. */
 async function uploadToR2(buffer, key, contentType) {
-  const client = getR2Client();
-  if (!client) throw new Error('R2 storage not configured');
-  const bucket = process.env.R2_BUCKET || 'slide-generator';
-  await client.send(new PutObjectCommand({
-    Bucket: bucket,
-    Key: key,
-    Body: buffer,
-    ContentType: contentType,
-    CacheControl: 'public, max-age=31536000, immutable',
-  }));
-  const publicUrl = process.env.R2_PUBLIC_URL || '';
-  return `${publicUrl.replace(/\/$/, '')}/${key}`;
+  if (!storage.isConfigured()) throw new Error('File storage not configured');
+  return storage.putObject(key, buffer, contentType);
+}
+
+/**
+ * Remove a presentation's own files (user-slides/, slides/, user-logos/, user-slide-icons/ for this id),
+ * keeping any file another presentation — e.g. a shared copy — still references.
+ */
+async function deletePresentationFiles(presentationId) {
+  const txt = c => (isPostgres ? `${c}::text` : `CAST(${c} AS CHAR)`);
+  const keys = [];
+  for (const f of ['user-slides', 'slides', 'user-logos', 'user-slide-icons']) {
+    keys.push(...await storage.listKeys(`${f}/${presentationId}/`));
+  }
+  const unused = [];
+  for (const key of keys) {
+    const like = `%${key}%`;
+    const [p] = await query(`SELECT 1 AS x FROM presentations WHERE id <> ? AND (${txt('data')} LIKE ? OR ${txt('web_brand_data')} LIKE ?) LIMIT 1`, [presentationId, like, like]);
+    if (p) continue;
+    const [sl] = await query(`SELECT 1 AS x FROM presentation_slides WHERE presentation_id <> ? AND (image_url LIKE ? OR bg_image_url LIKE ? OR ${txt('html_content')} LIKE ?) LIMIT 1`, [presentationId, like, like, like]);
+    if (sl) continue;
+    unused.push(key);
+  }
+  const n = await storage.deleteKeys(unused);
+  console.log(`[storage] Presentation ${presentationId}: removed ${n} of ${keys.length} files (${keys.length - n} still used elsewhere)`);
+  return n;
 }
 
 /**
@@ -6183,7 +6188,9 @@ async function start() {
       if (!fs.existsSync(seedPath)) {
         console.warn('scripts/seed-data.json not found — skipping reference seed');
       } else {
-        const seedData = JSON.parse(fs.readFileSync(seedPath, 'utf-8'));
+        // Seed file stores legacy R2 links; point them at the current storage URL (R2 or CloudFront).
+        const seedData = JSON.parse(fs.readFileSync(seedPath, 'utf-8')
+          .split('https://pub-3cab331694884b0b984ddfaa9064b7e7.r2.dev').join(storage.getPublicUrl() || 'https://pub-3cab331694884b0b984ddfaa9064b7e7.r2.dev'));
         const { Pool } = require('pg');
         const pgPool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
         const pgClient = await pgPool.connect();
