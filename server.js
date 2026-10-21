@@ -2342,9 +2342,26 @@ async function copyTemplateSlides(presentationId, brandData) {
         : `INSERT INTO presentation_slides (presentation_id, slide_index, html_content, css_content, bg_image_url, bg_image_prompt, template_type, slide_name)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON DUPLICATE KEY UPDATE html_content=VALUES(html_content), css_content=VALUES(css_content), bg_image_url=VALUES(bg_image_url), bg_image_prompt=VALUES(bg_image_prompt), template_type=VALUES(template_type), slide_name=VALUES(slide_name)`,
-      [presentationId, slide.slide_index, html, css, null, null, ann.templateType || '', ann.name || '']
+      [presentationId, slide.slide_index, html, css, null, null, resolveTemplateType(annotations, slide.slide_index, ann.name), ann.name || '']
     );
   }
+}
+
+/**
+ * Template type for a master-template slide. If that slide's annotation has no Template Name
+ * (e.g. the second "Thank You" slide), borrow it from another annotation with the same slide
+ * name that does have one.
+ */
+function resolveTemplateType(annotations, slideIndex, slideName) {
+  const list = Array.isArray(annotations) ? annotations : [];
+  const ann = list[slideIndex] || {};
+  const own = (ann.templateType || '').trim();
+  if (own) return own;
+  const norm = v => String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const name = norm(slideName || ann.name);
+  if (!name) return '';
+  const twin = list.find(a => a && norm(a.name) === name && (a.templateType || '').trim());
+  return twin ? twin.templateType.trim() : '';
 }
 
 function escapeRegex(str) {
@@ -2356,6 +2373,18 @@ function escapeRegex(str) {
 // ═══════════════════════════════════════════════
 // Web-template slides are copied verbatim from the (English) master template, so a
 // non-English Output Language needs an explicit translation pass over the slide HTML.
+
+/**
+ * Reverse Logo (White): server-side equivalent of CSS `filter: brightness(0) invert(1)`.
+ * Every pixel becomes white while its transparency is kept. Returns a PNG buffer.
+ */
+async function whitenLogoBuffer(buf) {
+  const { data, info } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  for (let i = 0; i < data.length; i += info.channels) {
+    data[i] = 255; data[i + 1] = 255; data[i + 2] = 255; // keep alpha at i+3
+  }
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: info.channels } }).png().toBuffer();
+}
 
 function isEnglishLanguage(language) {
   return !language || /^english$/i.test(String(language).trim());
@@ -2887,6 +2916,27 @@ app.get('/api/presentations/:id/web-slides', async (req, res) => {
       'SELECT slide_index, html_content, css_content, bg_image_url, bg_image_prompt, template_type, slide_name, updated_at FROM presentation_slides WHERE presentation_id = ? ORDER BY slide_index',
       [req.params.id]
     );
+
+    // Backfill missing template types (e.g. a duplicate "Thank You" slide whose master annotation
+    // had no Template Name) so the per-slide dropdown is preselected. Saved so it only happens once.
+    if (slides.some(sl => !(sl.template_type || '').trim())) {
+      try {
+        const refRows = await query('SELECT slide_annotations FROM reference_presentations WHERE id = ?', [MASTER_TEMPLATE_REF_ID]);
+        let annotations = refRows[0]?.slide_annotations;
+        if (typeof annotations === 'string') { try { annotations = JSON.parse(annotations); } catch(e) { annotations = []; } }
+        for (const sl of slides) {
+          if ((sl.template_type || '').trim()) continue;
+          const tt = resolveTemplateType(annotations, sl.slide_index, sl.slide_name);
+          if (tt) {
+            sl.template_type = tt;
+            await query('UPDATE presentation_slides SET template_type = ? WHERE presentation_id = ? AND slide_index = ?',
+              [tt, req.params.id, sl.slide_index]);
+          }
+        }
+      } catch (bfErr) {
+        console.warn('[TemplateType] Backfill failed:', bfErr.message);
+      }
+    }
 
     // Extract brand logo URL for preview rendering
     let brandData = rows[0].web_brand_data;
@@ -3702,9 +3752,20 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
                   uploadBuf = await sharp(logoBuf).png().toBuffer();
                   uploadType = 'image/png';
                 }
+                // Reverse Logo (White): match the on-screen CSS filter brightness(0) invert(1)
+                let uploadExt = ext === 'svg' ? 'png' : ext;
+                if (brandData.brandLogoInverted) {
+                  try {
+                    uploadBuf = await whitenLogoBuffer(uploadBuf);
+                    uploadType = 'image/png';
+                    uploadExt = 'png';
+                  } catch (invErr) {
+                    console.warn(`[WebExport] Logo reverse failed, using original: ${invErr.message}`);
+                  }
+                }
                 const driveResp = await driveService.files.create({
                   requestBody: {
-                    name: `brand-logo.${ext === 'svg' ? 'png' : ext}`,
+                    name: `brand-logo.${uploadExt}`,
                     ...(driveFolderId ? { parents: [driveFolderId] } : {})
                   },
                   media: { mimeType: uploadType, body: Readable.from(uploadBuf) },
@@ -5639,6 +5700,7 @@ app.get('/api/present-web/item/:presId/data', async (req, res) => {
     res.json({
       name: pres.name,
       brandLogoUrl: brandData.brandLogoUrl || '',
+      brandLogoInverted: !!brandData.brandLogoInverted,
       brandName: brandData.brandName || '',
       slides: slides.map(s => ({
         slideIndex: s.slide_index,

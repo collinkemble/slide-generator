@@ -418,7 +418,7 @@
           <!-- Brand Logo -->
           <div>
             <label class="block text-xs font-bold mb-2" style="color: #032D60;">Brand Logo</label>
-            <div style="background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 12px; text-align: center;">
+            <div id="detail-brand-logo-box" style="background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 12px; text-align: center;">
               <img id="detail-brand-logo-img" src="" alt="Brand Logo" style="max-height: 48px; max-width: 120px; object-fit: contain; margin: 0 auto 8px; display: block;">
               <p id="detail-brand-logo-none" class="hidden" style="font-size: 12px; color: #9CA3AF; margin-bottom: 8px;">No logo set</p>
               <div style="display: flex; gap: 6px; justify-content: center; flex-wrap: wrap;">
@@ -439,6 +439,13 @@
               </div>
             </div>
           </div>
+        </div>
+        <!-- Reverse Logo (mirrors Leave Behind Generator) -->
+        <div style="margin-top: 12px; display: flex; align-items: center; gap: 12px;">
+          <button id="reverse-logo-btn" onclick="toggleReverseLogo()" class="cursor-pointer flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded-lg border transition" style="border-color: #d1d5db; color: #4b5563; background: #fff;">
+            <span style="font-size: 14px;">◑</span> Reverse Logo (White)
+          </button>
+          <span id="reverse-logo-status" class="text-xs text-gray-400"></span>
         </div>
         <p id="detail-logo-status" style="font-size: 12px; color: #16A34A; margin-top: 8px; display: none;"></p>
       </div>
@@ -2397,6 +2404,8 @@ async function viewItem(id, skipPush) {
         }
 
         // Populate brand logo
+        userWebBrandLogoInverted = !!brandData.brandLogoInverted;
+        updateReverseLogoButton();
         const brandLogoImg = document.getElementById('detail-brand-logo-img');
         const brandLogoNone = document.getElementById('detail-brand-logo-none');
         if (brandLogoImg && brandLogoNone) {
@@ -3619,6 +3628,59 @@ async function selectDetailBrandKit(itemId, btnEl) {
 }
 
 // ═══════════════════════════════════════════════
+// DETAIL PAGE: Reverse Logo (White) — mirrors Leave Behind Generator
+// Turns a dark brand logo solid white (CSS brightness(0) invert(1)) so it reads on dark slides.
+// Saved per presentation as web_brand_data.brandLogoInverted.
+// ═══════════════════════════════════════════════
+let userWebBrandLogoInverted = false;
+
+async function toggleReverseLogo() {
+  if (!currentPresentationId) return;
+  userWebBrandLogoInverted = !userWebBrandLogoInverted;
+  updateReverseLogoButton();
+  if (typeof refreshAllUserSlidePreviews === 'function') refreshAllUserSlidePreviews();
+  const email = document.getElementById('user-email').textContent;
+  try {
+    const resp = await fetch(`/api/presentations/${currentPresentationId}/update-brand`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, brandData: { brandLogoInverted: userWebBrandLogoInverted } })
+    });
+    if (!resp.ok) throw new Error('Failed to save');
+    if (userWebBrandData && typeof userWebBrandData === 'object') userWebBrandData.brandLogoInverted = userWebBrandLogoInverted;
+  } catch (err) {
+    // Revert on failure so the UI matches what's saved
+    userWebBrandLogoInverted = !userWebBrandLogoInverted;
+    updateReverseLogoButton();
+    if (typeof refreshAllUserSlidePreviews === 'function') refreshAllUserSlidePreviews();
+    alert('Failed to save logo setting: ' + err.message);
+  }
+}
+
+function updateReverseLogoButton() {
+  const btn = document.getElementById('reverse-logo-btn');
+  const status = document.getElementById('reverse-logo-status');
+  const box = document.getElementById('detail-brand-logo-box');
+  const img = document.getElementById('detail-brand-logo-img');
+  if (!btn) return;
+  if (userWebBrandLogoInverted) {
+    btn.style.background = '#032D60';
+    btn.style.color = '#fff';
+    btn.style.borderColor = '#032D60';
+    status.textContent = 'Logo will appear white on slides';
+    if (box) { box.style.background = '#032D60'; box.style.borderColor = '#032D60'; }
+    if (img) img.style.filter = 'brightness(0) invert(1)';
+  } else {
+    btn.style.background = '#fff';
+    btn.style.color = '#4b5563';
+    btn.style.borderColor = '#d1d5db';
+    status.textContent = '';
+    if (box) { box.style.background = '#F9FAFB'; box.style.borderColor = '#E5E7EB'; }
+    if (img) img.style.filter = '';
+  }
+}
+
+// ═══════════════════════════════════════════════
 // DETAIL PAGE: Logo Upload & URL Override
 // ═══════════════════════════════════════════════
 async function uploadDetailLogo(type, fileInput) {
@@ -4615,6 +4677,7 @@ function buildUserSlidePreviewSrcdoc(webSlide, slideIndex) {
   const html = webSlide.html_content || '';
   const css = webSlide.css_content || '';
   const brandLogo = userWebBrandLogoUrl || '';
+  const logoInvert = userWebBrandLogoInverted ? 'filter:brightness(0) invert(1);' : '';
   const slideName = webSlide.slide_name || '';
   const isTitleSlide = isCoverSlideByName(slideIndex, slideName);
 
@@ -4625,7 +4688,7 @@ function buildUserSlidePreviewSrcdoc(webSlide, slideIndex) {
     const logoTop = isPovIntro ? '30%' : isIntroSlide ? '35%' : '50%';
     logoHtml = `<div style="position:absolute;top:${logoTop};left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:80px;pointer-events:none;">`;
     if (brandLogo) {
-      logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:200px;width:auto;object-fit:contain;">`;
+      logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:200px;width:auto;object-fit:contain;${logoInvert}">`;
       logoHtml += '<div style="width:3px;height:160px;background:rgba(255,255,255,0.6);"></div>';
     }
     logoHtml += '<img src="/sflogo.png" alt="SF" style="height:200px;width:auto;object-fit:contain;">';
@@ -4633,7 +4696,7 @@ function buildUserSlidePreviewSrcdoc(webSlide, slideIndex) {
   } else {
     logoHtml = '<div style="position:absolute;top:30px;right:30px;z-index:10;display:flex;align-items:center;gap:12px;pointer-events:none;">';
     if (brandLogo) {
-      logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:48px;width:auto;object-fit:contain;">`;
+      logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:48px;width:auto;object-fit:contain;${logoInvert}">`;
       logoHtml += '<div style="width:1px;height:40px;background:rgba(255,255,255,0.5);"></div>';
     }
     logoHtml += '<img src="/sflogo.png" alt="SF" style="height:48px;width:auto;object-fit:contain;">';
@@ -4665,7 +4728,7 @@ function renderUserWebSlides() {
     // Build template type dropdown options
     const currentTemplate = slide.template_type || '';
     const templateOptions = userTemplateTypes.map(tt =>
-      `<option value="${esc(tt)}" ${tt === currentTemplate ? 'selected' : ''}>${esc(tt)}</option>`
+      `<option value="${esc(tt)}" ${String(tt).trim().toLowerCase() === String(currentTemplate).trim().toLowerCase() ? 'selected' : ''}>${esc(tt)}</option>`
     ).join('');
 
     return `

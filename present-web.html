@@ -127,6 +127,7 @@
     let currentSlide = 0;
     let cursorTimeout = null;
     let brandLogoUrl = '';
+    let brandLogoInverted = false; // Reverse Logo (White) — set per presentation
 
     // Detect whether this is a reference presentation or a user presentation
     // URL patterns: /present-web/:refId (reference) or /present-web-item/:presId (user)
@@ -174,7 +175,7 @@
         const logoTop = isPovIntro ? '30%' : isIntroSlide ? '35%' : '50%';
         logoHtml = `<div style="position:absolute;top:${logoTop};left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:80px;pointer-events:none;">`;
         if (brandLogoUrl) {
-          logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:200px;width:auto;object-fit:contain;">`;
+          logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:200px;width:auto;object-fit:contain;${brandLogoInverted ? 'filter:brightness(0) invert(1);' : ''}">`;
           logoHtml += '<div style="width:3px;height:160px;background:rgba(255,255,255,0.6);"></div>';
         }
         logoHtml += '<img src="/sflogo.png" alt="Salesforce" style="height:200px;width:auto;object-fit:contain;">';
@@ -183,7 +184,7 @@
         // ALL OTHER SLIDES: Upper-right logo lockup
         logoHtml = '<div style="position:absolute;top:30px;right:30px;z-index:10;display:flex;align-items:center;gap:12px;pointer-events:none;">';
         if (brandLogoUrl) {
-          logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:48px;width:auto;object-fit:contain;">`;
+          logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:48px;width:auto;object-fit:contain;${brandLogoInverted ? 'filter:brightness(0) invert(1);' : ''}">`;
           logoHtml += '<div style="width:1px;height:40px;background:rgba(255,255,255,0.5);"></div>';
         }
         logoHtml += '<img src="/sflogo.png" alt="Salesforce" style="height:48px;width:auto;object-fit:contain;">';
@@ -243,6 +244,7 @@ ${logoHtml}
 
         document.title = data.name || 'Presentation';
         brandLogoUrl = data.brandLogoUrl || '';
+        brandLogoInverted = !!data.brandLogoInverted;
 
         // Create an iframe for each slide — CSS isolation prevents class collisions
         const container = document.getElementById('slide-container');
