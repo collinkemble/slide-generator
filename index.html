@@ -323,6 +323,7 @@
           <button id="detail-present-btn" onclick="openPresentation()" class="hidden cursor-pointer" style="background: #10B981; color: white; font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: none; display: inline-flex; align-items: center; gap: 4px;">▶ Present</button>
           <button id="detail-export-google-btn" onclick="exportToGoogleSlides()" class="hidden cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #374151; font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 8px;">Export to Google Slides</button>
           <button id="detail-reexport-google-btn" onclick="exportToGoogleSlides()" class="hidden cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #6B7280; font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 8px;">↻ Re-export to Google Slides</button>
+          <button id="detail-download-pptx-btn" onclick="downloadPowerPoint()" class="hidden cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #374151; font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 8px;">⬇ Download PowerPoint</button>
           <button onclick="openShareDialogForItem()" class="cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #374151; font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 8px;">Share</button>
         </div>
       </div>
@@ -545,6 +546,7 @@
 
       <!-- Generated slides preview -->
       <!-- Web Slides Editor (for is_web_slides presentations) -->
+      <div id="detail-restyle-notice" class="hidden" style="margin-bottom: 16px; border-radius: 10px; padding: 12px 16px; background: #FFFBEB; border: 1px solid #FDE68A; font-size: 13px; color: #92400E; line-height: 20px;"></div>
       <div id="web-slides-editor" class="hidden" style="margin-bottom: 16px;">
         <div class="flex items-center justify-between mb-4">
           <p class="font-bold" style="font-size: 15px; color: #032D60;">Slides</p>
@@ -783,6 +785,61 @@
                 <option value="Ukrainian">Ukrainian</option>
               </select>
               <p style="font-size: 11px; color: #9ca3af; margin: 6px 0 0 0; line-height: 1.4;">All generated content will be in this language.</p>
+            </div>
+            <!-- Start from (scratch vs restyle an existing deck) -->
+            <div>
+              <label class="block text-xs font-bold mb-1" style="color: #032D60;">Start from <span style="color: #ea001e;">*</span></label>
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                <label id="np-start-scratch-card" onclick="npSelectStartFrom('scratch')" style="display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border-radius: 12px; border: 2px solid #e5e7eb; background: #fafbfc; cursor: pointer; transition: all 0.2s;">
+                  <div id="np-start-scratch-radio" style="width: 20px; height: 20px; border-radius: 50%; border: 2px solid #d1d5db; margin-top: 2px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; transition: all 0.2s;">
+                    <div id="np-start-scratch-dot" style="width: 10px; height: 10px; border-radius: 50%; background: transparent; transition: all 0.2s;"></div>
+                  </div>
+                  <div style="flex: 1;">
+                    <div style="font-size: 14px; font-weight: 700; color: #032D60;">✨ Start from scratch</div>
+                    <div style="font-size: 12px; color: #5a6f85; margin-top: 4px; line-height: 1.5;">Build a new presentation from the standard template.</div>
+                  </div>
+                </label>
+                <label id="np-start-restyle-card" onclick="npSelectStartFrom('restyle')" style="display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border-radius: 12px; border: 2px solid #e5e7eb; background: #fafbfc; cursor: pointer; transition: all 0.2s;">
+                  <div id="np-start-restyle-radio" style="width: 20px; height: 20px; border-radius: 50%; border: 2px solid #d1d5db; margin-top: 2px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; transition: all 0.2s;">
+                    <div id="np-start-restyle-dot" style="width: 10px; height: 10px; border-radius: 50%; background: transparent; transition: all 0.2s;"></div>
+                  </div>
+                  <div style="flex: 1;">
+                    <div style="font-size: 14px; font-weight: 700; color: #032D60;">🎨 Restyle my deck</div>
+                    <div style="font-size: 12px; color: #5a6f85; margin-top: 4px; line-height: 1.5;">Bring your own deck — we'll keep your layout and content, and make it on-brand.</div>
+                  </div>
+                </label>
+              </div>
+
+              <div id="np-restyle-panel" style="display: none; margin-top: 10px; padding: 14px 16px; border-radius: 10px; border: 1px solid #d0e3f7; background: linear-gradient(135deg, #f0f7ff, #e8f2ff);">
+                <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                  <button type="button" id="np-src-file-tab" onclick="npSelectRestyleSource('file')" style="padding: 6px 14px; font-size: 12px; font-weight: 700; border-radius: 7px; cursor: pointer; border: 1px solid #d1d5db; background: #fff; color: #4b5563;">📄 Upload a file</button>
+                  <button type="button" id="np-src-link-tab" onclick="npSelectRestyleSource('link')" style="padding: 6px 14px; font-size: 12px; font-weight: 700; border-radius: 7px; cursor: pointer; border: 1px solid #d1d5db; background: #fff; color: #4b5563;">🔗 Google Slides link</button>
+                </div>
+
+                <!-- Upload a file -->
+                <div id="np-src-file-panel">
+                  <div id="np-deck-drop" onclick="document.getElementById('np-deck-file').click()" ondragover="event.preventDefault(); this.style.borderColor='#0176D3';" ondragleave="this.style.borderColor='#b0d4f1';" ondrop="event.preventDefault(); this.style.borderColor='#b0d4f1'; npHandleDeckFile(event.dataTransfer.files[0]);" style="border: 2px dashed #b0d4f1; border-radius: 10px; padding: 18px; text-align: center; background: rgba(255,255,255,0.85); cursor: pointer;">
+                    <div id="np-deck-drop-text" style="font-size: 13px; font-weight: 600; color: #032D60;">Drop a PowerPoint (.pptx) or PDF here, or click to choose</div>
+                    <div style="font-size: 11px; color: #5a6f85; margin-top: 4px;">Up to 25 MB and 40 slides</div>
+                  </div>
+                  <input id="np-deck-file" type="file" accept=".pptx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation" onchange="npHandleDeckFile(this.files[0]); this.value='';" style="display: none;">
+                  <p style="font-size: 11px; color: #5a6f85; margin: 8px 0 0; line-height: 1.4;">Tip — in Google Slides: <strong>File → Download → Microsoft PowerPoint (.pptx)</strong>. PowerPoint gives the best results.</p>
+                </div>
+
+                <!-- Google Slides link -->
+                <div id="np-src-link-panel" style="display: none;">
+                  <ol style="margin: 0 0 10px; padding-left: 18px; font-size: 12px; color: #374151; line-height: 20px;">
+                    <li>In Google Slides, set <strong>File → Labels</strong> to <strong>External allowed</strong>.</li>
+                    <li><strong>Share</strong> the deck with <code id="np-sa-email" style="font-size: 11px; background: #fff; padding: 1px 5px; border-radius: 4px; border: 1px solid #d1d5db;">slide-reader@slide-generator-500915.iam.gserviceaccount.com</code> <button type="button" onclick="npCopySaEmail(this)" style="font-size: 11px; font-weight: 600; color: #0176D3; background: none; border: none; cursor: pointer;">Copy</button> as <strong>Viewer</strong> (tick "Notify people" if Google asks).</li>
+                    <li>Paste the deck's link below.</li>
+                  </ol>
+                  <div style="display: flex; gap: 8px;">
+                    <input id="np-gslides-url" type="url" placeholder="https://docs.google.com/presentation/d/…/edit" oninput="npLinkChanged()" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" style="background: white;">
+                    <button type="button" id="np-check-access-btn" onclick="npCheckGoogleAccess()" style="padding: 7px 14px; font-size: 12px; font-weight: 700; color: #fff; background: #0176D3; border: none; border-radius: 7px; cursor: pointer; white-space: nowrap;">Check access</button>
+                  </div>
+                  <div id="np-access-result" style="display: none; margin-top: 8px; font-size: 12px; line-height: 1.5; padding: 8px 12px; border-radius: 8px;"></div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -2457,6 +2514,13 @@ async function viewItem(id, skipPush) {
     const presentBtn = document.getElementById('detail-present-btn');
     const exportGoogleBtn = document.getElementById('detail-export-google-btn');
     const reexportGoogleBtn = document.getElementById('detail-reexport-google-btn');
+    const pptxBtn = document.getElementById('detail-download-pptx-btn');
+    if (pptxBtn) {
+      const showPptx = presentation.status === 'completed' && !!presentation.is_web_slides;
+      pptxBtn.classList.toggle('hidden', !showPptx);
+      pptxBtn.style.display = showPptx ? 'inline-flex' : 'none';
+      if (!pptxBtn.disabled) pptxBtn.innerHTML = '⬇ Download PowerPoint';
+    }
     if (presentation.status === 'completed' && (presentation.share_token || presentation.is_web_slides)) {
       presentBtn.classList.remove('hidden');
       presentBtn.style.display = 'inline-flex';
@@ -2499,9 +2563,9 @@ async function viewItem(id, skipPush) {
     const statusText = document.getElementById('detail-status-text');
     const statusConfig = {
       draft: { bg: '#F3F4F6', border: '#D1D5DB', color: '#6B7280', icon: '📝', label: 'Draft — Ready to generate' },
-      generating: { bg: '#FEF3C7', border: '#FCD34D', color: '#D97706', icon: '⏳', label: presentation.is_web_slides ? 'Generating background images...' : 'Generating slides...' },
+      generating: { bg: '#FEF3C7', border: '#FCD34D', color: '#D97706', icon: '⏳', label: presentation.is_web_slides ? (presentation.status_message || 'Generating background images...') : 'Generating slides...' },
       completed: { bg: '#ECFDF5', border: '#6EE7B7', color: '#059669', icon: '✅', label: 'Completed — Ready to present' },
-      failed: { bg: '#FEF2F2', border: '#FECACA', color: '#DC2626', icon: '❌', label: 'Generation failed — try again' }
+      failed: { bg: '#FEF2F2', border: '#FECACA', color: '#DC2626', icon: '❌', label: presentation.status_message && !/^\[/.test(presentation.status_message) ? ('Generation failed — ' + presentation.status_message) : 'Generation failed — try again' }
     };
     const sc = statusConfig[presentation.status] || statusConfig.draft;
     statusBanner.style.background = sc.bg;
@@ -2590,6 +2654,26 @@ async function viewItem(id, skipPush) {
         if (regenBtn) { regenBtn.disabled = false; regenBtn.textContent = '🔄 Regenerate All Backgrounds'; }
         if (regenStatus) { regenStatus.textContent = ''; }
         if (regenPrompt) { regenPrompt.value = ''; }
+      }
+
+      // Restyled deck: flag slides whose charts/diagrams couldn't be recreated
+      const restyleNotice = document.getElementById('detail-restyle-notice');
+      if (restyleNotice) {
+        const src = (data && data.source) || {};
+        const flagged = (src.flaggedSlides || []).filter(f => (f.items || []).some(i => ['chart', 'smartart', 'video', 'unsupported-image'].includes(i)));
+        const msgs = [];
+        if (flagged.length) {
+          const nums = flagged.map(f => f.slide);
+          const list = nums.length > 1 ? nums.slice(0, -1).join(', ') + ' and ' + nums[nums.length - 1] : String(nums[0]);
+          msgs.push(`⚠️ Slide${nums.length > 1 ? 's' : ''} ${list} had charts, diagrams or media from your original deck that couldn't be recreated. A labeled placeholder marks where they go — add them back after downloading.`);
+        }
+        if (src.truncated) msgs.push(`ℹ️ Only the first ${src.slideCount} of ${src.totalSlides} slides were restyled (40-slide limit).`);
+        if (msgs.length && presentation.status === 'completed') {
+          restyleNotice.innerHTML = msgs.map(m => `<div>${esc(m)}</div>`).join('');
+          restyleNotice.classList.remove('hidden');
+        } else {
+          restyleNotice.classList.add('hidden');
+        }
       }
 
       // Load the web slide editor
@@ -2775,7 +2859,7 @@ let npPendingBrandKitSource = null;  // brand kit source name for saving
 let npPendingBrandKitId = null;      // Brand Kit Builder item id
 let npPendingBrandKitLogoUrl = null; // logo URL picked/fetched in the wizard
 let npBkPickerOpen = false;
-const NP_VALIDATED_FIELDS = ['np-brand-name', 'np-brand-brand-name', 'np-brand-industry', 'np-brand-industry-custom'];
+const NP_VALIDATED_FIELDS = ['np-brand-name', 'np-brand-brand-name', 'np-brand-industry', 'np-brand-industry-custom', 'np-restyle-panel'];
 
 function npShowToast(text, durationOrType) {
   const duration = typeof durationOrType === 'number' ? durationOrType : (durationOrType === 'error' ? 4000 : 2500);
@@ -2841,6 +2925,10 @@ function npValidateWizardStep(step) {
   if (step === 1) {
     if (!document.getElementById('np-brand-name').value.trim()) missing.push({ id: 'np-brand-name', label: 'Presentation Name' });
     if (!document.getElementById('np-brand-brand-name').value.trim()) missing.push({ id: 'np-brand-brand-name', label: 'Brand Name' });
+    if (npStartFrom === 'restyle') {
+      if (npRestyleSource === 'file' && !npRestyleFile) missing.push({ id: 'np-restyle-panel', label: 'Deck file (.pptx or PDF)' });
+      if (npRestyleSource === 'link' && !npLinkVerified) missing.push({ id: 'np-restyle-panel', label: 'Google Slides link (click "Check access")' });
+    }
   } else if (step === 2) {
     // Brand kit must be applied (fields visible) before proceeding
     const fieldsContainer = document.getElementById('np-wizard-step-2-fields');
@@ -3468,12 +3556,122 @@ document.addEventListener('click', (e) => {
   }
 });
 
+
+// ─── Start from: scratch vs restyle an existing deck ───
+let npStartFrom = 'scratch';
+let npRestyleSource = 'file';
+let npRestyleFile = null;
+let npLinkVerified = false;
+
+function npStyleCard(key, on) {
+  const card = document.getElementById('np-' + key + '-card');
+  const radio = document.getElementById('np-' + key + '-radio');
+  const dot = document.getElementById('np-' + key + '-dot');
+  if (!card) return;
+  card.style.border = on ? '2px solid #0176D3' : '2px solid #e5e7eb';
+  card.style.background = on ? '#f0f7ff' : '#fafbfc';
+  radio.style.borderColor = on ? '#0176D3' : '#d1d5db';
+  dot.style.background = on ? '#0176D3' : 'transparent';
+}
+
+function npUpdateSubmitLabel() {
+  const btn = document.getElementById('np-brand-submit-btn');
+  if (btn && !btn.disabled) btn.textContent = npStartFrom === 'restyle' ? 'Restyle & Generate' : 'Create & Generate';
+}
+
+function npSelectStartFrom(v) {
+  npStartFrom = v === 'restyle' ? 'restyle' : 'scratch';
+  npStyleCard('start-scratch', npStartFrom === 'scratch');
+  npStyleCard('start-restyle', npStartFrom === 'restyle');
+  document.getElementById('np-restyle-panel').style.display = npStartFrom === 'restyle' ? 'block' : 'none';
+  if (npStartFrom === 'restyle') npSelectRestyleSource(npRestyleSource);
+  npClearFieldError('np-restyle-panel');
+  npUpdateSubmitLabel();
+}
+
+function npSelectRestyleSource(v) {
+  npRestyleSource = v === 'link' ? 'link' : 'file';
+  const on = { background: '#0176D3', color: '#fff', borderColor: '#0176D3' };
+  const off = { background: '#fff', color: '#4b5563', borderColor: '#d1d5db' };
+  Object.assign(document.getElementById('np-src-file-tab').style, npRestyleSource === 'file' ? on : off);
+  Object.assign(document.getElementById('np-src-link-tab').style, npRestyleSource === 'link' ? on : off);
+  document.getElementById('np-src-file-panel').style.display = npRestyleSource === 'file' ? 'block' : 'none';
+  document.getElementById('np-src-link-panel').style.display = npRestyleSource === 'link' ? 'block' : 'none';
+}
+
+function npHandleDeckFile(file) {
+  const text = document.getElementById('np-deck-drop-text');
+  if (!file) return;
+  const n = (file.name || '').toLowerCase();
+  if (!(n.endsWith('.pptx') || n.endsWith('.pdf'))) { npShowToast('Please choose a PowerPoint (.pptx) or PDF file', 'error'); return; }
+  if (file.size > 25 * 1024 * 1024) { npShowToast('That file is larger than 25 MB', 'error'); return; }
+  npRestyleFile = file;
+  text.innerHTML = '✓ ' + esc(file.name) + ' <span style="font-weight: 400; color: #5a6f85;">(' + (file.size / 1048576).toFixed(1) + ' MB) — click to change</span>';
+  npClearFieldError('np-restyle-panel');
+}
+
+function npCopySaEmail(btn) {
+  const email = document.getElementById('np-sa-email').textContent.trim();
+  navigator.clipboard.writeText(email).then(() => { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy'; }, 1500); }).catch(() => {});
+}
+
+function npLinkChanged() {
+  npLinkVerified = false;
+  const r = document.getElementById('np-access-result');
+  if (r) r.style.display = 'none';
+}
+
+async function npCheckGoogleAccess() {
+  const url = document.getElementById('np-gslides-url').value.trim();
+  const btn = document.getElementById('np-check-access-btn');
+  const out = document.getElementById('np-access-result');
+  if (!url) { npShowToast('Paste a Google Slides link first', 'error'); return false; }
+  btn.disabled = true; btn.textContent = 'Checking…';
+  try {
+    const email = document.getElementById('user-email').textContent;
+    const resp = await fetch('/api/google-slides/check-access', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, url })
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (data.serviceAccount) document.getElementById('np-sa-email').textContent = data.serviceAccount;
+    out.style.display = 'block';
+    if (resp.ok && data.ok) {
+      npLinkVerified = true;
+      out.style.background = '#ECFDF5'; out.style.border = '1px solid #6EE7B7'; out.style.color = '#065F46';
+      out.innerHTML = '✓ Access confirmed — <strong>' + esc(data.title || 'Untitled') + '</strong> (' + data.slideCount + ' slide' + (data.slideCount === 1 ? '' : 's') + ')' + (data.slideCount > 40 ? '. Only the first 40 will be restyled.' : '');
+      npClearFieldError('np-restyle-panel');
+    } else {
+      npLinkVerified = false;
+      out.style.background = '#FEF2F2'; out.style.border = '1px solid #FECACA'; out.style.color = '#991B1B';
+      out.textContent = data.error || 'Could not open this deck.';
+    }
+    return npLinkVerified;
+  } catch (e) {
+    out.style.display = 'block'; out.style.background = '#FEF2F2'; out.style.border = '1px solid #FECACA'; out.style.color = '#991B1B';
+    out.textContent = 'Could not check access. Please try again.';
+    return false;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Check access';
+  }
+}
+
+function npResetStartFrom() {
+  npRestyleFile = null; npLinkVerified = false;
+  const t = document.getElementById('np-deck-drop-text');
+  if (t) t.textContent = 'Drop a PowerPoint (.pptx) or PDF here, or click to choose';
+  const u = document.getElementById('np-gslides-url'); if (u) u.value = '';
+  const r = document.getElementById('np-access-result'); if (r) r.style.display = 'none';
+  npRestyleSource = 'file';
+  npSelectStartFrom('scratch');
+}
+
 // ─── Open / close / create ───
 function npResetForm() {
   const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
   ['np-brand-name', 'np-brand-brand-name', 'np-brand-desc', 'np-brand-website', 'np-brand-tone',
    'np-brand-visual-style', 'np-brand-industry', 'np-brand-industry-custom', 'np-wizard-logo-url'].forEach(id => setVal(id, ''));
   setVal('np-brand-language', 'English');
+  npResetStartFrom();
   setVal('np-brand-color-primary', '#032D60'); setVal('np-brand-color-primary-text', '#032D60');
   setVal('np-brand-color-secondary', '#0176D3'); setVal('np-brand-color-secondary-text', '#0176D3');
   document.getElementById('np-brand-brand-name').dataset.autoFilled = '';
@@ -3488,6 +3686,7 @@ function npResetForm() {
   const btn = document.getElementById('np-brand-submit-btn');
   btn.disabled = false;
   btn.innerHTML = 'Create &amp; Generate';
+  npUpdateSubmitLabel();
 }
 
 function openNewPresentationDialog() {
@@ -3552,11 +3751,23 @@ async function createPresentation() {
   };
 
   try {
-    const resp = await fetch('/api/presentations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, name, data: presData })
-    });
+    let resp;
+    if (npStartFrom === 'restyle') {
+      btn.textContent = npRestyleSource === 'file' ? 'Uploading…' : 'Starting…';
+      const fd = new FormData();
+      fd.append('email', email);
+      fd.append('name', name);
+      fd.append('data', JSON.stringify(presData));
+      if (npRestyleSource === 'file') fd.append('file', npRestyleFile);
+      else fd.append('googleSlidesUrl', document.getElementById('np-gslides-url').value.trim());
+      resp = await fetch('/api/presentations/restyle', { method: 'POST', body: fd });
+    } else {
+      resp = await fetch('/api/presentations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, name, data: presData })
+      });
+    }
     if (!resp.ok) {
       const d = await resp.json().catch(() => ({}));
       throw new Error(d.error || 'Failed to create presentation');
@@ -4245,6 +4456,52 @@ function openPresentation() {
     window.open(url, '_blank');
   } else if (currentShareToken) {
     window.open(`/present/${currentShareToken}`, '_blank');
+  }
+}
+
+
+// ═══════════════════════════════════════════════
+// APP: Download as PowerPoint (no Google connection needed)
+// ═══════════════════════════════════════════════
+async function downloadPowerPoint() {
+  if (!currentPresentationId) return;
+  const btn = document.getElementById('detail-download-pptx-btn');
+  const email = document.getElementById('user-email').textContent;
+  const reset = () => { btn.disabled = false; btn.innerHTML = '⬇ Download PowerPoint'; };
+  btn.disabled = true;
+  btn.innerHTML = '<span class="inline-flex items-center gap-2"><svg class="animate-spin" style="width:14px;height:14px" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="3" opacity="0.3"/><path fill="currentColor" d="M12 2a10 10 0 0 1 10 10h-3a7 7 0 0 0-7-7V2z"/></svg> Building PowerPoint…</span>';
+  try {
+    const resp = await fetch(`/api/presentations/${currentPresentationId}/export-pptx`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email })
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.jobId) throw new Error(data.error || 'Could not start the PowerPoint download');
+    const total = data.total || 0;
+    const started = Date.now();
+    while (true) {
+      await new Promise(r => setTimeout(r, 2000));
+      if (Date.now() - started > 15 * 60 * 1000) throw new Error('This is taking too long. Please try again.');
+      const jr = await fetch(`/api/export-jobs/${data.jobId}`);
+      const job = await jr.json().catch(() => ({}));
+      if (!jr.ok) throw new Error(job.error || 'Download job not found');
+      if (job.status === 'processing') {
+        btn.innerHTML = `<span class="inline-flex items-center gap-2"><svg class="animate-spin" style="width:14px;height:14px" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="3" opacity="0.3"/><path fill="currentColor" d="M12 2a10 10 0 0 1 10 10h-3a7 7 0 0 0-7-7V2z"/></svg> Building PowerPoint… ${job.progress || 0}/${job.total || total}</span>`;
+        continue;
+      }
+      if (job.status === 'failed') throw new Error(job.error || 'PowerPoint build failed');
+      if (job.status === 'completed') {
+        const a = document.createElement('a');
+        a.href = `/api/export-jobs/${data.jobId}/download?email=${encodeURIComponent(email)}`;
+        a.download = '';
+        document.body.appendChild(a); a.click(); a.remove();
+        if (typeof npShowToast === 'function') npShowToast('PowerPoint downloaded');
+        break;
+      }
+    }
+  } catch (err) {
+    alert('PowerPoint download failed: ' + err.message);
+  } finally {
+    reset();
   }
 }
 
@@ -5180,6 +5437,10 @@ function pollWebBgGeneration(presId) {
       const result = await resp.json();
       const pres = result.presentation;
 
+      if (pres.status === 'generating' && pres.status_message) {
+        const st = document.getElementById('detail-status-text');
+        if (st && currentPresentationId === presId) st.textContent = pres.status_message;
+      }
       if (pres.status === 'completed') {
         clearInterval(pollInterval);
         // Reload the full item view to show the editor
@@ -5194,7 +5455,7 @@ function pollWebBgGeneration(presId) {
   // Timeout after 5 minutes
   setTimeout(() => {
     clearInterval(pollInterval);
-  }, 300000);
+  }, 25 * 60 * 1000); // restyled decks can take a while
 }
 
 // ═══════════════════════════════════════════════

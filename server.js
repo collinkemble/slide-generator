@@ -83,7 +83,8 @@ async function getPuppeteerBrowser() {
  * hideText: if true, hides text elements (h1-h6, p, li, span with text) so the screenshot
  * only has background, design shapes, and logos — no text baked in.
  */
-function buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, hideText = false, hideLogos = false) {
+function buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, hideText = false, hideLogos = false, opts = {}) {
+  const brandLogoFilter = opts.invertBrandLogo ? 'filter:brightness(0) invert(1);' : '';
   const html = slide.html_content || '';
   const css = slide.css_content || '';
   const bgUrl = slide.bg_image_url || '';
@@ -101,7 +102,7 @@ function buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, hideText = f
       const logoTop = isPovIntro ? '30%' : isIntroSlide ? '35%' : '50%';
       logoHtml = `<div style="position:absolute;top:${logoTop};left:50%;transform:translate(-50%,-50%);z-index:10;display:flex;align-items:center;gap:80px;pointer-events:none;">`;
       if (brandLogoUrl) {
-        logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:200px;width:auto;object-fit:contain;">`;
+        logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:200px;width:auto;object-fit:contain;${brandLogoFilter}">`;
         logoHtml += '<div style="width:3px;height:160px;background:rgba(255,255,255,0.6);"></div>';
       }
       if (sfLogoUrl) {
@@ -111,7 +112,7 @@ function buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, hideText = f
     } else {
       logoHtml = '<div style="position:absolute;top:30px;right:30px;z-index:10;display:flex;align-items:center;gap:12px;pointer-events:none;">';
       if (brandLogoUrl) {
-        logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:48px;width:auto;object-fit:contain;">`;
+        logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:48px;width:auto;object-fit:contain;${brandLogoFilter}">`;
         logoHtml += '<div style="width:1px;height:40px;background:rgba(255,255,255,0.5);"></div>';
       }
       if (sfLogoUrl) {
@@ -159,8 +160,8 @@ ${logoHtml}
 </html>`;
 }
 
-async function renderWebSlideToImage(slide, slideIndex, brandLogoUrl, sfLogoUrl, hideLogos = false) {
-  const fullHtml = buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, true, hideLogos); // hideText = true
+async function renderWebSlideToImage(slide, slideIndex, brandLogoUrl, sfLogoUrl, hideLogos = false, opts = {}) {
+  const fullHtml = buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, true, hideLogos, opts); // hideText = true
 
   const browser = await getPuppeteerBrowser();
   const page = await browser.newPage();
@@ -187,8 +188,8 @@ async function renderWebSlideToImage(slide, slideIndex, brandLogoUrl, sfLogoUrl,
  * Returns array of { text, x, y, w, h (as %), fontSize, color, bold, italic, align }
  * with pixel-perfect positions from getBoundingClientRect.
  */
-async function extractTextPositionsFromBrowser(slide, slideIndex, brandLogoUrl, sfLogoUrl) {
-  const fullHtml = buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, false); // show text
+async function extractTextPositionsFromBrowser(slide, slideIndex, brandLogoUrl, sfLogoUrl, opts = {}) {
+  const fullHtml = buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, false, false, opts); // show text
 
   const browser = await getPuppeteerBrowser();
   const page = await browser.newPage();
@@ -345,6 +346,7 @@ async function extractTextPositionsFromBrowser(slide, slideIndex, brandLogoUrl, 
           color: hexColor,
           bold: fontWeight === 'bold' || parseInt(fontWeight) >= 600,
           italic: fontStyle === 'italic',
+          fontFamily: computed.fontFamily || '',
           align: hAlign,
           vAlign,
           hasBorder,
@@ -1736,6 +1738,153 @@ app.get('/api/images/proxy', async (req, res) => {
   }
 });
 
+
+/** Brand data saved in presentations.web_brand_data (shared by create + restyle). */
+function buildWebBrandData(parsedData, body = {}) {
+  return {
+      brandName: parsedData.brandName || '',
+      brandColorPrimary: parsedData.brandColorPrimary || '',
+      brandColorSecondary: parsedData.brandColorSecondary || '',
+      brandTone: parsedData.brandTone || '',
+      brandVisualStyle: parsedData.brandVisualStyle || '',
+      brandLogoUrl: parsedData.brandLogoUrl || '',
+      brandDescription: parsedData.brandDescription || '',
+      brandWebsiteUrl: parsedData.brandWebsiteUrl || '',
+      brandIndustry: parsedData.brandIndustry || '',
+      brandKitId: parsedData.brandKitId ? String(parsedData.brandKitId) : '',
+      brandKitSource: parsedData.brandKitSource || '',
+      // Output language: data.language (wizard) wins, top-level body.language (API callers e.g. DemoForge) accepted too
+      language: [parsedData.language, body.language].find(l => typeof l === 'string' && l.trim())?.trim() || 'English',
+    };
+}
+
+
+// ═══════════════════════════════════════════════
+// APP-SPECIFIC — Restyle my deck (upload .pptx/.pdf or Google Slides link)
+// ═══════════════════════════════════════════════
+const deckParser = require('./src/utils/deckParser');
+const { createRestyler } = require('./src/utils/restyle');
+let _restyler = null;
+function getRestyler() {
+  if (!_restyler) {
+    _restyler = createRestyler({
+      query, isPostgres, getGenAIClient, GEMINI_FALLBACK_MODELS, uploadToR2, storage,
+      generateUserBackgroundsInBackground, MASTER_TEMPLATE_REF_ID,
+    });
+  }
+  return _restyler;
+}
+
+const restyleUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => {
+    const n = (file.originalname || '').toLowerCase();
+    cb(null, n.endsWith('.pptx') || n.endsWith('.pdf') ||
+      file.mimetype === 'application/pdf' || /presentationml/.test(file.mimetype || ''));
+  },
+});
+
+const SA_EMAIL_FALLBACK = 'slide-reader@slide-generator-500915.iam.gserviceaccount.com';
+function serviceAccountEmail() {
+  try { return JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY || '{}').client_email || SA_EMAIL_FALLBACK; } catch (e) { return SA_EMAIL_FALLBACK; }
+}
+function googleAccessHelp() {
+  return `Slide Generator can't open this deck yet. In Google Slides: 1) File → Labels → set to "External allowed", 2) Share → add ${serviceAccountEmail()} as Viewer (tick "Notify people" if Google asks), 3) try again.`;
+}
+
+/** Quick read-only access check for a Google Slides link via the service account. */
+async function checkGoogleSlidesAccess(url) {
+  const presentationId = deckParser.extractPresentationId(url);
+  if (!presentationId) return { ok: false, status: 400, error: 'That doesn\'t look like a Google Slides link. It should look like https://docs.google.com/presentation/d/…/edit' };
+  const auth = getServiceAccountClient();
+  if (!auth) return { ok: false, status: 500, error: 'Google Slides links aren\'t available right now (service account not configured). Upload a .pptx or PDF instead.' };
+  try {
+    const slidesApi = google.slides({ version: 'v1', auth });
+    const r = await slidesApi.presentations.get({ presentationId, fields: 'title,slides.objectId' });
+    return { ok: true, presentationId, title: r.data.title || 'Untitled', slideCount: (r.data.slides || []).length, slidesApi };
+  } catch (err) {
+    const code = err.code || (err.response && err.response.status);
+    if (code === 403 || code === 404) return { ok: false, status: 400, error: googleAccessHelp() };
+    console.error('[Restyle] Google access check failed:', err.message);
+    return { ok: false, status: 502, error: 'Couldn\'t reach Google Slides. Please try again in a moment.' };
+  }
+}
+
+// POST /api/google-slides/check-access — { email, url } → { ok, title, slideCount } | { ok:false, error }
+app.post('/api/google-slides/check-access', async (req, res) => {
+  const { email, url } = req.body || {};
+  if (!email) return res.status(400).json({ ok: false, error: 'Email required' });
+  const r = await checkGoogleSlidesAccess(url);
+  if (!r.ok) return res.status(r.status || 400).json({ ok: false, error: r.error, serviceAccount: serviceAccountEmail() });
+  res.json({ ok: true, title: r.title, slideCount: r.slideCount, serviceAccount: serviceAccountEmail() });
+});
+
+// POST /api/presentations/restyle — multipart: file OR googleSlidesUrl, plus email, name, data (JSON string)
+app.post('/api/presentations/restyle', (req, res, next) => {
+  restyleUpload.single('file')(req, res, (err) => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE' ? 'That file is larger than 25 MB.' : (err.message || 'Upload failed');
+      return res.status(400).json({ error: msg });
+    }
+    next();
+  });
+}, async (req, res) => {
+  try {
+    const apiKey = req.headers['x-api-key'];
+    if (apiKey) {
+      const keyUser = await authenticateByApiKey(apiKey);
+      if (!keyUser) return res.status(401).json({ error: 'Invalid API key' });
+    }
+    const { email, name } = req.body;
+    const googleSlidesUrl = (req.body.googleSlidesUrl || '').trim();
+    let parsedData = {};
+    try { parsedData = typeof req.body.data === 'string' ? JSON.parse(req.body.data || '{}') : (req.body.data || {}); }
+    catch (e) { return res.status(400).json({ error: 'Invalid data field' }); }
+    if (!email || !name) return res.status(400).json({ error: 'Missing required fields: email, name' });
+    if (!req.file && !googleSlidesUrl) return res.status(400).json({ error: 'Upload a .pptx or PDF, or paste a Google Slides link.' });
+
+    // Validate the source BEFORE creating anything, so problems show in the wizard.
+    let loadDeck, sourceInfo;
+    if (req.file) {
+      let deck;
+      try { deck = await deckParser.parseUploadedDeck(req.file.buffer, req.file.originalname, req.file.mimetype); }
+      catch (e) { return res.status(400).json({ error: e.message }); }
+      loadDeck = async () => deck;
+      sourceInfo = { type: 'upload', format: deck.format, fileName: req.file.originalname };
+    } else {
+      const access = await checkGoogleSlidesAccess(googleSlidesUrl);
+      if (!access.ok) return res.status(access.status || 400).json({ error: access.error, serviceAccount: serviceAccountEmail() });
+      loadDeck = () => deckParser.parseGoogleSlides(access.slidesApi, access.presentationId);
+      sourceInfo = { type: 'google', format: 'google', url: googleSlidesUrl, title: access.title };
+    }
+
+    const user = await getOrCreateUser(email);
+    const brandData = buildWebBrandData(parsedData, req.body);
+    const data = { ...parsedData, useWebTemplate: true, source: sourceInfo };
+    const result = await query(
+      'INSERT INTO presentations (user_id, name, data, is_web_slides, web_brand_data, status, status_message) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [user.id, String(name).trim(), JSON.stringify(data), true, JSON.stringify(brandData), 'generating', 'Reading your deck…']
+    );
+    const presId = result.insertId;
+    const shareToken = crypto.randomBytes(16).toString('hex');
+    await query('UPDATE presentations SET share_token = ? WHERE id = ?', [shareToken, presId]);
+
+    // Background job (parse → restyle each slide → background photos)
+    getRestyler().runRestyleJob(presId, loadDeck, brandData).catch(err => console.error(`[Restyle] Job crashed for ${presId}:`, err));
+
+    res.status(201).json({
+      presentation: {
+        id: presId, name: String(name).trim(), status: 'generating', is_web_slides: true, share_token: shareToken,
+        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      }
+    });
+  } catch (err) {
+    console.error('Failed to start restyle:', err);
+    res.status(500).json({ error: 'Failed to start restyle' });
+  }
+});
+
 // ═══════════════════════════════════════════════
 // APP-SPECIFIC — Presentations CRUD
 // ═══════════════════════════════════════════════
@@ -1807,21 +1956,7 @@ app.post('/api/presentations', async (req, res) => {
     const useWebTemplate = parsedData.useWebTemplate === true;
 
     // Build brand data from the request for web template presentations
-    const brandData = useWebTemplate ? {
-      brandName: parsedData.brandName || '',
-      brandColorPrimary: parsedData.brandColorPrimary || '',
-      brandColorSecondary: parsedData.brandColorSecondary || '',
-      brandTone: parsedData.brandTone || '',
-      brandVisualStyle: parsedData.brandVisualStyle || '',
-      brandLogoUrl: parsedData.brandLogoUrl || '',
-      brandDescription: parsedData.brandDescription || '',
-      brandWebsiteUrl: parsedData.brandWebsiteUrl || '',
-      brandIndustry: parsedData.brandIndustry || '',
-      brandKitId: parsedData.brandKitId ? String(parsedData.brandKitId) : '',
-      brandKitSource: parsedData.brandKitSource || '',
-      // Output language: data.language (wizard) wins, top-level req.body.language (API callers e.g. DemoForge) accepted too
-      language: [parsedData.language, req.body.language].find(l => typeof l === 'string' && l.trim())?.trim() || 'English',
-    } : null;
+    const brandData = useWebTemplate ? buildWebBrandData(parsedData, req.body) : null;
 
     const result = await query(
       'INSERT INTO presentations (user_id, name, data, is_web_slides, web_brand_data, status) VALUES (?, ?, ?, ?, ?, ?)',
@@ -2558,7 +2693,7 @@ async function translatePresentationSlides(presentationId, language, brandName) 
  * Generate branded background images for a user's web-template presentation.
  * Generates FRESH prompts from slide names + brand context — no reference template prompts used.
  */
-async function generateUserBackgroundsInBackground(presentationId, brandData) {
+async function generateUserBackgroundsInBackground(presentationId, brandData, opts = {}) {
   try {
     console.log(`[WebBG] Starting background generation for presentation ${presentationId}`);
 
@@ -2578,6 +2713,10 @@ async function generateUserBackgroundsInBackground(presentationId, brandData) {
     const brandName = (brandData && brandData.brandName) || '';
     const brandDescription = (brandData && brandData.brandDescription) || '';
     try {
+      if (opts.keepExistingPrompts && slides.every(sl => sl.bg_image_prompt && String(sl.bg_image_prompt).trim())) {
+        console.log(`[WebBG] Keeping ${slides.length} existing per-slide background prompts (restyled deck)`);
+        throw Object.assign(new Error('skip-fresh-prompts'), { skip: true });
+      }
       console.log(`[WebBG] Generating fresh background prompts for ${slides.length} slides, brand: "${brandName}"...`);
       const freshPrompts = await generateFreshBackgroundPrompts(slides, brandData);
       for (const slide of slides) {
@@ -2589,7 +2728,7 @@ async function generateUserBackgroundsInBackground(presentationId, brandData) {
       }
       console.log(`[WebBG] Generated ${Object.keys(freshPrompts).length} fresh prompts for "${brandName}"`);
     } catch (err) {
-      console.warn('[WebBG] Failed to generate fresh prompts, using slide-name fallbacks:', err.message);
+      if (!err.skip) console.warn('[WebBG] Failed to generate fresh prompts, using slide-name fallbacks:', err.message);
     }
 
     // 3. Collect photo descriptions for style directive
@@ -4126,6 +4265,95 @@ app.get('/api/debug-slides/:presentationId', async (req, res) => {
 });
 
 // GET /api/export-jobs/:jobId — Poll for export job progress
+// ═══════════════════════════════════════════════
+// APP-SPECIFIC — Download as PowerPoint (.pptx)
+// ═══════════════════════════════════════════════
+const { buildPptx } = require('./src/utils/pptxExport');
+
+// POST /api/presentations/:id/export-pptx — start an async .pptx build (no Google connection needed)
+app.post('/api/presentations/:id/export-pptx', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    const user = await getOrCreateUser(email);
+    const rows = await query('SELECT * FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+    const presentation = rows[0];
+    if (!presentation.is_web_slides) return res.status(400).json({ error: 'PowerPoint download is available for web-slide presentations.' });
+    const slides = await query(
+      'SELECT slide_index, html_content, css_content, bg_image_url, slide_name FROM presentation_slides WHERE presentation_id = ? ORDER BY slide_index',
+      [presentation.id]
+    );
+    if (slides.length === 0) return res.status(400).json({ error: 'No slides found.' });
+
+    const jobId = crypto.randomUUID();
+    exportJobs.set(jobId, { status: 'processing', progress: 0, total: slides.length, googleUrl: null, error: null, startedAt: Date.now(), kind: 'pptx', userId: user.id, fileName: null, buffer: null });
+    res.json({ jobId, status: 'processing', total: slides.length });
+
+    (async () => {
+      const job = exportJobs.get(jobId);
+      try {
+        let brandData = presentation.web_brand_data;
+        if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch (e) { brandData = {}; } }
+        brandData = brandData || {};
+        const brandLogoUrl = brandData.brandLogoUrl || '';
+        let sfLogoUrl = brandData.sfLogoUrl || '';
+        if (!sfLogoUrl) {
+          try {
+            const sfLogoBuf = await getSfLogoBuffer();
+            if (sfLogoBuf) sfLogoUrl = await uploadToR2(sfLogoBuf, 'system/salesforce-logo-white.png', 'image/png');
+          } catch (e) { console.warn('[PptxExport] Could not prepare SF logo:', e.message); }
+        }
+        const renderOpts = { invertBrandLogo: !!brandData.brandLogoInverted };
+        const outSlides = [];
+        for (let i = 0; i < slides.length; i++) {
+          const png = await renderWebSlideToImage(slides[i], i, brandLogoUrl, sfLogoUrl, false, renderOpts); // logos baked in, text hidden
+          const background = await sharp(png).jpeg({ quality: 85 }).toBuffer();
+          let elements = [];
+          try { elements = await extractTextPositionsFromBrowser(slides[i], i, brandLogoUrl, sfLogoUrl, renderOpts); }
+          catch (e) { console.warn(`[PptxExport] Text extraction failed for slide ${i + 1}:`, e.message); }
+          outSlides.push({ background, mime: 'image/jpeg', elements });
+          job.progress = i + 1;
+        }
+        job.buffer = await buildPptx({ title: presentation.name, slides: outSlides });
+        job.fileName = `${String(presentation.name || 'Presentation').replace(/[\\/:*?"<>|]+/g, '').trim() || 'Presentation'}.pptx`;
+        job.status = 'completed';
+        console.log(`[PptxExport] Presentation ${presentation.id}: built ${outSlides.length}-slide .pptx (${Math.round(job.buffer.length / 1024)} KB)`);
+      } catch (err) {
+        console.error('[PptxExport] Failed:', err);
+        job.status = 'failed';
+        job.error = 'Could not build the PowerPoint file: ' + err.message;
+      }
+    })();
+  } catch (err) {
+    console.error('PowerPoint export error:', err);
+    res.status(500).json({ error: 'Failed to start PowerPoint export' });
+  }
+});
+
+// GET /api/export-jobs/:jobId/download?email= — stream the finished .pptx once
+app.get('/api/export-jobs/:jobId/download', async (req, res) => {
+  try {
+    const job = exportJobs.get(req.params.jobId);
+    if (!job || job.kind !== 'pptx') return res.status(404).json({ error: 'Download not found or expired. Please try again.' });
+    if (job.status !== 'completed' || !job.buffer) return res.status(409).json({ error: 'The file is not ready yet.' });
+    const email = req.query.email;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    const user = await getOrCreateUser(email);
+    if (user.id !== job.userId) return res.status(403).json({ error: 'Not allowed' });
+    const buf = job.buffer;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+    res.setHeader('Content-Disposition', `attachment; filename="${job.fileName.replace(/"/g, '')}"; filename*=UTF-8''${encodeURIComponent(job.fileName)}`);
+    res.setHeader('Content-Length', buf.length);
+    res.end(buf);
+    job.buffer = null; // free memory after the first download
+    job.downloaded = true;
+  } catch (err) {
+    console.error('PowerPoint download error:', err);
+    res.status(500).json({ error: 'Download failed' });
+  }
+});
+
 app.get('/api/export-jobs/:jobId', (req, res) => {
   const job = exportJobs.get(req.params.jobId);
   if (!job) return res.status(404).json({ error: 'Job not found' });
