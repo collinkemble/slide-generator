@@ -229,6 +229,14 @@
     <!-- APP: Presentations Home                        -->
     <!-- ═══════════════════════════════════════════════ -->
     <div id="items-home" style="max-width: 912px; margin: 0 auto; padding: 32px 16px 0;">
+      <!-- Google Export Warning -->
+      <div style="margin-bottom: 20px; border-radius: 10px; padding: 12px 16px; background: #FFFBEB; border: 1px solid #FDE68A; display: flex; align-items: flex-start; gap: 10px;">
+        <span style="font-size: 16px; flex-shrink: 0; margin-top: 1px;">⚠️</span>
+        <div style="font-size: 13px; color: #92400E; line-height: 20px;">
+          <strong>Google Slides export currently supports personal Google accounts only.</strong> Salesforce (corporate) Google account support is pending approval. Once exported, you can share the presentation to your Salesforce Google account.
+        </div>
+      </div>
+
       <!-- Google Connection Banner (optional — for export only) -->
       <div id="google-banner" class="hidden" style="margin-bottom: 20px; border-radius: 12px; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between;">
         <div id="google-banner-content" class="flex items-center gap-3">
@@ -236,14 +244,6 @@
           <span id="google-banner-text" style="font-size: 14px; color: #374151;"></span>
         </div>
         <div id="google-banner-actions"></div>
-      </div>
-
-      <!-- Google Export Warning -->
-      <div style="margin-bottom: 20px; border-radius: 10px; padding: 12px 16px; background: #FFFBEB; border: 1px solid #FDE68A; display: flex; align-items: flex-start; gap: 10px;">
-        <span style="font-size: 16px; flex-shrink: 0; margin-top: 1px;">⚠️</span>
-        <div style="font-size: 13px; color: #92400E; line-height: 20px;">
-          <strong>Google Slides export currently supports personal Google accounts only.</strong> Salesforce (corporate) Google account support is pending approval. Once exported, you can share the presentation to your Salesforce Google account.
-        </div>
       </div>
 
       <!-- Intro Box -->
@@ -333,6 +333,14 @@
         <span id="detail-status-text" style="font-size: 14px; font-weight: 600;"></span>
       </div>
 
+      <!-- Google Export Warning (detail page) -->
+      <div style="margin-bottom: 16px; border-radius: 10px; padding: 12px 16px; background: #FFFBEB; border: 1px solid #FDE68A; display: flex; align-items: flex-start; gap: 10px;">
+        <span style="font-size: 16px; flex-shrink: 0; margin-top: 1px;">⚠️</span>
+        <div style="font-size: 13px; color: #92400E; line-height: 20px;">
+          <strong>Google Slides export currently supports personal Google accounts only.</strong> Salesforce (corporate) Google account support is pending approval. Once exported, you can share the presentation to your Salesforce Google account.
+        </div>
+      </div>
+
       <!-- Google Connection (on detail page) -->
       <div id="detail-google-banner" class="hidden" style="margin-bottom: 16px; border-radius: 10px; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;">
         <div class="flex items-center gap-3">
@@ -340,14 +348,6 @@
           <span id="detail-google-text" style="font-size: 13px; font-weight: 500;"></span>
         </div>
         <div id="detail-google-actions"></div>
-      </div>
-
-      <!-- Google Export Warning (detail page) -->
-      <div style="margin-bottom: 16px; border-radius: 10px; padding: 12px 16px; background: #FFFBEB; border: 1px solid #FDE68A; display: flex; align-items: flex-start; gap: 10px;">
-        <span style="font-size: 16px; flex-shrink: 0; margin-top: 1px;">⚠️</span>
-        <div style="font-size: 13px; color: #92400E; line-height: 20px;">
-          <strong>Google Slides export currently supports personal Google accounts only.</strong> Salesforce (corporate) Google account support is pending approval. Once exported, you can share the presentation to your Salesforce Google account.
-        </div>
       </div>
 
       <!-- Auth Error Banner (shown when token is expired/invalid) -->
