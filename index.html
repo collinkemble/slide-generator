@@ -679,6 +679,31 @@
     </div>
 
     <!-- ═══════════════════════════════════════════════ -->
+    <!-- APP: Google Drive access missing / connect cancelled -->
+    <!-- ═══════════════════════════════════════════════ -->
+    <div id="google-scope-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);" onclick="if (event.target === this) closeGoogleScopeDialog()">
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-[500px] p-8" role="alertdialog" aria-modal="true" aria-labelledby="google-scope-title">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+          <span style="font-size: 22px;">⚠️</span>
+          <h3 id="google-scope-title" class="text-lg font-bold" style="color: #032D60; margin: 0;">Google Drive access wasn't granted</h3>
+        </div>
+        <p id="google-scope-text" class="text-sm text-gray-600 mb-4" style="line-height: 21px;"></p>
+        <div style="border-radius: 10px; padding: 12px 16px; background: #F0F7FF; border: 1px solid #D0E3F7; margin-bottom: 20px;">
+          <p style="font-size: 12px; font-weight: 700; color: #032D60; margin: 0 0 6px; text-transform: uppercase; letter-spacing: 0.04em;">How to fix it</p>
+          <ol style="margin: 0; padding-left: 18px; font-size: 13px; color: #374151; line-height: 21px;">
+            <li>Click <strong>Reconnect Google</strong> below.</li>
+            <li>Choose your <strong>personal</strong> Google account.</li>
+            <li>On Google's permissions screen, <strong>tick every box</strong> (or click <strong>&ldquo;Select all&rdquo;</strong>), then click Continue.</li>
+          </ol>
+        </div>
+        <div class="flex justify-end gap-3">
+          <button onclick="closeGoogleScopeDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Not now</button>
+          <button onclick="closeGoogleScopeDialog(); connectGoogle();" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">🔄 Reconnect Google</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════ -->
     <!-- APP: New Presentation Dialog                   -->
     <!-- ═══════════════════════════════════════════════ -->
     <div id="new-presentation-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
@@ -2114,6 +2139,7 @@ function closeDeleteDialog() {
 let currentPresentationId = null;
 let currentPresentationData = null;
 let googleConnected = false;
+let googleMissingDrive = false; // connected, but Google Drive permission not granted
 let currentShareToken = null;
 let currentSharingMode = 'private';
 let currentSlides = [];
@@ -2128,6 +2154,7 @@ async function checkGoogleStatus() {
     const resp = await fetch(`/api/auth/google/status?email=${encodeURIComponent(email)}`);
     const data = await resp.json();
     googleConnected = data.connected;
+    googleMissingDrive = !!data.missingDrive;
 
     // Update homepage banner
     const banner = document.getElementById('google-banner');
@@ -2142,6 +2169,13 @@ async function checkGoogleStatus() {
         bannerText.textContent = `Connected as ${data.googleEmail}`;
         bannerText.style.color = '#065F46';
         bannerActions.innerHTML = `<button onclick="disconnectGoogle()" class="cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #374151; font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 8px;">Disconnect</button>`;
+      } else if (data.missingDrive) {
+        // Signed in, but the Google Drive permission was left unticked — exports will fail
+        banner.style.background = '#FEF2F2';
+        banner.style.border = '1px solid #FECACA';
+        bannerText.textContent = `Connected as ${data.googleEmail || 'your Google account'}, but Google Drive access is missing — reconnect and tick every permission box to export`;
+        bannerText.style.color = '#DC2626';
+        bannerActions.innerHTML = `<button onclick="connectGoogle()" class="cursor-pointer" style="background: #0176D3; color: white; font-size: 13px; font-weight: 700; padding: 6px 16px; border-radius: 8px; border: none; white-space: nowrap;">🔄 Reconnect Google</button>`;
       } else if (data.expired) {
         // Token was expired — show reconnect messaging
         banner.style.background = '#FEF2F2';
@@ -2174,6 +2208,16 @@ async function checkGoogleStatus() {
         detailText.style.color = '#065F46';
         detailActions.innerHTML = `<button onclick="disconnectGoogle()" class="cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #374151; font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 8px;">Disconnect</button>`;
         if (authErr) { authErr.classList.add('hidden'); authErr.style.display = 'none'; }
+      } else if (data.missingDrive) {
+        // Signed in without Google Drive access — show reconnect messaging
+        detailBanner.classList.remove('hidden');
+        detailBanner.style.display = 'flex';
+        detailBanner.style.background = '#FEF2F2';
+        detailBanner.style.border = '1px solid #FECACA';
+        detailText.textContent = `Connected as ${data.googleEmail || 'your Google account'}, but Google Drive access is missing — reconnect and tick every permission box to export`;
+        detailText.style.color = '#DC2626';
+        detailActions.innerHTML = `<button onclick="connectGoogle()" class="cursor-pointer" style="background: #0176D3; color: white; font-size: 13px; font-weight: 700; padding: 6px 16px; border-radius: 8px; border: none; white-space: nowrap;">🔄 Reconnect Google</button>`;
+        if (authErr) { authErr.classList.add('hidden'); authErr.style.display = 'none'; }
       } else if (data.expired) {
         // Expired — show ONLY the auth error banner (not both)
         detailBanner.classList.add('hidden');
@@ -2194,6 +2238,27 @@ async function checkGoogleStatus() {
   } catch (err) {
     console.log('Google status check failed:', err.message);
   }
+}
+
+// Google connected without Drive access (or the user cancelled on Google's screen)
+function showGoogleScopeDialog(kind) {
+  const dlg = document.getElementById('google-scope-dialog');
+  if (!dlg) { alert("Google Drive access wasn't granted. Reconnect Google and tick every permission box."); return; }
+  const title = document.getElementById('google-scope-title');
+  const text = document.getElementById('google-scope-text');
+  if (kind === 'cancelled') {
+    title.textContent = 'Google connection was cancelled';
+    text.textContent = "Google didn't finish connecting, so presentations can't be exported to Google Slides yet. You can try again any time.";
+  } else {
+    title.textContent = "Google Drive access wasn't granted";
+    text.textContent = "Your Google account signed in, but the permission to create files in your Google Drive was left unticked. Without it, Slide Generator can't create your presentation in Google Slides.";
+  }
+  dlg.classList.remove('hidden');
+}
+
+function closeGoogleScopeDialog() {
+  const dlg = document.getElementById('google-scope-dialog');
+  if (dlg) dlg.classList.add('hidden');
 }
 
 function showAuthError() {
@@ -4189,7 +4254,8 @@ function openPresentation() {
 async function exportToGoogleSlides() {
   if (!currentPresentationId) return;
   if (!googleConnected) {
-    showAuthError();
+    if (googleMissingDrive) showGoogleScopeDialog('missing');
+    else showAuthError();
     return;
   }
 
@@ -4221,6 +4287,15 @@ async function exportToGoogleSlides() {
     }
 
     const data = await resp.json();
+    if (!resp.ok && data.code === 'missing_drive_scope') {
+      googleConnected = false;
+      googleMissingDrive = true;
+      showGoogleScopeDialog('missing');
+      checkGoogleStatus();
+      resetExportBtn(btn);
+      if (reexportBtn) reexportBtn.disabled = false;
+      return;
+    }
     if (!resp.ok) {
       const errMsg = (data.error || '').toLowerCase();
       if (errMsg.includes('google') && (errMsg.includes('not connected') || errMsg.includes('expired'))) {
@@ -4270,6 +4345,15 @@ async function pollExportJob(jobId, totalSlides, btn, reexportBtn) {
       }
 
       if (job.status === 'failed') {
+        if (job.errorCode === 'missing_drive_scope') {
+          googleConnected = false;
+          googleMissingDrive = true;
+          resetExportBtn(btn);
+          if (reexportBtn) reexportBtn.disabled = false;
+          showGoogleScopeDialog('missing');
+          checkGoogleStatus();
+          return;
+        }
         throw new Error(job.error || 'Export failed');
       }
     } catch (err) {
@@ -6644,8 +6728,17 @@ let _googleReturnToPresentationId = null;
     history.replaceState({}, '', '/');
   }
   if (params.get('google_error')) {
-    alert('Google connection failed: ' + params.get('google_error'));
+    const gErr = params.get('google_error');
+    const returnTo = params.get('returnTo');
+    if (returnTo) _googleReturnToPresentationId = parseInt(returnTo);
     history.replaceState({}, '', '/');
+    if (gErr === 'missing_drive_scope') {
+      showGoogleScopeDialog('missing');
+    } else if (gErr === 'access_denied') {
+      showGoogleScopeDialog('cancelled');
+    } else {
+      alert('Google connection failed: ' + gErr);
+    }
   }
 })();
 

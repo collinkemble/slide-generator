@@ -957,6 +957,37 @@ async function getAuthenticatedClient(userId) {
   return client;
 }
 
+// ─── Google Drive permission checks ───
+// Google's consent screen can show each permission as a checkbox. If the user leaves the Drive box
+// unticked, sign-in still succeeds but every export call fails with "Insufficient Permission".
+const GOOGLE_DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const MISSING_DRIVE_SCOPE_MSG = "Google Drive access wasn't granted. Reconnect Google and tick every permission box (or \"Select all\") on Google's screen so the export can create your presentation.";
+
+function scopeListHasDrive(scopes) {
+  const list = Array.isArray(scopes) ? scopes : String(scopes || '').split(/[\s,]+/);
+  return list.some(sc => sc === GOOGLE_DRIVE_SCOPE || sc === 'https://www.googleapis.com/auth/drive');
+}
+
+/** true / false, or null if it couldn't be determined (never blocks on a lookup failure). */
+async function clientHasDriveScope(client) {
+  try {
+    const accessToken = client?.credentials?.access_token;
+    if (!accessToken) return null;
+    const info = await client.getTokenInfo(accessToken);
+    return scopeListHasDrive(info.scopes);
+  } catch (err) {
+    console.warn('[GoogleScope] Could not read token scopes:', err.message);
+    return null;
+  }
+}
+
+function isInsufficientScopeError(err) {
+  const msg = String(err?.message || '');
+  const wwwAuth = String(err?.response?.headers?.['www-authenticate'] || '');
+  const reasons = (err?.errors || err?.response?.data?.error?.errors || []).map(e => e?.reason);
+  return /insufficient permission/i.test(msg) || /insufficient_scope/i.test(wwwAuth) || reasons.includes('insufficientPermissions');
+}
+
 // ─── Google Slides Content Extraction (uses API key, not OAuth) ───
 
 function extractTextFromElement(element) {
@@ -1115,6 +1146,13 @@ app.get('/api/auth/google/callback', async (req, res) => {
     } catch (e) {
       email = state || ''; // Fallback for old-format state
     }
+    const returnToParam = returnTo ? `&returnTo=${encodeURIComponent(returnTo)}` : '';
+
+    // User clicked Cancel / denied on Google's screen
+    if (req.query.error) {
+      console.log(`[GoogleAuth] OAuth denied for ${email}: ${req.query.error}`);
+      return res.redirect(`/?google_error=${encodeURIComponent(req.query.error === 'access_denied' ? 'access_denied' : req.query.error)}${returnToParam}`);
+    }
 
     if (!code) {
       return res.redirect('/?google_error=no_code');
@@ -1123,6 +1161,12 @@ app.get('/api/auth/google/callback', async (req, res) => {
     const client = createOAuth2Client();
     const { tokens } = await client.getToken(code);
     client.setCredentials(tokens);
+
+    // Drive permission must be granted or every export fails — don't save a half-granted connection
+    if (tokens.scope && !scopeListHasDrive(tokens.scope)) {
+      console.warn(`[GoogleAuth] ${email} connected without Google Drive access (granted: ${tokens.scope}) — not saving`);
+      return res.redirect(`/?google_error=missing_drive_scope${returnToParam}`);
+    }
 
     // Get Google email
     const oauth2 = google.oauth2({ version: 'v2', auth: client });
@@ -1178,7 +1222,10 @@ app.get('/api/auth/google/status', async (req, res) => {
         // Token exists but refresh failed — getAuthenticatedClient already cleaned it up
         return res.json({ connected: false, expired: true });
       }
-      // Token is valid (getAuthenticatedClient refreshes if needed)
+      // Token is valid (getAuthenticatedClient refreshes if needed) — but does it include Drive access?
+      if (await clientHasDriveScope(authClient) === false) {
+        return res.json({ connected: false, missingDrive: true, googleEmail: tokens[0].google_email });
+      }
       res.json({
         connected: true,
         googleEmail: tokens[0].google_email
@@ -3177,6 +3224,9 @@ app.post('/api/presentations/:id/export-google', async (req, res) => {
     if (!authClient) {
       return res.status(400).json({ error: 'Google account not connected. Please connect your Google account first.' });
     }
+    if (await clientHasDriveScope(authClient) === false) {
+      return res.status(403).json({ error: MISSING_DRIVE_SCOPE_MSG, code: 'missing_drive_scope' });
+    }
 
     // Verify ownership
     const rows = await query('SELECT * FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
@@ -3310,6 +3360,9 @@ app.post('/api/presentations/:id/export-google', async (req, res) => {
 
   } catch (err) {
     console.error('Export to Google Slides error:', err);
+    if (isInsufficientScopeError(err)) {
+      return res.status(403).json({ error: MISSING_DRIVE_SCOPE_MSG, code: 'missing_drive_scope' });
+    }
     res.status(500).json({ error: 'Failed to export to Google Slides: ' + err.message });
   }
 });
@@ -3333,6 +3386,9 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
     const authClient = await getAuthenticatedClient(user.id);
     if (!authClient) {
       return res.status(400).json({ error: 'Google account not connected. Please connect your Google account first.' });
+    }
+    if (await clientHasDriveScope(authClient) === false) {
+      return res.status(403).json({ error: MISSING_DRIVE_SCOPE_MSG, code: 'missing_drive_scope' });
     }
 
     // Verify ownership and check it's a web slides presentation
@@ -4023,7 +4079,12 @@ app.post('/api/presentations/:id/export-google-web', async (req, res) => {
       } catch (err) {
         console.error('Export web slides to Google Slides error:', err);
         job.status = 'failed';
-        job.error = err.message;
+        if (isInsufficientScopeError(err)) {
+          job.error = MISSING_DRIVE_SCOPE_MSG;
+          job.errorCode = 'missing_drive_scope';
+        } else {
+          job.error = err.message;
+        }
       }
     })();
 
@@ -4073,7 +4134,8 @@ app.get('/api/export-jobs/:jobId', (req, res) => {
     progress: job.progress,
     total: job.total,
     googleUrl: job.googleUrl,
-    error: job.error
+    error: job.error,
+    errorCode: job.errorCode || null
   });
 });
 
