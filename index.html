@@ -662,12 +662,18 @@
         <ol style="margin: 0 0 20px; padding-left: 20px; font-size: 13px; color: #374151; line-height: 21px;">
           <li style="margin-bottom: 6px;">On the next screen, <strong>choose your personal Google account</strong> (for example, an <code style="font-size: 12px; background: #F3F4F6; padding: 1px 4px; border-radius: 4px;">@gmail.com</code> address), not your Salesforce account.</li>
           <li style="margin-bottom: 6px;">If Google signs you in with your Salesforce account automatically, click <strong>&ldquo;Use another account&rdquo;</strong> and sign in with your personal one.</li>
+          <li style="margin-bottom: 6px;"><strong>Grant every permission Google asks for.</strong> If Google shows checkboxes, tick all of them (or click <strong>&ldquo;Select all&rdquo;</strong>) before you click Continue. The export needs access to create the presentation in your Google Drive. It can only see files this app creates, not your other Drive files.</li>
           <li>After you export, open the deck in Google Slides and <strong>share it with your Salesforce Google account</strong> to keep working on it there.</li>
         </ol>
 
+        <label for="google-connect-ack" style="display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; margin-bottom: 20px; border: 1px solid #D0E3F7; border-radius: 10px; background: #F0F7FF; cursor: pointer;">
+          <input id="google-connect-ack" type="checkbox" onchange="updateGoogleConnectContinue()" style="width: 16px; height: 16px; margin-top: 2px; flex-shrink: 0; accent-color: #0176D3; cursor: pointer;">
+          <span style="font-size: 13px; color: #032D60; line-height: 20px;">I understand that I can only connect a <strong>personal Google account</strong>, and that I must <strong>grant all the permissions Google asks for</strong> for the export to work.</span>
+        </label>
+
         <div class="flex justify-end gap-3">
           <button onclick="closeGoogleConnectDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Cancel</button>
-          <button id="google-connect-continue-btn" onclick="continueToGoogle()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Continue to Google →</button>
+          <button id="google-connect-continue-btn" onclick="continueToGoogle()" disabled class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer disabled:cursor-not-allowed" style="background: #0176D3; opacity: 0.45;" title="Tick the box above to continue">Continue to Google →</button>
         </div>
       </div>
     </div>
@@ -2210,8 +2216,22 @@ function connectGoogle() {
   const dlg = document.getElementById('google-connect-dialog');
   if (!dlg) return continueToGoogle();
   dlg.classList.remove('hidden');
+  const ack = document.getElementById('google-connect-ack');
+  if (ack) { ack.checked = false; ack.focus(); }
   const btn = document.getElementById('google-connect-continue-btn');
-  if (btn) { btn.disabled = false; btn.textContent = 'Continue to Google →'; btn.focus(); }
+  if (btn) btn.textContent = 'Continue to Google →';
+  updateGoogleConnectContinue();
+}
+
+// Continue to Google stays disabled until the user ticks the acknowledgment box
+function updateGoogleConnectContinue() {
+  const ack = document.getElementById('google-connect-ack');
+  const btn = document.getElementById('google-connect-continue-btn');
+  if (!btn) return;
+  const ok = !!(ack && ack.checked);
+  btn.disabled = !ok;
+  btn.style.opacity = ok ? '1' : '0.45';
+  btn.title = ok ? '' : 'Tick the box above to continue';
 }
 
 function closeGoogleConnectDialog() {
@@ -2229,12 +2249,17 @@ document.addEventListener('keydown', (e) => {
 window.addEventListener('pageshow', (e) => {
   if (!e.persisted) return;
   closeGoogleConnectDialog();
+  const ack = document.getElementById('google-connect-ack');
+  if (ack) ack.checked = false;
   const btn = document.getElementById('google-connect-continue-btn');
-  if (btn) { btn.disabled = false; btn.textContent = 'Continue to Google →'; }
+  if (btn) btn.textContent = 'Continue to Google →';
+  updateGoogleConnectContinue();
 });
 
 // "Continue to Google" — the original redirect to Google's sign-in page
 function continueToGoogle() {
+  const ack = document.getElementById('google-connect-ack');
+  if (ack && !ack.checked) { updateGoogleConnectContinue(); return; }
   const btn = document.getElementById('google-connect-continue-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Opening Google…'; }
   const email = document.getElementById('user-email').textContent;
