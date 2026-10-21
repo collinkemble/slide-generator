@@ -12,6 +12,7 @@ const { google } = require('googleapis');
 const { GoogleGenAI } = require('@google/genai');
 const sharp = require('sharp');
 const multer = require('multer');
+const { fetchBrandLogo } = require('./src/utils/logoFetcher');
 const puppeteer = require('puppeteer');
 
 const app = express();
@@ -1261,6 +1262,433 @@ app.get('/api/brandkit-builder/items/:id', async (req, res) => {
   }
 });
 
+
+// ═══════════════════════════════════════════════
+// APP-SPECIFIC — New Presentation wizard: Brand Identity (ported from DemoForge)
+// ═══════════════════════════════════════════════
+
+// POST /api/brandkit-builder/create — Create a new brand kit in Brand Kit Builder
+app.post('/api/brandkit-builder/create', async (req, res) => {
+  const apiKey = process.env.BRANDKIT_BUILDER_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'Brand Kit Builder not configured' });
+
+  const { email, name, brand_name, language, website_url, industry, tone, visual_style, description } = req.body;
+  if (!email) return res.status(400).json({ error: 'email is required' });
+  if (!name && !brand_name) return res.status(400).json({ error: 'name or brand_name is required' });
+
+  const effectiveName = name || brand_name;
+  const effectiveBrand = brand_name || name;
+  const effectiveLang = (language || '').trim() || 'English';
+
+  // Build metadata object matching Brand Kit Builder's expected structure
+  const metadata = { name: effectiveName, brand: effectiveBrand };
+  if (description) metadata.brand_description = description;
+  if (website_url) metadata.website_url = website_url;
+  if (industry) metadata.industry = industry;
+  if (tone) metadata.tone = tone;
+  if (visual_style) metadata.visual_style = visual_style;
+
+  try {
+    const resp = await fetch(`${BRANDKIT_API_URL}/items`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+      },
+      body: JSON.stringify({
+        email,
+        name: effectiveName,
+        language: effectiveLang,
+        data: { metadata },
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error(`Brand Kit Builder create failed (${resp.status}):`, errText.substring(0, 200));
+      throw new Error(`Brand Kit Builder responded ${resp.status}`);
+    }
+    const data = await resp.json();
+    res.json(data);
+  } catch (err) {
+    console.error('Brand Kit Builder create proxy error:', err.message, '| URL:', BRANDKIT_API_URL);
+    res.status(502).json({ error: 'Failed to create brand kit: ' + err.message });
+  }
+});
+
+// POST /api/brandkit-builder/generate/:id — Trigger server-side brand kit generation
+app.post('/api/brandkit-builder/generate/:id', async (req, res) => {
+  const apiKey = process.env.BRANDKIT_BUILDER_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'Brand Kit Builder not configured' });
+
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'email is required' });
+
+  try {
+    const resp = await fetch(`${BRANDKIT_API_URL}/items/${req.params.id}/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+      },
+      body: JSON.stringify({ email }),
+      signal: AbortSignal.timeout(120000),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error(`Brand Kit Builder generate failed (${resp.status}):`, errText.substring(0, 200));
+      throw new Error(`Brand Kit Builder generate responded ${resp.status}`);
+    }
+    const data = await resp.json();
+    res.json(data);
+  } catch (err) {
+    console.error('Brand Kit Builder generate proxy error:', err.message, '| URL:', BRANDKIT_API_URL);
+    res.status(502).json({ error: 'Failed to generate brand kit: ' + err.message });
+  }
+});
+
+// PUT /api/brandkit-builder/update/:id — Update an existing brand kit in Brand Kit Builder
+app.put('/api/brandkit-builder/update/:id', async (req, res) => {
+  const apiKey = process.env.BRANDKIT_BUILDER_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'Brand Kit Builder not configured' });
+
+  const { email, data, name, logo_url, merge } = req.body;
+  if (!email) return res.status(400).json({ error: 'email is required' });
+
+  try {
+    const body = { email };
+    if (data) body.data = data;
+    if (name) body.name = name;
+    if (logo_url !== undefined) body.logo_url = logo_url;
+    if (merge) body.merge = true;
+
+    const resp = await fetch(`${BRANDKIT_API_URL}/items/${req.params.id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error(`Brand Kit Builder update failed (${resp.status}):`, errText.substring(0, 200));
+      throw new Error(`Brand Kit Builder responded ${resp.status}`);
+    }
+    const result = await resp.json();
+    res.json(result);
+  } catch (err) {
+    console.error('Brand Kit Builder update proxy error:', err.message);
+    res.status(502).json({ error: 'Failed to update brand kit' });
+  }
+});
+
+const brandKitUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB per file
+  fileFilter: (req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'application/pdf',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+    cb(null, allowed.includes(file.mimetype));
+  },
+});
+
+// POST /api/analyze-brand-kit — upload brand assets and use Gemini Vision to extract brand info
+app.post('/api/analyze-brand-kit', brandKitUpload.array('files', 10), async (req, res) => {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY not configured' });
+    if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
+
+    // Build Gemini parts: images as inline base64, non-images as text description
+    const parts = [];
+    for (const file of req.files) {
+      if (file.mimetype.startsWith('image/')) {
+        parts.push({
+          inlineData: {
+            mimeType: file.mimetype,
+            data: file.buffer.toString('base64'),
+          }
+        });
+      } else {
+        // For PDFs/docs, include a text note — Gemini supports PDF inline too
+        parts.push({
+          inlineData: {
+            mimeType: file.mimetype,
+            data: file.buffer.toString('base64'),
+          }
+        });
+      }
+    }
+
+    parts.push({
+      text: `Analyze these brand assets (logos, guidelines, style guides, etc.) and extract brand information. Return a JSON object with these fields:
+- name: the brand name (if identifiable)
+- description: a brief brand description
+- primaryColor: the primary brand color as a hex code (e.g. "#FF6B35")
+- secondaryColor: the secondary brand color as a hex code
+- industry: the brand's industry (one of: Retail, Other)
+- tone: the brand's tone of voice (e.g. "Bold and adventurous", "Warm and approachable")
+- visualStyle: the visual design style (e.g. "Clean, modern, and premium")
+- websiteUrl: the brand's website URL if visible
+
+Return ONLY valid JSON, no markdown fences, no explanation.`
+    });
+
+    const bkPrimaryModel = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+    const bkModelsToTry = [bkPrimaryModel, ...GEMINI_FALLBACK_MODELS.filter(m => m !== bkPrimaryModel)];
+    let bkLastError = null;
+    let brandProfile = null;
+
+    for (const model of bkModelsToTry) {
+      const MAX_RETRIES = 3;
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+          const geminiResp = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts }],
+              generationConfig: { temperature: 0.3, maxOutputTokens: 1024 },
+            }),
+          });
+
+          if (geminiResp.status === 503 || geminiResp.status === 429) {
+            const backoff = Math.pow(2, attempt) * 1000;
+            console.warn(`[Brand Kit Analysis] ${geminiResp.status} from ${model}, attempt ${attempt}/${MAX_RETRIES}, backoff ${backoff}ms`);
+            bkLastError = `Gemini API returned ${geminiResp.status}`;
+            await new Promise(r => setTimeout(r, backoff));
+            continue;
+          }
+
+          if (!geminiResp.ok) {
+            const errData = await geminiResp.json().catch(() => ({}));
+            throw new Error(errData.error?.message || `Gemini API returned ${geminiResp.status}`);
+          }
+
+          const data = await geminiResp.json();
+          const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          const jsonStr = text.replace(/```json\s*\n?/g, '').replace(/```\s*$/g, '').trim();
+          brandProfile = JSON.parse(jsonStr);
+          break;
+        } catch (err) {
+          bkLastError = err.message;
+          console.warn(`[Brand Kit Analysis] Error with ${model}, attempt ${attempt}/${MAX_RETRIES}: ${err.message}`);
+          if (attempt < MAX_RETRIES) {
+            const backoff = Math.pow(2, attempt) * 1000;
+            await new Promise(r => setTimeout(r, backoff));
+          }
+        }
+      }
+      if (brandProfile) break;
+      console.warn(`[Brand Kit Analysis] Exhausted retries for ${model}, trying next fallback...`);
+    }
+
+    if (!brandProfile) {
+      throw new Error(bkLastError || 'All models failed');
+    }
+
+    res.json({ brandProfile });
+  } catch (err) {
+    console.error('Brand kit analysis failed:', err.message);
+    res.status(500).json({ error: 'Brand kit analysis failed: ' + err.message });
+  }
+});
+
+// POST /api/detect-industry — auto-detect industry from brand name using Gemini
+app.post('/api/detect-industry', async (req, res) => {
+  try {
+    const { brand_name } = req.body;
+    if (!brand_name || !brand_name.trim()) {
+      return res.status(400).json({ error: 'brand_name is required' });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: 'AI not configured' });
+    }
+
+    const idPrimaryModel = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+    const idModelsToTry = [idPrimaryModel, ...GEMINI_FALLBACK_MODELS.filter(m => m !== idPrimaryModel)];
+
+    const prompt = `Given the brand name "${brand_name.trim()}", predict the most likely industry this brand belongs to. You MUST choose from this exact list if possible: Retail, Consumer Goods, Manufacturing, Auto, Energy. Use these exact names — for example, use "Consumer Goods" (not "Consumer"), use "Retail" (not "Retailer"). Only if NONE of those five fit, return the most appropriate industry name (e.g. "Healthcare", "Financial Services", "Travel", "Technology", "Media & Entertainment", "Education", "Real Estate", "Food & Beverage", "Telecommunications", "Sports"). Return ONLY the industry name, nothing else. No explanation, no punctuation — just the industry name.`;
+
+    let industry = null;
+    let idLastError = null;
+
+    for (const model of idModelsToTry) {
+      const MAX_RETRIES = 3;
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+          const geminiResp = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ role: 'user', parts: [{ text: prompt }] }],
+              generationConfig: { temperature: 0.1, maxOutputTokens: 50 },
+            }),
+          });
+
+          if (geminiResp.status === 503 || geminiResp.status === 429) {
+            const backoff = Math.pow(2, attempt) * 1000;
+            console.warn(`[Industry Detection] ${geminiResp.status} from ${model}, attempt ${attempt}/${MAX_RETRIES}, backoff ${backoff}ms`);
+            idLastError = `Gemini API returned ${geminiResp.status}`;
+            await new Promise(r => setTimeout(r, backoff));
+            continue;
+          }
+
+          if (!geminiResp.ok) {
+            throw new Error(`Gemini API returned ${geminiResp.status}`);
+          }
+
+          const data = await geminiResp.json();
+          industry = (data.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+          break;
+        } catch (err) {
+          idLastError = err.message;
+          console.warn(`[Industry Detection] Error with ${model}, attempt ${attempt}/${MAX_RETRIES}: ${err.message}`);
+          if (attempt < MAX_RETRIES) {
+            const backoff = Math.pow(2, attempt) * 1000;
+            await new Promise(r => setTimeout(r, backoff));
+          }
+        }
+      }
+      if (industry) break;
+      console.warn(`[Industry Detection] Exhausted retries for ${model}, trying next fallback...`);
+    }
+
+    res.json({ industry: industry || null, brand_name: brand_name.trim() });
+  } catch (err) {
+    console.error('Industry detection failed:', err.message);
+    res.json({ industry: null, error: err.message });
+  }
+});
+// POST /api/images/logo — find a brand logo (Apistemic / Google) and copy it into our storage
+app.post('/api/images/logo', async (req, res) => {
+  try {
+    const { brand, websiteUrl } = req.body;
+    if (!brand) return res.status(400).json({ error: 'brand is required' });
+
+    const result = await fetchBrandLogo(brand, websiteUrl);
+    if (!result.found || !result.url) return res.json(result);
+
+    if (storage.isConfigured()) {
+      try {
+        const resp = await fetch(result.url, { signal: AbortSignal.timeout(10000) });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const mimeType = (resp.headers.get('content-type') || 'image/png').split(';')[0].trim();
+        if (!mimeType.startsWith('image/')) throw new Error('Not an image: ' + mimeType);
+        const buf = Buffer.from(await resp.arrayBuffer());
+        const slug = String(brand).replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+        const url = await storage.uploadImage(buf.toString('base64'), mimeType, 'user-logos/tmp', `${slug}-logo`);
+        console.log(`[Logo] Copied ${result.source} logo for "${brand}" to storage: ${url}`);
+        return res.json({ found: true, url, source: result.source });
+      } catch (copyErr) {
+        console.warn('[Logo] Storage copy failed, using original URL:', copyErr.message);
+      }
+    }
+    res.json({ found: true, url: result.url, source: result.source });
+  } catch (err) {
+    console.error('Logo fetch failed:', err);
+    res.status(500).json({ error: 'Logo fetch failed: ' + err.message });
+  }
+});
+
+// POST /api/images/upload — upload a logo chosen in the New Presentation wizard.
+// Accepts { data: <data URI>, filename } (what the wizard sends) or { imageBase64, mimeType }.
+app.post('/api/images/upload', async (req, res) => {
+  try {
+    if (!storage.isConfigured()) return res.status(503).json({ error: 'File storage is not configured' });
+    const { data, imageBase64, mimeType } = req.body;
+    let url;
+    if (data && String(data).startsWith('data:')) {
+      if (!/^data:image\//.test(data)) return res.status(400).json({ error: 'Only images are allowed' });
+      url = await storage.uploadDataUri(data, 'user-logos/tmp', 'logo');
+    } else if (imageBase64) {
+      if (mimeType && !String(mimeType).startsWith('image/')) return res.status(400).json({ error: 'Only images are allowed' });
+      url = await storage.uploadImage(imageBase64, mimeType || 'image/png', 'user-logos/tmp');
+    } else {
+      return res.status(400).json({ error: 'data (data URI) or imageBase64 is required' });
+    }
+    res.json({ url });
+  } catch (err) {
+    console.error('Image upload failed:', err);
+    res.status(500).json({ error: 'Upload failed: ' + err.message });
+  }
+});
+
+// GET /api/images/proxy — Server-side image proxy
+// Fetches an external image URL server-side and streams it back to the browser.
+// Avoids CORS issues when displaying logos from Apistemic/Google Favicon.
+app.get('/api/images/proxy', async (req, res) => {
+  const imageUrl = req.query.url;
+  if (!imageUrl) return res.status(400).json({ error: 'url query param is required' });
+
+  // Basic URL validation
+  try {
+    const parsed = new URL(imageUrl);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return res.status(400).json({ error: 'Only http/https URLs allowed' });
+    }
+  } catch {
+    return res.status(400).json({ error: 'Invalid URL' });
+  }
+
+  const https = require('https');
+  const http = require('http');
+
+  const doFetch = (url, redirects = 3) => {
+    return new Promise((resolve, reject) => {
+      const protocol = url.startsWith('https') ? https : http;
+      const req = protocol.get(url, { timeout: 10000 }, (resp) => {
+        if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location && redirects > 0) {
+          const loc = resp.headers.location.startsWith('http')
+            ? resp.headers.location
+            : new URL(resp.headers.location, url).href;
+          resp.resume();
+          return doFetch(loc, redirects - 1).then(resolve).catch(reject);
+        }
+        if (resp.statusCode !== 200) {
+          resp.resume();
+          return reject(new Error(`HTTP ${resp.statusCode}`));
+        }
+        resolve(resp);
+      });
+      req.on('error', reject);
+      req.on('timeout', function() { this.destroy(); reject(new Error('timeout')); });
+    });
+  };
+
+  try {
+    const imageResp = await doFetch(imageUrl);
+    const contentType = imageResp.headers['content-type'] || 'image/png';
+
+    // Only proxy images
+    if (!contentType.startsWith('image/')) {
+      imageResp.resume();
+      return res.status(400).json({ error: 'URL does not point to an image' });
+    }
+
+    // Enforce 5MB limit
+    const contentLength = parseInt(imageResp.headers['content-length'] || '0', 10);
+    if (contentLength > 5 * 1024 * 1024) {
+      imageResp.resume();
+      return res.status(413).json({ error: 'Image too large (max 5MB)' });
+    }
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache for 24h
+    imageResp.pipe(res);
+  } catch (err) {
+    console.error('[ImageProxy] Failed to fetch:', err.message);
+    res.status(502).json({ error: 'Failed to fetch image: ' + err.message });
+  }
+});
+
 // ═══════════════════════════════════════════════
 // APP-SPECIFIC — Presentations CRUD
 // ═══════════════════════════════════════════════
@@ -1340,6 +1768,12 @@ app.post('/api/presentations', async (req, res) => {
       brandVisualStyle: parsedData.brandVisualStyle || '',
       brandLogoUrl: parsedData.brandLogoUrl || '',
       brandDescription: parsedData.brandDescription || '',
+      brandWebsiteUrl: parsedData.brandWebsiteUrl || '',
+      brandIndustry: parsedData.brandIndustry || '',
+      brandKitId: parsedData.brandKitId ? String(parsedData.brandKitId) : '',
+      brandKitSource: parsedData.brandKitSource || '',
+      // Output language: data.language (wizard) wins, top-level req.body.language (API callers e.g. DemoForge) accepted too
+      language: [parsedData.language, req.body.language].find(l => typeof l === 'string' && l.trim())?.trim() || 'English',
     } : null;
 
     const result = await query(
@@ -1358,8 +1792,21 @@ app.post('/api/presentations', async (req, res) => {
       try {
         await copyTemplateSlides(presId, brandData);
         console.log(`[WebTemplate] Copied template slides to presentation ${presId}`);
-        // Start background image generation
-        generateUserBackgroundsInBackground(presId, brandData).catch(err => {
+        // Background chain: translate slide text (non-English only), then generate background images.
+        // Runs after the response so API callers (e.g. DemoForge, 30s timeout) aren't held up.
+        // Status stays 'generating' until generateUserBackgroundsInBackground marks it complete.
+        (async () => {
+          if (!isEnglishLanguage(brandData.language)) {
+            try {
+              await translatePresentationSlides(presId, brandData.language, brandData.brandName);
+            } catch (trErr) {
+              console.error(`[Translate] Failed for presentation ${presId}:`, trErr.message);
+              await query('UPDATE presentations SET status_message = ? WHERE id = ?',
+                [`Translation to ${brandData.language} failed — slides left in English`, presId]).catch(() => {});
+            }
+          }
+          await generateUserBackgroundsInBackground(presId, brandData);
+        })().catch(err => {
           console.error(`[WebTemplate] Background generation failed for presentation ${presId}:`, err);
         });
       } catch (copyErr) {
@@ -1902,6 +2349,133 @@ async function copyTemplateSlides(presentationId, brandData) {
 
 function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// ═══════════════════════════════════════════════
+// Output language — translate copied template slide text
+// ═══════════════════════════════════════════════
+// Web-template slides are copied verbatim from the (English) master template, so a
+// non-English Output Language needs an explicit translation pass over the slide HTML.
+
+function isEnglishLanguage(language) {
+  return !language || /^english$/i.test(String(language).trim());
+}
+
+// Structural fingerprint used to reject translations that altered the markup:
+// the ordered list of tag names plus the multiset of class attributes.
+function htmlStructureSignature(html) {
+  const s = String(html || '');
+  const tags = (s.match(/<\/?([a-zA-Z][a-zA-Z0-9-]*)/g) || []).map(t => t.toLowerCase()).join(',');
+  const classes = (s.match(/class\s*=\s*(['"])(.*?)\1/g) || []).sort().join('|');
+  return tags + '#' + classes;
+}
+
+/**
+ * Translate the visible text of several slide HTML snippets in one Gemini call.
+ * @param {Array<{slideIndex:number, html:string}>} items
+ * @returns {Promise<Object<number,string>>} map slideIndex → translated HTML (only validated entries)
+ */
+async function translateSlideHtmlBatch(items, language, brandName) {
+  const work = (items || []).filter(it => it && it.html && it.html.trim());
+  if (work.length === 0 || isEnglishLanguage(language)) return {};
+
+  const ai = getGenAIClient();
+  const primaryModel = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+  const modelsToTry = [primaryModel, ...GEMINI_FALLBACK_MODELS.filter(m => m !== primaryModel)];
+
+  const keep = [brandName, 'Salesforce', 'Agentforce', 'Data Cloud', 'Data 360', 'Slack', 'Tableau', 'MuleSoft', 'Einstein']
+    .filter(Boolean).map(n => `"${n}"`).join(', ');
+
+  const prompt = `You are a professional presentation translator. Translate the VISIBLE TEXT of each HTML slide snippet below into ${language}.
+
+STRICT RULES:
+1. Translate ONLY human-readable text between tags. Write natural, fluent, business-appropriate ${language}.
+2. Keep EVERY tag, attribute, class name, id, inline style, URL, <img> and entity EXACTLY as given. Do not add, remove, reorder or rename any tag or attribute.
+3. Do NOT translate these names — keep them exactly as written: ${keep}.
+4. Keep placeholders, numbers, dates and punctuation structure intact. Keep text roughly the same length so it still fits the layout.
+5. If a snippet has no translatable text, return it unchanged.
+
+INPUT (JSON array):
+${JSON.stringify(work.map(it => ({ slideIndex: it.slideIndex, html: it.html })))}
+
+Return ONLY a valid JSON array of objects with "slideIndex" (number) and "html" (string), one per input item. No markdown, no code fences, no explanation.`;
+
+  let lastError = null;
+  for (const model of modelsToTry) {
+    const MAX_RETRIES = 3;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        console.log(`[Translate] ${work.length} slide(s) → ${language} model=${model} attempt=${attempt}/${MAX_RETRIES}`);
+        const response = await ai.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: { temperature: 0.2, maxOutputTokens: 32768 },
+        });
+        const parts = response.candidates?.[0]?.content?.parts || [];
+        let text = parts.filter(p => p.text !== undefined && !p.thought).map(p => p.text).join('\n').trim();
+        text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+        const parsed = JSON.parse(text);
+        if (!Array.isArray(parsed)) throw new Error('Translation response was not an array');
+
+        const originals = Object.fromEntries(work.map(it => [it.slideIndex, it.html]));
+        const out = {};
+        for (const item of parsed) {
+          if (typeof item?.slideIndex !== 'number' || typeof item?.html !== 'string') continue;
+          const orig = originals[item.slideIndex];
+          if (orig === undefined) continue;
+          if (htmlStructureSignature(item.html) !== htmlStructureSignature(orig)) {
+            console.warn(`[Translate] Slide ${item.slideIndex}: markup changed during translation — keeping original`);
+            continue;
+          }
+          out[item.slideIndex] = item.html;
+        }
+        return out;
+      } catch (err) {
+        lastError = err;
+        const errMsg = err.message || String(err);
+        const retryable = /429|503|overloaded|exceeded|rate.limit|resource.exhausted|unavailable|JSON/i.test(errMsg);
+        if (retryable && attempt < MAX_RETRIES) {
+          const backoff = Math.pow(2, attempt) * 1000;
+          console.warn(`[Translate] Retryable error with ${model}: ${errMsg}, retrying in ${backoff}ms`);
+          await new Promise(r => setTimeout(r, backoff));
+          continue;
+        }
+        console.warn(`[Translate] ${model} failed: ${errMsg}`);
+        break;
+      }
+    }
+  }
+  throw lastError || new Error('All Gemini models failed for translation');
+}
+
+/** Translate a single slide's HTML. Returns the original HTML if translation fails validation. */
+async function translateSlideHtml(html, language, brandName) {
+  if (isEnglishLanguage(language) || !html || !html.trim()) return html;
+  const result = await translateSlideHtmlBatch([{ slideIndex: 0, html }], language, brandName);
+  return result[0] || html;
+}
+
+/** Translate every slide of a web-template presentation in place (presentation_slides.html_content). */
+async function translatePresentationSlides(presentationId, language, brandName) {
+  if (isEnglishLanguage(language)) return 0;
+  const slides = await query(
+    'SELECT slide_index, html_content FROM presentation_slides WHERE presentation_id = ? ORDER BY slide_index',
+    [presentationId]
+  );
+  const items = slides.map(s => ({ slideIndex: s.slide_index, html: s.html_content || '' }));
+  const translated = await translateSlideHtmlBatch(items, language, brandName);
+  let count = 0;
+  for (const [idx, html] of Object.entries(translated)) {
+    await query('UPDATE presentation_slides SET html_content = ? WHERE presentation_id = ? AND slide_index = ?',
+      [html, presentationId, Number(idx)]);
+    count++;
+  }
+  console.log(`[Translate] Presentation ${presentationId}: translated ${count}/${items.length} slides to ${language}`);
+  if (count < items.filter(i => i.html.trim()).length) {
+    await query('UPDATE presentations SET status_message = ? WHERE id = ?',
+      [`Translated ${count} of ${items.length} slides to ${language}; the rest were left in English`, presentationId]).catch(() => {});
+  }
+  return count;
 }
 
 /**
@@ -2498,6 +3072,16 @@ app.post('/api/presentations/:id/web-slides/:slideIndex/apply-template', async (
     if (refBrandName && targetBrandName && refBrandName !== targetBrandName) {
       html = html.replace(new RegExp(escapeRegex(refBrandName), 'gi'), targetBrandName);
       css = css.replace(new RegExp(escapeRegex(refBrandName), 'gi'), targetBrandName);
+    }
+
+    // Keep the presentation's Output Language: template HTML comes from the English master
+    const presLanguage = (userBrandData && userBrandData.language) || 'English';
+    if (!isEnglishLanguage(presLanguage)) {
+      try {
+        html = await translateSlideHtml(html, presLanguage, targetBrandName || refBrandName);
+      } catch (trErr) {
+        console.warn(`[Translate] apply-template slide ${slideIndex} → ${presLanguage} failed, keeping English:`, trErr.message);
+      }
     }
 
     // Update the user's slide
@@ -5091,6 +5675,8 @@ async function generateFreshBackgroundPrompts(slides, brandData) {
   const brandVisualStyle = brandData.brandVisualStyle || '';
   const brandColorPrimary = brandData.brandColorPrimary || '';
   const brandColorSecondary = brandData.brandColorSecondary || '';
+  const brandIndustry = brandData.brandIndustry || '';
+  const brandWebsiteUrl = brandData.brandWebsiteUrl || '';
 
   const slideList = slides.map(s => `[Slide ${s.slide_index}] "${s.slide_name || 'Untitled'}"`).join('\n');
 
@@ -5098,7 +5684,9 @@ async function generateFreshBackgroundPrompts(slides, brandData) {
 
 BRAND:
 - Name: "${brandName}"
+${brandIndustry ? `- Industry: ${brandIndustry}` : ''}
 ${brandDescription ? `- About: ${brandDescription}` : ''}
+${brandWebsiteUrl ? `- Website: ${brandWebsiteUrl}` : ''}
 ${brandTone ? `- Tone: ${brandTone}` : ''}
 ${brandVisualStyle ? `- Visual Style: ${brandVisualStyle}` : ''}
 ${brandColorPrimary ? `- Primary Color: ${brandColorPrimary}` : ''}
@@ -5116,7 +5704,7 @@ RULES:
 7. DO NOT include the brand name "${brandName}" as text in the image — the brand name and logo are added separately as overlays
 8. The photos should work well as backgrounds with text overlay (slight blur, good contrast areas)
 9. Match the slide purpose: cover slides need dramatic/hero images, data slides need subtle/clean backgrounds, closing slides need warm/inviting imagery
-10. CRITICAL: Every single photo must unmistakably be about "${brandName}" — if someone saw just the photo, they should be able to guess the brand's industry. Show the INDUSTRY, not the brand name or logo.
+10. CRITICAL: Every single photo must unmistakably be about "${brandName}" — if someone saw just the photo, they should be able to guess the brand's industry${brandIndustry ? ` (${brandIndustry})` : ''}. Show the INDUSTRY, not the brand name or logo.
 
 SLIDES:
 ${slideList}
@@ -5313,8 +5901,10 @@ You MUST follow this style directive precisely so this photo looks like it belon
     const brandTone = brandData.brandTone || '';
     prompt += `\n\nBRAND CONTEXT (CRITICAL — the photo MUST reflect this brand):
 - Brand: "${brandName}"`;
+    if (brandData.brandIndustry) prompt += `\n- Industry: ${brandData.brandIndustry}`;
     if (brandDescription) prompt += `\n- About: ${brandDescription}`;
     if (brandTone) prompt += `\n- Tone: ${brandTone}`;
+    if (brandData.brandVisualStyle) prompt += `\n- Visual Style: ${brandData.brandVisualStyle}`;
     prompt += `\nThe photo MUST be relevant to "${brandName}" and its industry/products. Do NOT show products or imagery from other industries.`;
   }
 
@@ -5355,6 +5945,7 @@ BRAND:
 - Brand Name: "${brandName}"
 - Primary Color: ${brandColorPrimary}
 - Secondary Color: ${brandColorSecondary}
+${brandData.brandIndustry ? `- Industry: ${brandData.brandIndustry}` : ''}
 ${brandTone ? `- Tone: ${brandTone}` : ''}
 ${brandVisualStyle ? `- Visual Style: ${brandVisualStyle}` : ''}
 

@@ -638,61 +638,291 @@
     <!-- APP: New Presentation Dialog                   -->
     <!-- ═══════════════════════════════════════════════ -->
     <div id="new-presentation-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.5);">
-      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-8" style="max-height: 90vh; overflow-y: auto;">
-        <h3 class="text-lg font-bold text-gray-800 mb-1">New Presentation</h3>
-        <p class="text-sm text-gray-500 mb-5">Select a brand kit and we'll create a presentation with branded background images automatically.</p>
-
-        <!-- Brand Kit Section -->
-        <div id="np-brandkit-section" style="background: linear-gradient(135deg, #f0f7ff, #e8f2ff); border-radius: 10px; padding: 16px; border: 1px dashed #b0d4f1; margin-bottom: 16px;">
-          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-            <span style="font-size: 16px;">🎨</span>
-            <span style="font-size: 13px; font-weight: 700; color: #032D60;">Add Brand Kit</span>
+      <div class="bg-white rounded-2xl shadow-2xl w-full max-w-[746px]" style="max-height: 85vh; display: flex; flex-direction: column;">
+        <!-- Wizard header with progress -->
+        <div style="padding: 18px 28px 0; flex-shrink: 0;">
+          <h3 id="np-brand-dialog-title" style="font-size: 20px; font-weight: 700; color: #032D60; margin: 0 0 4px;">New Presentation</h3>
+          <p id="np-wizard-subtitle" style="font-size: 13px; color: #888; margin: 0 0 14px;">Let's set up your presentation in a few quick steps.</p>
+          <!-- Progress bar -->
+          <div style="display: flex; align-items: center; gap: 0; margin-bottom: 16px;">
+            <div id="np-wiz-prog-1" style="flex: 1; height: 4px; border-radius: 2px; background: #0176D3; transition: background 0.3s;"></div>
+            <div style="width: 4px;"></div>
+            <div id="np-wiz-prog-2" style="flex: 1; height: 4px; border-radius: 2px; background: #e5e7eb; transition: background 0.3s;"></div>
           </div>
-          <p style="font-size: 12px; color: #5a6f85; margin: 0 0 12px; line-height: 1.4;">
-            Select a brand kit to match your presentation to your company's colors, tone, and visual style.
-          </p>
-
-          <!-- Success badge (hidden by default) -->
-          <div id="np-brandkit-success" class="hidden" style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; background: #E8F5E9; color: #2E7D32; font-size: 11px; font-weight: 600; margin-bottom: 10px;">
-            ✓ Brand kit applied
+          <!-- Step labels -->
+          <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
+            <span id="np-wiz-label-1" style="font-size: 11px; font-weight: 700; color: #0176D3; transition: color 0.3s;">1. Presentation Settings</span>
+            <span id="np-wiz-label-2" style="font-size: 11px; font-weight: 600; color: #9ca3af; transition: color 0.3s;">2. Brand Identity</span>
           </div>
+        </div>
 
-          <div style="display: flex; gap: 8px; flex-wrap: wrap; position: relative;">
-            <div style="position: relative;" id="np-brandkit-picker-wrap">
-              <button type="button" onclick="toggleBrandKitPicker()" style="padding: 7px 14px; font-size: 12px; font-weight: 600; color: #0176D3; background: rgba(255,255,255,0.85); border: 1px solid #b0d4f1; border-radius: 7px; cursor: pointer;">
-                📋 Select Brand Kit
-              </button>
-              <div id="np-brandkit-picker" class="hidden" style="position: absolute; top: 100%; left: 0; margin-top: 6px; width: 280px; max-height: 240px; overflow-y: auto; background: #fff; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); border: 1px solid #e5e7eb; z-index: 100;">
-                <div id="np-brandkit-picker-content" style="padding: 20px; text-align: center; font-size: 13px; color: #888;">
-                  ⏳ Loading brand kits...
-                </div>
-              </div>
+        <!-- Scrollable wizard body -->
+        <div style="flex: 1; overflow-y: auto; padding: 0 28px;">
+
+          <!-- ═══ STEP 1: Presentation Settings ═══ -->
+          <div id="np-wizard-step-1" style="display: flex; flex-direction: column; gap: 12px;">
+            <!-- Intro callout -->
+            <div style="background: linear-gradient(135deg, #f0f7ff, #e8f2ff); border-radius: 10px; padding: 14px 16px; border: 1px solid #d0e3f7;">
+              <p style="margin: 0; font-size: 13px; color: #032D60; line-height: 1.5;">
+                <strong>Slide Generator</strong> creates a fully branded presentation from your master template — background imagery, logos, colors, and copy all matched to your brand. Just name your presentation and we'll handle the rest.
+              </p>
+            </div>
+            <!-- Presentation Name -->
+            <div>
+              <label class="block text-xs font-bold mb-1" style="color: #032D60;">Presentation Name <span style="color: #ea001e;">*</span></label>
+              <input id="np-brand-name" type="text" placeholder="e.g. Nike Q4 Executive Briefing" oninput="npClearFieldError('np-brand-name'); npAutoFillBrandName();" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+              <p style="font-size: 11px; color: #9ca3af; margin: 6px 0 0 0; line-height: 1.4;">Give your presentation a descriptive name. The brand name will be auto-filled from this.</p>
+            </div>
+            <!-- Brand Name (auto-filled) -->
+            <div>
+              <label class="block text-xs font-bold mb-1" style="color: #032D60;">Brand Name <span style="color: #ea001e;">*</span></label>
+              <input id="np-brand-brand-name" type="text" placeholder="e.g. Nike, Patagonia, Lululemon" oninput="npClearFieldError('np-brand-brand-name')" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+              <p style="font-size: 11px; color: #9ca3af; margin: 6px 0 0 0; line-height: 1.4;">Auto-filled from the presentation name. Edit if needed.</p>
+            </div>
+            <!-- Output Language -->
+            <div>
+              <label class="block text-xs font-bold mb-1" style="color: #032D60;">Output Language</label>
+              <select id="np-brand-language" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" style="background: white;">
+                <option value="Arabic">Arabic</option>
+                <option value="Bulgarian">Bulgarian</option>
+                <option value="Chinese">Chinese</option>
+                <option value="Croatian">Croatian</option>
+                <option value="Czech">Czech</option>
+                <option value="Danish">Danish</option>
+                <option value="Dutch">Dutch</option>
+                <option value="English" selected>English</option>
+                <option value="Filipino">Filipino</option>
+                <option value="Finnish">Finnish</option>
+                <option value="French">French</option>
+                <option value="German">German</option>
+                <option value="Greek">Greek</option>
+                <option value="Hindi">Hindi</option>
+                <option value="Indonesian">Indonesian</option>
+                <option value="Italian">Italian</option>
+                <option value="Japanese">Japanese</option>
+                <option value="Korean">Korean</option>
+                <option value="Malay">Malay</option>
+                <option value="Polish">Polish</option>
+                <option value="Portuguese">Portuguese</option>
+                <option value="Romanian">Romanian</option>
+                <option value="Russian">Russian</option>
+                <option value="Slovak">Slovak</option>
+                <option value="Spanish">Spanish</option>
+                <option value="Swedish">Swedish</option>
+                <option value="Tamil">Tamil</option>
+                <option value="Turkish">Turkish</option>
+                <option value="Ukrainian">Ukrainian</option>
+              </select>
+              <p style="font-size: 11px; color: #9ca3af; margin: 6px 0 0 0; line-height: 1.4;">All generated content will be in this language.</p>
             </div>
           </div>
 
-          <div style="display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 12px; color: #5a6f85; line-height: 1.4;">
-            <span>💡</span>
-            <span>
-              Don't have a Brand Kit?
-              <a href="https://brandkit-builder.aubreydemo.com/" target="_blank" rel="noopener noreferrer" style="color: #0176D3; font-weight: 600; text-decoration: none;">
-                Let Brand Kit Builder make you one →
-              </a>
-            </span>
+          <!-- ═══ STEP 2: Brand Identity ═══ -->
+          <div id="np-wizard-step-2" style="display: none; flex-direction: column; gap: 12px;">
+            <!-- Why brand kit callout -->
+            <div style="background: linear-gradient(135deg, #FFFBEB, #FEF3C7); border-radius: 10px; padding: 14px 16px; border: 1px solid rgba(245,158,11,0.25);">
+              <p style="margin: 0; font-size: 12px; color: #92400E; line-height: 1.5;">
+                <strong>Why do I need a brand kit?</strong> Slide Generator uses your brand kit to style every slide — background imagery, colors, logo, tone, and visual style will all match your brand automatically.
+              </p>
+            </div>
+            <!-- Brand Kit section (required) -->
+            <div id="np-brand-kit-section" style="margin-bottom: 4px;">
+              <div style="background: linear-gradient(135deg, #f0f7ff, #e8f2ff); border-radius: 10px; padding: 16px; border: 1px dashed #b0d4f1;">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                  <span style="font-size: 16px;">🎨</span>
+                  <span style="font-size: 13px; font-weight: 700; color: #032D60;">Brand Kit <span style="color: #ea001e;">*</span></span>
+                </div>
+                <p style="font-size: 12px; color: #5a6f85; margin: 0 0 12px; line-height: 1.4;">
+                  Create a new brand kit, select one from Brand Kit Builder, or upload brand guidelines. We'll auto-fill colors, tone, style, and more.
+                </p>
+
+                <!-- Applied brand kit badge (hidden until a kit is applied) -->
+                <div id="np-bk-applied-badge" style="display: none; margin-bottom: 12px; padding: 10px 14px; border-radius: 8px; background: #E8F5E9; border: 1px solid #A5D6A7;">
+                  <div style="display: flex; align-items: center; gap: 8px; justify-content: space-between;">
+                    <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                      <span style="font-size: 14px;">✓</span>
+                      <div style="min-width: 0;">
+                        <div style="font-size: 12px; font-weight: 700; color: #2E7D32; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                          <span id="np-bk-applied-name">Brand Kit</span> applied
+                        </div>
+                        <a id="np-bk-applied-link" href="#" target="_blank" rel="noopener noreferrer" style="font-size: 11px; color: #0176D3; text-decoration: none;">
+                          View & edit in Brand Kit Builder →
+                        </a>
+                      </div>
+                    </div>
+                    <button type="button" onclick="npChangeBrandKit()" style="padding: 4px 10px; font-size: 11px; font-weight: 600; color: #5a6f85; background: white; border: 1px solid #d1d5db; border-radius: 6px; cursor: pointer; white-space: nowrap;">Change</button>
+                  </div>
+                </div>
+
+                <!-- File chips (for upload) -->
+                <div id="np-brand-kit-chips" style="display: none; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;"></div>
+                <!-- Success badge (for upload analyze) -->
+                <div id="np-brand-kit-done" style="display: none; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; background: #E8F5E9; color: #2E7D32; font-size: 11px; font-weight: 600; margin-bottom: 10px;">
+                  ✓ Brand kit analyzed — fields updated below
+                </div>
+
+                <!-- Buttons row: Create → or → Select → Upload -->
+                <div id="np-bk-buttons-row" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                  <button type="button" onclick="npCreateBrandKitInline()" style="padding: 7px 14px; font-size: 12px; font-weight: 700; color: #fff; background: linear-gradient(135deg, #0176D3, #014486); border: none; border-radius: 7px; cursor: pointer;">
+                    ✨ Create Brand Kit
+                  </button>
+                  <span style="font-size: 12px; color: #9ca3af; font-weight: 600;">or</span>
+                  <!-- Brand Kit Builder picker -->
+                  <div style="position: relative; display: inline-block;" id="np-bk-picker-container">
+                    <button onclick="npOpenBrandKitPicker()" type="button"
+                      style="padding: 7px 14px; font-size: 12px; font-weight: 600; color: #6d28d9; background: rgba(255,255,255,0.85); border: 1px solid #c4b5fd; border-radius: 7px; cursor: pointer;">
+                      📋 Select Brand Kit
+                    </button>
+                    <div id="np-bk-picker-dropdown" style="display: none; position: absolute; bottom: 100%; left: 0; margin-bottom: 6px; width: 280px; max-height: 240px; overflow-y: auto; background: #fff; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); border: 1px solid #e5e7eb; z-index: 100;">
+                      <div id="np-bk-picker-content" style="padding: 4px 0;"></div>
+                    </div>
+                  </div>
+                  <button type="button" onclick="document.getElementById('np-brand-kit-input').click()" style="padding: 7px 14px; font-size: 12px; font-weight: 600; color: #0176D3; background: rgba(255,255,255,0.85); border: 1px solid #b0d4f1; border-radius: 7px; cursor: pointer;">
+                    📄 Upload Brand Kit
+                  </button>
+                  <input id="np-brand-kit-input" type="file" multiple accept="image/*,application/pdf,.pptx,.docx" onchange="npHandleBrandKitFiles(this.files); this.value='';" style="display: none;">
+                  <button id="np-brand-kit-analyze-btn" type="button" onclick="npAnalyzeBrandKit()" style="display: none; padding: 7px 14px; font-size: 12px; font-weight: 700; color: #fff; background: linear-gradient(135deg, #0176D3, #032D60); border: none; border-radius: 7px; cursor: pointer;">
+                    ✨ Analyze & Auto-fill
+                  </button>
+                </div>
+
+                <!-- Inline brand kit generation progress -->
+                <div id="np-bk-inline-generating" style="display: none; margin-top: 12px; padding: 16px; background: linear-gradient(135deg, #EBF5FF, #E0F0FF); border-radius: 10px; border: 1px solid #B3D9FF;">
+                  <div style="display: flex; align-items: center; gap: 10px;">
+                    <div style="width: 20px; height: 20px; border: 2.5px solid #0176D3; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+                    <div>
+                      <div style="font-size: 13px; font-weight: 700; color: #032D60;">Generating Brand Kit...</div>
+                      <div id="np-bk-inline-status" style="font-size: 11px; color: #5a6f85; margin-top: 2px;">Analyzing brand and creating assets</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ═══ Fields below brand kit — hidden until brand kit applied ═══ -->
+            <div id="np-wizard-step-2-fields" style="display: none; flex-direction: column; gap: 12px;">
+
+            <!-- Brand Kit Preview heading + overwrite notice -->
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+              <span style="font-size: 13px; font-weight: 700; color: #032D60; text-transform: uppercase; letter-spacing: 0.04em;">Brand Kit Preview</span>
+            </div>
+            <p id="np-bk-overwrite-notice" style="display: none; font-size: 11px; color: #92400E; background: #FFFBEB; border: 1px solid rgba(245,158,11,0.25); border-radius: 6px; padding: 8px 12px; margin: 0 0 12px; line-height: 1.4;">
+              ⚠️ Changes to these fields will update your brand kit in Brand Kit Builder when you create this presentation.
+            </p>
+
+            <!-- Industry with auto-detect (moved to first position) -->
+            <div>
+              <label class="block text-xs font-bold mb-1" style="color: #032D60;">Industry <span style="color: #ea001e;">*</span></label>
+              <div style="position: relative;">
+                <select id="np-brand-industry" onchange="npClearFieldError('np-brand-industry'); npToggleCustomIndustry();" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" style="background: white;">
+                  <option value="">Select industry...</option>
+                  <option>Retail</option>
+                  <option>Consumer Goods</option>
+                  <option>Manufacturing</option>
+                  <option>Auto</option>
+                  <option>Energy</option>
+                  <option>Other</option>
+                </select>
+                <div id="np-industry-auto-detect" style="display: none; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 11px; color: #0176D3; font-weight: 600;">
+                  <span id="np-industry-detecting-spinner" style="display: none;">✨ Detecting...</span>
+                  <span id="np-industry-detected-badge" style="display: none; background: #E8F5E9; color: #2E7D32; padding: 2px 8px; border-radius: 4px;">✓ Auto-detected</span>
+                </div>
+              </div>
+              <div id="np-custom-industry-wrapper" class="hidden" style="margin-top: 8px;">
+                <input id="np-brand-industry-custom" type="text" placeholder="e.g. Logistics, Insurance, Pharmaceuticals" oninput="npClearFieldError('np-brand-industry-custom')" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+                <p style="font-size: 11px; color: #9ca3af; margin: 6px 0 0 0; line-height: 1.4;">This industry isn't officially supported yet, but the AI will do its best.</p>
+              </div>
+            </div>
+
+            <!-- Logo section (wizard) -->
+            <div id="np-wizard-logo-section" style="margin-bottom: 12px;">
+              <label style="display: block; font-size: 12px; font-weight: 700; color: #032D60; margin-bottom: 6px;">Brand Logo</label>
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <div id="np-wizard-logo-preview" style="display: none;">
+                  <img id="np-wizard-logo-img" alt="Brand logo" style="max-width: 56px; max-height: 56px; object-fit: contain; border-radius: 6px; border: 1px solid #e5e7eb;" onerror="this.style.display='none'; document.getElementById('np-wizard-logo-fallback').style.display='flex';">
+                  <div id="np-wizard-logo-fallback" style="display: none; width: 56px; height: 56px; border-radius: 6px; border: 1px solid #e5e7eb; background: #E8F4FD; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; color: #0176D3;">🖼</div>
+                </div>
+                <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center; flex: 1;">
+                  <input id="np-wizard-logo-url" type="text" placeholder="Logo URL..." style="flex: 1; min-width: 120px; padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 12px; box-sizing: border-box;" oninput="npHandleLogoUrlInput(this.value)">
+                  <button type="button" onclick="document.getElementById('np-wizard-logo-file').click()" style="padding: 5px 10px; font-size: 11px; font-weight: 600; color: #0176D3; background: #E8F4FD; border: 1px solid #B4D6F0; border-radius: 6px; cursor: pointer; white-space: nowrap;">↑ Upload</button>
+                  <button type="button" onclick="npRefetchLogo()" style="padding: 5px 10px; font-size: 11px; font-weight: 600; color: #0176D3; background: #E8F4FD; border: 1px solid #B4D6F0; border-radius: 6px; cursor: pointer; white-space: nowrap;">🔄 Refetch</button>
+                  <button type="button" id="np-wizard-logo-clear" onclick="npClearLogo()" style="display: none; padding: 5px 8px; font-size: 13px; color: #C23934; background: none; border: none; cursor: pointer;" title="Clear logo">✕</button>
+                </div>
+              </div>
+              <input id="np-wizard-logo-file" type="file" accept="image/*" onchange="npHandleLogoFile(this)" style="display: none;">
+              <div id="np-wizard-logo-loading" style="display: none; margin-top: 6px; font-size: 11px; color: #888;">
+                <span style="display: inline-block; width: 12px; height: 12px; border: 2px solid #e5e7eb; border-top-color: #0176D3; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 4px;"></span>
+                Finding logo...
+              </div>
+            </div>
+
+            <!-- Brand Description -->
+            <div>
+              <label class="block text-xs font-bold mb-1" style="color: #032D60;">Brand Description</label>
+              <input id="np-brand-desc" type="text" placeholder="e.g. Global retailer specializing in outdoor gear" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+            </div>
+            <!-- Brand Website URL -->
+            <div>
+              <label class="block text-xs font-bold mb-1" style="color: #032D60;">Brand Website URL</label>
+              <input id="np-brand-website" type="url" placeholder="e.g. https://www.nike.com" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+            </div>
+            <!-- Brand Colors (2-column) -->
+            <div>
+              <label class="block text-xs font-bold mb-1" style="color: #032D60;">Brand Colors</label>
+              <div style="display: flex; gap: 16px;">
+                <div style="flex: 1;">
+                  <label style="display: block; font-size: 11px; font-weight: 600; color: #666; margin-bottom: 4px;">Primary</label>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <input id="np-brand-color-primary" type="color" value="#032D60" style="width: 36px; height: 36px; padding: 2px; border: 1px solid #d1d5db; border-radius: 8px; cursor: pointer; background: white;" oninput="document.getElementById('np-brand-color-primary-text').value=this.value">
+                    <input id="np-brand-color-primary-text" type="text" value="#032D60" style="flex: 1; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 13px; font-family: monospace; box-sizing: border-box;" oninput="document.getElementById('np-brand-color-primary').value=this.value">
+                  </div>
+                </div>
+                <div style="flex: 1;">
+                  <label style="display: block; font-size: 11px; font-weight: 600; color: #666; margin-bottom: 4px;">Secondary</label>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <input id="np-brand-color-secondary" type="color" value="#0176D3" style="width: 36px; height: 36px; padding: 2px; border: 1px solid #d1d5db; border-radius: 8px; cursor: pointer; background: white;" oninput="document.getElementById('np-brand-color-secondary-text').value=this.value">
+                    <input id="np-brand-color-secondary-text" type="text" value="#0176D3" style="flex: 1; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 13px; font-family: monospace; box-sizing: border-box;" oninput="document.getElementById('np-brand-color-secondary').value=this.value">
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- Tone -->
+            <div>
+              <label class="block text-xs font-bold mb-1" style="color: #032D60;">Tone</label>
+              <input id="np-brand-tone" type="text" placeholder='e.g. "Bold and adventurous"' class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+            </div>
+            <!-- Visual Style -->
+            <div>
+              <label class="block text-xs font-bold mb-1" style="color: #032D60;">Visual Style</label>
+              <input id="np-brand-visual-style" type="text" placeholder="Clean, modern, and premium" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
+            </div>
+
+            </div><!-- /wizard-step-2-fields -->
+          </div>
+
+        </div>
+
+        <!-- Wizard footer (fixed at bottom) -->
+        <div style="padding: 14px 28px 20px; flex-shrink: 0; border-top: 1px solid #f0f0f0;">
+          <div id="np-brand-validation-error" class="hidden" style="margin-bottom: 12px; padding: 10px 14px; background: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; font-size: 13px; color: #991B1B; line-height: 1.5;"></div>
+
+          <div class="flex justify-between items-center">
+            <button id="np-wizard-back-btn" onclick="npWizardBack()" style="display: none; padding: 8px 16px; font-size: 13px; font-weight: 600; color: #555; background: #f3f4f6; border: none; border-radius: 8px; cursor: pointer;">← Back</button>
+            <div style="flex: 1;"></div>
+            <div style="display: flex; gap: 10px;">
+              <button onclick="closeNewPresentationDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Cancel</button>
+              <button id="np-wizard-next-btn" onclick="npWizardNext()" class="px-5 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Next →</button>
+              <button id="np-brand-submit-btn" onclick="createPresentation()" style="display: none; background: #0176D3;" class="px-5 py-2 text-sm font-bold text-white rounded-lg cursor-pointer">Create &amp; Generate</button>
+            </div>
           </div>
         </div>
+      </div>
+    </div>
 
-        <div class="mb-4">
-          <label class="block text-xs font-bold mb-1" style="color: #032D60;">Presentation Name <span style="color: #ea001e;">*</span></label>
-          <input id="np-name" type="text" placeholder="e.g. Acme Corp Presentation" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm">
-          <p style="font-size: 11px; color: #888; margin-top: 4px;">Auto-filled when you select a Brand Kit above.</p>
-        </div>
-
-        <p id="np-error" class="hidden text-sm mb-3" style="color: #C23934;"></p>
-
-        <div class="flex justify-end gap-3">
-          <button onclick="closeNewPresentationDialog()" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 cursor-pointer">Cancel</button>
-          <button id="np-create-btn" onclick="createPresentation()" class="px-4 py-2 text-sm font-bold text-white rounded-lg cursor-pointer" style="background: #0176D3;">Create & Generate</button>
-        </div>
+    <!-- Wizard toast (ported from DemoForge) -->
+    <div id="np-toast" class="hidden fixed z-50" style="bottom: 24px; left: 50%; transform: translateX(-50%); transition: opacity 0.3s ease;">
+      <div style="background: #1f2937; color: white; padding: 10px 20px; border-radius: 10px; font-size: 14px; font-weight: 500; box-shadow: 0 4px 16px rgba(0,0,0,0.2);">
+        <span id="np-toast-text"></span>
       </div>
     </div>
 
@@ -2373,32 +2603,394 @@ document.getElementById('edit-style').addEventListener('change', checkSettingsCh
 // APP: Create Presentation
 // ═══════════════════════════════════════════════
 // ═══════════════════════════════════════════════
-// Brand Kit Picker (New Presentation dialog)
+// APP: New Presentation Wizard (mirrors DemoForge's New Demo wizard)
+// Step 1: Presentation Settings · Step 2: Brand Identity
 // ═══════════════════════════════════════════════
-let _selectedBrandKit = null;
+let npWizardStep = 1;
+const NP_WIZARD_TOTAL_STEPS = 2;
+let npBrandKitFiles = [];
+let npBrandKitAnalyzing = false;
+let npPendingBrandKitSource = null;  // brand kit source name for saving
+let npPendingBrandKitId = null;      // Brand Kit Builder item id
+let npPendingBrandKitLogoUrl = null; // logo URL picked/fetched in the wizard
+let npBkPickerOpen = false;
+const NP_VALIDATED_FIELDS = ['np-brand-name', 'np-brand-brand-name', 'np-brand-industry', 'np-brand-industry-custom'];
 
-async function toggleBrandKitPicker() {
-  const picker = document.getElementById('np-brandkit-picker');
-  if (!picker.classList.contains('hidden')) {
-    picker.classList.add('hidden');
-    return;
-  }
-  picker.classList.remove('hidden');
-  const content = document.getElementById('np-brandkit-picker-content');
-  content.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 13px; color: #888;">⏳ Loading brand kits...</div>';
+function npShowToast(text, durationOrType) {
+  const duration = typeof durationOrType === 'number' ? durationOrType : (durationOrType === 'error' ? 4000 : 2500);
+  const toast = document.getElementById('np-toast');
+  if (!toast) return;
+  document.getElementById('np-toast-text').textContent = text;
+  toast.classList.remove('hidden');
+  toast.style.opacity = '1';
+  clearTimeout(npShowToast._t);
+  npShowToast._t = setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.classList.add('hidden'), 300);
+  }, duration);
+}
 
-  const email = document.getElementById('user-email').textContent;
-  if (!email) {
-    content.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 13px; color: #C23934;">Unable to load — email not available.</div>';
-    return;
+// ─── Validation helpers ───
+function npClearValidationErrors() {
+  NP_VALIDATED_FIELDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.border = '1px solid #d1d5db';
+  });
+  const bk = document.getElementById('np-brand-kit-section');
+  if (bk && bk.firstElementChild) bk.firstElementChild.style.outline = '';
+  document.getElementById('np-brand-validation-error').classList.add('hidden');
+}
+
+function npClearFieldError(fieldId) {
+  const el = document.getElementById(fieldId);
+  if (el) el.style.border = '1px solid #d1d5db';
+  const stillInvalid = NP_VALIDATED_FIELDS.some(id => {
+    const f = document.getElementById(id);
+    return f && f.style.border && f.style.border.includes('#e5534b');
+  });
+  if (!stillInvalid) document.getElementById('np-brand-validation-error').classList.add('hidden');
+}
+
+// ─── Wizard navigation ───
+function npShowWizardStep(step) {
+  npWizardStep = step;
+  for (let i = 1; i <= NP_WIZARD_TOTAL_STEPS; i++) {
+    const panel = document.getElementById('np-wizard-step-' + i);
+    if (panel) panel.style.display = i === step ? 'flex' : 'none';
+    const prog = document.getElementById('np-wiz-prog-' + i);
+    if (prog) prog.style.background = i <= step ? '#0176D3' : '#e5e7eb';
+    const label = document.getElementById('np-wiz-label-' + i);
+    if (label) {
+      label.style.color = i === step ? '#0176D3' : (i < step ? '#2E7D32' : '#9ca3af');
+      label.style.fontWeight = i === step ? '700' : '600';
+    }
   }
+  document.getElementById('np-wizard-back-btn').style.display = step > 1 ? 'inline-block' : 'none';
+  document.getElementById('np-wizard-next-btn').style.display = step < NP_WIZARD_TOTAL_STEPS ? 'inline-block' : 'none';
+  const submitBtn = document.getElementById('np-brand-submit-btn');
+  submitBtn.style.display = step === NP_WIZARD_TOTAL_STEPS ? 'inline-block' : 'none';
+  submitBtn.style.background = '#0176D3';
+  document.getElementById('np-brand-validation-error').classList.add('hidden');
+  const body = document.querySelector('#new-presentation-dialog [style*="overflow-y: auto"]');
+  if (body) body.scrollTop = 0;
+}
+
+function npValidateWizardStep(step) {
+  const missing = [];
+  if (step === 1) {
+    if (!document.getElementById('np-brand-name').value.trim()) missing.push({ id: 'np-brand-name', label: 'Presentation Name' });
+    if (!document.getElementById('np-brand-brand-name').value.trim()) missing.push({ id: 'np-brand-brand-name', label: 'Brand Name' });
+  } else if (step === 2) {
+    // Brand kit must be applied (fields visible) before proceeding
+    const fieldsContainer = document.getElementById('np-wizard-step-2-fields');
+    if (fieldsContainer && fieldsContainer.style.display === 'none') {
+      missing.push({ id: 'np-brand-kit-section', label: 'Brand Kit (select or create one above)' });
+      return missing;
+    }
+    const industrySelect = document.getElementById('np-brand-industry').value;
+    const industryCustom = document.getElementById('np-brand-industry-custom').value.trim();
+    if (!industrySelect) missing.push({ id: 'np-brand-industry', label: 'Industry' });
+    if (industrySelect === 'Other' && !industryCustom) missing.push({ id: 'np-brand-industry-custom', label: 'Industry (specify)' });
+  }
+  return missing;
+}
+
+function npShowMissing(missing, prefix) {
+  missing.forEach(f => {
+    const el = document.getElementById(f.id);
+    if (!el) return;
+    if (f.id === 'np-brand-kit-section') { if (el.firstElementChild) el.firstElementChild.style.outline = '2px solid #e5534b'; }
+    else el.style.border = '2px solid #e5534b';
+  });
+  const errDiv = document.getElementById('np-brand-validation-error');
+  errDiv.innerHTML = '<strong>' + (prefix || 'Please fill in:') + '</strong> ' + missing.map(f => esc(f.label)).join(', ');
+  errDiv.classList.remove('hidden');
+}
+
+function npWizardNext() {
+  const missing = npValidateWizardStep(npWizardStep);
+  npClearValidationErrors();
+  if (missing.length > 0) { npShowMissing(missing); return; }
+  npShowWizardStep(npWizardStep + 1);
+}
+
+function npWizardBack() {
+  if (npWizardStep > 1) npShowWizardStep(npWizardStep - 1);
+}
+
+// Auto-fill brand name from presentation name (first meaningful word/brand)
+function npAutoFillBrandName() {
+  const presName = document.getElementById('np-brand-name').value.trim();
+  const brandNameEl = document.getElementById('np-brand-brand-name');
+  if (brandNameEl.dataset.autoFilled === 'true' || !brandNameEl.value.trim()) {
+    const suffixes = /\s+(holiday|campaign|demo|q[1-4]|launch|project|test|preview|poc|pilot|experience|presentation|slides|deck|briefing|pitch|executive|overview|kickoff|qbr)\b.*/i;
+    const brand = presName.replace(suffixes, '').trim();
+    brandNameEl.value = brand;
+    brandNameEl.dataset.autoFilled = brand ? 'true' : '';
+  }
+}
+
+// ─── Brand kit: upload & analyze ───
+function npHandleBrandKitFiles(fileList) {
+  npBrandKitFiles = [...npBrandKitFiles, ...Array.from(fileList)];
+  npRenderBrandKitChips();
+  document.getElementById('np-brand-kit-analyze-btn').style.display = npBrandKitFiles.length > 0 ? 'inline-block' : 'none';
+}
+
+function npRemoveBrandKitFile(idx) {
+  npBrandKitFiles = npBrandKitFiles.filter((_, i) => i !== idx);
+  npRenderBrandKitChips();
+  document.getElementById('np-brand-kit-analyze-btn').style.display = npBrandKitFiles.length > 0 ? 'inline-block' : 'none';
+}
+
+function npRenderBrandKitChips() {
+  const container = document.getElementById('np-brand-kit-chips');
+  if (npBrandKitFiles.length === 0) { container.style.display = 'none'; return; }
+  container.style.display = 'flex';
+  container.innerHTML = npBrandKitFiles.map((f, idx) =>
+    `<span style="display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 6px; background: rgba(255,255,255,0.7); border: 1px solid #d1e3f1; font-size: 11px; color: #333;">
+      📎 ${esc(f.name)}
+      <span style="cursor: pointer; color: #e5534b; font-weight: bold; margin-left: 2px;" onclick="npRemoveBrandKitFile(${idx})">✕</span>
+    </span>`
+  ).join('');
+}
+
+async function npAnalyzeBrandKit() {
+  if (npBrandKitFiles.length === 0 || npBrandKitAnalyzing) return;
+  npBrandKitAnalyzing = true;
+  const btn = document.getElementById('np-brand-kit-analyze-btn');
+  btn.textContent = '⏳ Analyzing...';
+  btn.style.background = '#94a3b8';
+  btn.style.cursor = 'not-allowed';
+  try {
+    const formData = new FormData();
+    npBrandKitFiles.forEach(f => formData.append('files', f));
+    const resp = await fetch('/api/analyze-brand-kit', { method: 'POST', body: formData });
+    if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).error || 'Analysis failed');
+    const data = await resp.json();
+    const bp = data.brandProfile || {};
+
+    const setIfEmpty = (id, val) => { const el = document.getElementById(id); if (el && !el.value.trim() && val) el.value = val; };
+    setIfEmpty('np-brand-brand-name', bp.name);
+    setIfEmpty('np-brand-desc', bp.description);
+    setIfEmpty('np-brand-website', bp.websiteUrl);
+    setIfEmpty('np-brand-tone', bp.tone);
+    setIfEmpty('np-brand-visual-style', bp.visualStyle);
+
+    // Colors: only override defaults
+    const pc = document.getElementById('np-brand-color-primary');
+    const sc = document.getElementById('np-brand-color-secondary');
+    if (bp.primaryColor && pc.value.toLowerCase() === '#032d60') {
+      pc.value = bp.primaryColor; document.getElementById('np-brand-color-primary-text').value = bp.primaryColor;
+    }
+    if (bp.secondaryColor && sc.value.toLowerCase() === '#0176d3') {
+      sc.value = bp.secondaryColor; document.getElementById('np-brand-color-secondary-text').value = bp.secondaryColor;
+    }
+
+    // Industry
+    if (bp.industry) {
+      const sel = document.getElementById('np-brand-industry');
+      if (!sel.value) {
+        sel.value = bp.industry.toLowerCase().includes('retail') ? 'Retail' : 'Other';
+        if (sel.value === 'Other') { document.getElementById('np-brand-industry-custom').value = bp.industry; npToggleCustomIndustry(); }
+      }
+    }
+
+    npPendingBrandKitSource = 'Uploaded files';
+    document.getElementById('np-brand-kit-done').style.display = 'inline-flex';
+    const fieldsContainer = document.getElementById('np-wizard-step-2-fields');
+    if (fieldsContainer) fieldsContainer.style.display = 'flex';
+    npShowAppliedBrandKit('Uploaded Brand Kit', null);
+    npClearValidationErrors();
+
+    // Auto-fetch a logo and detect industry if still empty
+    if (!npPendingBrandKitLogoUrl) npRefetchLogo(true);
+    const indEl = document.getElementById('np-brand-industry');
+    const brandName = document.getElementById('np-brand-brand-name').value.trim();
+    if (!indEl.value && brandName) npAutoDetectIndustry(brandName);
+  } catch (err) {
+    console.error('Brand kit analysis failed:', err);
+    alert('Brand kit analysis failed: ' + err.message);
+  } finally {
+    npBrandKitAnalyzing = false;
+    btn.textContent = '✨ Analyze & Auto-fill';
+    btn.style.background = 'linear-gradient(135deg, #0176D3, #032D60)';
+    btn.style.cursor = 'pointer';
+  }
+}
+
+function npResetBrandKit() {
+  npBrandKitFiles = [];
+  npBrandKitAnalyzing = false;
+  npPendingBrandKitSource = null;
+  npPendingBrandKitId = null;
+  npPendingBrandKitLogoUrl = null;
+  const chips = document.getElementById('np-brand-kit-chips');
+  if (chips) { chips.innerHTML = ''; chips.style.display = 'none'; }
+  const done = document.getElementById('np-brand-kit-done');
+  if (done) done.style.display = 'none';
+  const btn = document.getElementById('np-brand-kit-analyze-btn');
+  if (btn) btn.style.display = 'none';
+  const genDiv = document.getElementById('np-bk-inline-generating');
+  if (genDiv) genDiv.style.display = 'none';
+  const badge = document.getElementById('np-bk-applied-badge');
+  if (badge) badge.style.display = 'none';
+  const buttonsRow = document.getElementById('np-bk-buttons-row');
+  if (buttonsRow) buttonsRow.style.display = 'flex';
+  const notice = document.getElementById('np-bk-overwrite-notice');
+  if (notice) notice.style.display = 'none';
+  const dropdown = document.getElementById('np-bk-picker-dropdown');
+  if (dropdown) dropdown.style.display = 'none';
+  npBkPickerOpen = false;
+}
+
+// ─── Brand kit: applied badge ───
+function npShowAppliedBrandKit(name, bkId) {
+  const badge = document.getElementById('np-bk-applied-badge');
+  const buttonsRow = document.getElementById('np-bk-buttons-row');
+  const linkEl = document.getElementById('np-bk-applied-link');
+  if (!badge) return;
+  document.getElementById('np-bk-applied-name').textContent = name || 'Brand Kit';
+  if (bkId) {
+    linkEl.href = 'https://brandkit-builder.aubreydemo.com/items/' + bkId;
+    linkEl.style.display = 'inline';
+  } else {
+    linkEl.style.display = 'none';
+  }
+  badge.style.display = 'flex';
+  if (buttonsRow) buttonsRow.style.display = 'none';
+}
+
+function npChangeBrandKit() {
+  const badge = document.getElementById('np-bk-applied-badge');
+  const buttonsRow = document.getElementById('np-bk-buttons-row');
+  if (badge) badge.style.display = 'none';
+  if (buttonsRow) buttonsRow.style.display = 'flex';
+}
+
+// ─── Brand kit: create inline via Brand Kit Builder ───
+async function npCreateBrandKitInline() {
+  const brandName = document.getElementById('np-brand-brand-name').value.trim();
+  if (!brandName) { npShowToast('Please enter a brand name on Step 1 first', 'error'); return; }
+
+  const genDiv = document.getElementById('np-bk-inline-generating');
+  const statusDiv = document.getElementById('np-bk-inline-status');
+  genDiv.style.display = 'block';
+  statusDiv.textContent = 'Creating brand kit for "' + brandName + '"...';
 
   try {
-    const resp = await fetch(`/api/brandkit-builder/items?email=${encodeURIComponent(email)}`);
+    const email = document.getElementById('user-email').textContent.trim();
+    if (!email) throw new Error('Not logged in');
+    const language = document.getElementById('np-brand-language')?.value || 'English';
+    const industryEl = document.getElementById('np-brand-industry');
+    const industry = (industryEl && industryEl.value) ? (industryEl.value === 'Other' ? (document.getElementById('np-brand-industry-custom').value.trim() || null) : industryEl.value) : null;
+
+    const createResp = await fetch('/api/brandkit-builder/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email,
+        brand_name: brandName,
+        name: brandName,
+        language,
+        website_url: document.getElementById('np-brand-website')?.value?.trim() || null,
+        industry,
+        tone: document.getElementById('np-brand-tone')?.value?.trim() || null,
+        visual_style: document.getElementById('np-brand-visual-style')?.value?.trim() || null,
+        description: document.getElementById('np-brand-desc')?.value?.trim() || null,
+      }),
+    });
+    if (!createResp.ok) {
+      let errMsg = 'Failed to create brand kit';
+      try { const errBody = await createResp.json(); errMsg = errBody.error || errMsg; } catch (e) {}
+      throw new Error(errMsg);
+    }
+    const created = await createResp.json();
+    const itemId = created.item?.id || created.id;
+    if (!itemId) throw new Error('Brand kit created but no ID returned');
+    statusDiv.textContent = 'Brand kit created — generating with AI...';
+
+    try {
+      const genResp = await fetch('/api/brandkit-builder/generate/' + itemId, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      if (!genResp.ok) console.warn('Server-side brand kit generation failed, will keep polling');
+    } catch (genErr) {
+      console.warn('Server-side brand kit generation error:', genErr.message);
+    }
+
+    // Poll for completion (5 min max)
+    let attempts = 0;
+    let bkData = null;
+    while (attempts < 60) {
+      await new Promise(r => setTimeout(r, 5000));
+      attempts++;
+      statusDiv.textContent = 'Generating brand assets... (' + Math.min(attempts * 5, 95) + '%)';
+      const pollResp = await fetch('/api/brandkit-builder/items/' + itemId + '?email=' + encodeURIComponent(email));
+      if (!pollResp.ok) continue;
+      const pollData = await pollResp.json();
+      const itemData = pollData.item?.data || pollData.data || null;
+      if (!itemData) continue;
+      const bkContent = itemData.brandKit || itemData;
+      if (bkContent && (bkContent.brand_name || bkContent.elevator_pitch || bkContent.visual_style)) {
+        if (!bkContent.logo_url) bkContent.logo_url = pollData.item?.logo_url || '';
+        bkData = bkContent;
+        break;
+      }
+    }
+    if (!bkData) throw new Error('Brand kit generation timed out');
+
+    statusDiv.textContent = 'Brand kit ready! Applying to form...';
+    npPendingBrandKitSource = brandName + ' (auto-generated)';
+    npPendingBrandKitId = String(itemId);
+    npApplyBrandKitToForm(bkData);
+    genDiv.style.display = 'none';
+    npShowToast('Brand kit generated and applied!');
+    npScheduleLogoRetries(itemId, email);
+  } catch (err) {
+    console.error('Inline brand kit creation failed:', err);
+    genDiv.style.display = 'none';
+    npShowToast('Failed to create brand kit: ' + err.message, 'error');
+  }
+}
+
+// Brand Kit Builder fetches logos asynchronously — retry a few times if none was applied yet
+function npScheduleLogoRetries(itemId, email) {
+  if (npPendingBrandKitLogoUrl) return;
+  [3000, 8000, 15000].forEach(delay => {
+    setTimeout(async () => {
+      if (npPendingBrandKitLogoUrl) return;
+      try {
+        const r = await fetch('/api/brandkit-builder/items/' + itemId + '?email=' + encodeURIComponent(email));
+        if (!r.ok) return;
+        const d = await r.json();
+        const fresh = d?.item?.data?.brandKit?.logo_url || d?.item?.logo_url || '';
+        if (fresh && !npPendingBrandKitLogoUrl) npRenderLogo(fresh);
+      } catch (e) { /* logo is optional */ }
+    }, delay);
+  });
+}
+
+// ─── Brand kit: select from Brand Kit Builder ───
+async function npOpenBrandKitPicker() {
+  const dropdown = document.getElementById('np-bk-picker-dropdown');
+  const content = document.getElementById('np-bk-picker-content');
+  if (npBkPickerOpen) { dropdown.style.display = 'none'; npBkPickerOpen = false; return; }
+
+  const email = document.getElementById('user-email').textContent;
+  if (!email) { alert('Unable to load brand kits — not logged in.'); return; }
+
+  dropdown.style.display = 'block';
+  npBkPickerOpen = true;
+  content.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 13px; color: #888;">⏳ Loading brand kits...</div>';
+
+  try {
+    const resp = await fetch('/api/brandkit-builder/items?email=' + encodeURIComponent(email));
     if (!resp.ok) throw new Error('Failed to load');
     const data = await resp.json();
     const items = data.items || [];
-
     if (items.length === 0) {
       content.innerHTML = `
         <div style="padding: 20px; text-align: center;">
@@ -2410,83 +3002,444 @@ async function toggleBrandKitPicker() {
         </div>`;
       return;
     }
-
-    let html = '<div style="padding: 4px 0;">';
-    html += '<div style="padding: 8px 14px; font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.05em;">Your Brand Kits</div>';
-    items.forEach(item => {
-      const initial = (item.name || 'B').charAt(0).toUpperCase();
-      html += `
-        <button onclick="selectBrandKit(${item.id}, this)" style="display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; border: none; background: none; cursor: pointer; font-size: 13px; color: #333; text-align: left;"
-                onmouseenter="this.style.background='#f5f3ff'" onmouseleave="this.style.background='none'">
-          <span style="width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, #7c3aed, #a78bfa); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; flex-shrink: 0;">${initial}</span>
-          <span style="flex: 1; font-weight: 600;">${item.name || 'Untitled'}</span>
+    content.innerHTML = `
+      <div style="padding: 8px 14px; font-size: 11px; font-weight: 700; color: #888; text-transform: uppercase; letter-spacing: 0.05em;">Your Brand Kits</div>
+      ${items.map(item => {
+        const name = item.name || 'Untitled';
+        const initial = esc(name.charAt(0).toUpperCase());
+        const avatar = item.logo_url
+          ? `<img src="${esc(item.logo_url)}" alt="${esc(name)}" style="width: 32px; height: 32px; border-radius: 8px; object-fit: contain; flex-shrink: 0; background: #f9fafb;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+             <span style="width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, #7c3aed, #a78bfa); color: #fff; display: none; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; flex-shrink: 0;">${initial}</span>`
+          : `<span style="width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg, #7c3aed, #a78bfa); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; flex-shrink: 0;">${initial}</span>`;
+        return `
+        <button type="button" data-bk-id="${Number(item.id)}" data-bk-name="${esc(name)}" onclick="npSelectBrandKit(this.dataset.bkId, this.dataset.bkName)" style="display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 14px; border: none; background: none; cursor: pointer; font-size: 13px; color: #333; text-align: left;" onmouseenter="this.style.background='#f5f3ff'" onmouseleave="this.style.background='none'">
+          ${avatar}
+          <span style="flex: 1; font-weight: 600;">${esc(name)}</span>
         </button>`;
-    });
-    html += '</div>';
-    content.innerHTML = html;
+      }).join('')}`;
   } catch (err) {
     console.error('Failed to load brand kits:', err);
-    content.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 13px; color: #C23934;">Failed to load brand kits.</div>';
+    content.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 13px; color: #e5534b;">Failed to load brand kits</div>';
   }
 }
 
-async function selectBrandKit(itemId, btnEl) {
+async function npSelectBrandKit(itemId, kitName) {
   const email = document.getElementById('user-email').textContent;
   if (!email) return;
-
-  // Show loading state
-  if (btnEl) {
-    const nameSpan = btnEl.querySelector('span:last-child');
-    if (nameSpan) nameSpan.textContent = '⏳ Applying...';
-    btnEl.style.cursor = 'wait';
-    btnEl.disabled = true;
-  }
+  const dropdown = document.getElementById('np-bk-picker-dropdown');
+  const content = document.getElementById('np-bk-picker-content');
+  content.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 13px; color: #888;">⏳ Applying brand kit...</div>';
 
   try {
-    const resp = await fetch(`/api/brandkit-builder/items/${itemId}?email=${encodeURIComponent(email)}`);
-    if (!resp.ok) throw new Error('Failed to fetch brand kit');
+    const resp = await fetch('/api/brandkit-builder/items/' + itemId + '?email=' + encodeURIComponent(email));
+    if (!resp.ok) throw new Error('Failed to fetch');
     const data = await resp.json();
     const bk = data?.item?.data?.brandKit || data?.item?.brandKit || {};
-
-    _selectedBrandKit = {
-      brandName: bk.brand_name || '',
-      brandColorPrimary: bk.visual_style?.primary_color || '',
-      brandColorSecondary: bk.visual_style?.secondary_color || bk.visual_style?.accent_color || '',
-      brandTone: bk.tone?.summary || '',
-      brandVisualStyle: bk.visual_style?.summary || '',
-      brandLogoUrl: bk.logo_url || '',
-      brandWebsiteUrl: bk.website_url || bk.website || '',
-      brandDescription: bk.elevator_pitch || bk.mission || '',
-      brandKitId: String(itemId),
-      brandKitSource: bk.brand_name || ''
-    };
-
-    // Auto-populate Presentation Name if empty
-    const nameField = document.getElementById('np-name');
-    if (!nameField.value.trim() && _selectedBrandKit.brandName) {
-      nameField.value = `${_selectedBrandKit.brandName} Presentation`;
+    if (!bk.logo_url) {
+      bk.logo_url = data?.item?.logo_url || data?.item?.data?.logo_url || data?.item?.data?.visual_style?.logo_url || '';
     }
-
-    // Close picker, show success badge
-    document.getElementById('np-brandkit-picker').classList.add('hidden');
-    const badge = document.getElementById('np-brandkit-success');
-    badge.textContent = `✓ Brand kit applied — ${_selectedBrandKit.brandName || 'Selected'}`;
-    badge.classList.remove('hidden');
-    badge.style.display = 'inline-flex';
+    npPendingBrandKitSource = kitName || 'Brand Kit Builder';
+    npPendingBrandKitId = String(itemId);
+    npApplyBrandKitToForm(bk);
+    dropdown.style.display = 'none';
+    npBkPickerOpen = false;
+    npScheduleLogoRetries(itemId, email);
   } catch (err) {
     console.error('Failed to apply brand kit:', err);
-    alert('Failed to apply brand kit. Please try again.');
+    content.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 13px; color: #e5534b;">Failed to apply brand kit</div>';
+    setTimeout(() => { dropdown.style.display = 'none'; npBkPickerOpen = false; }, 1500);
   }
 }
 
-// Close brand kit picker when clicking outside
-document.addEventListener('click', (e) => {
-  const wrap = document.getElementById('np-brandkit-picker-wrap');
-  const picker = document.getElementById('np-brandkit-picker');
-  if (wrap && picker && !wrap.contains(e.target) && !picker.classList.contains('hidden')) {
-    picker.classList.add('hidden');
+// Apply a Brand Kit Builder kit to the wizard (always overwrites so re-selection works)
+function npApplyBrandKitToForm(bk) {
+  const nameEl = document.getElementById('np-brand-brand-name');
+  if (nameEl && bk.brand_name) nameEl.value = bk.brand_name;
+  const presNameEl = document.getElementById('np-brand-name');
+  if (presNameEl && !presNameEl.value && bk.brand_name) presNameEl.value = bk.brand_name + ' Presentation';
+
+  document.getElementById('np-brand-desc').value = bk.elevator_pitch || bk.mission || '';
+  document.getElementById('np-brand-website').value = bk.website_url || bk.website || '';
+
+  if (bk.visual_style?.primary_color) {
+    document.getElementById('np-brand-color-primary').value = bk.visual_style.primary_color;
+    document.getElementById('np-brand-color-primary-text').value = bk.visual_style.primary_color;
   }
-  // Also close detail page brand kit picker
+  const secondary = bk.visual_style?.secondary_color || bk.visual_style?.accent_color;
+  if (secondary) {
+    document.getElementById('np-brand-color-secondary').value = secondary;
+    document.getElementById('np-brand-color-secondary-text').value = secondary;
+  }
+
+  // Industry — exact, synonym, partial and word matching (same as DemoForge)
+  const indEl = document.getElementById('np-brand-industry');
+  const bkIndustry = bk.industry || '';
+  if (indEl && bkIndustry) {
+    const industrySynonyms = {
+      'fashion': 'Retail', 'apparel': 'Retail', 'ecommerce': 'Retail', 'e-commerce': 'Retail',
+      'automotive': 'Auto', 'automobile': 'Auto', 'cars': 'Auto',
+      'cpg': 'Consumer Goods', 'fmcg': 'Consumer Goods',
+    };
+    const options = Array.from(indEl.options).map(o => o.value).filter(v => v && v !== 'Other');
+    const bkLower = bkIndustry.toLowerCase().trim();
+    let match = options.find(o => o.toLowerCase() === bkLower);
+    if (!match) match = industrySynonyms[bkLower];
+    if (!match) match = options.find(o => bkLower.includes(o.toLowerCase()) || o.toLowerCase().includes(bkLower));
+    if (!match) {
+      for (const word of bkLower.split(/[\s,&\/]+/).filter(Boolean)) {
+        if (industrySynonyms[word]) { match = industrySynonyms[word]; break; }
+      }
+    }
+    if (match && options.includes(match)) {
+      indEl.value = match;
+      document.getElementById('np-custom-industry-wrapper').classList.add('hidden');
+    } else {
+      indEl.value = 'Other';
+      document.getElementById('np-brand-industry-custom').value = bkIndustry;
+      npToggleCustomIndustry(true);
+    }
+  }
+
+  document.getElementById('np-brand-tone').value = bk.tone?.summary || (typeof bk.tone === 'string' ? bk.tone : '') || '';
+  document.getElementById('np-brand-visual-style').value = bk.visual_style?.summary || '';
+
+  // Logo — render, or auto-fetch silently if the kit has none
+  const logoUrl = bk.logo_url || bk.visual_style?.logo_url || '';
+  npRenderLogo(logoUrl);
+  if (!logoUrl) npRefetchLogo(true, bk.brand_name, bk.website_url);
+
+  const overwriteNotice = document.getElementById('np-bk-overwrite-notice');
+  if (overwriteNotice) overwriteNotice.style.display = npPendingBrandKitId ? 'block' : 'none';
+
+  const fieldsContainer = document.getElementById('np-wizard-step-2-fields');
+  if (fieldsContainer) fieldsContainer.style.display = 'flex';
+  npShowAppliedBrandKit(bk.brand_name || npPendingBrandKitSource || 'Brand Kit', npPendingBrandKitId);
+  npClearValidationErrors();
+
+  if (indEl && !indEl.value) {
+    const detectName = bk.brand_name || document.getElementById('np-brand-brand-name')?.value?.trim();
+    if (detectName) npAutoDetectIndustry(detectName);
+  }
+}
+
+// ─── Logo ───
+function npRenderLogo(url) {
+  const preview = document.getElementById('np-wizard-logo-preview');
+  const img = document.getElementById('np-wizard-logo-img');
+  const fallback = document.getElementById('np-wizard-logo-fallback');
+  const input = document.getElementById('np-wizard-logo-url');
+  const clearBtn = document.getElementById('np-wizard-logo-clear');
+
+  input.value = url || '';
+  npPendingBrandKitLogoUrl = url || null;
+
+  if (url) {
+    img.style.display = '';
+    if (fallback) fallback.style.display = 'none';
+    const isExternal = url.startsWith('http://') || url.startsWith('https://');
+    img.src = isExternal ? '/api/images/proxy?url=' + encodeURIComponent(url) : url;
+    preview.style.display = 'block';
+    clearBtn.style.display = 'inline';
+    img.onerror = function() {
+      this.style.display = 'none';
+      if (fallback) fallback.style.display = 'flex';
+      if (!this._retried) { this._retried = true; npRefetchLogo(true); }
+    };
+  } else {
+    preview.style.display = 'none';
+    clearBtn.style.display = 'none';
+  }
+}
+
+function npHandleLogoUrlInput(value) {
+  const url = value.trim();
+  const clearBtn = document.getElementById('np-wizard-logo-clear');
+  const preview = document.getElementById('np-wizard-logo-preview');
+  const img = document.getElementById('np-wizard-logo-img');
+  const fallback = document.getElementById('np-wizard-logo-fallback');
+  npPendingBrandKitLogoUrl = url || null;
+  if (url) {
+    clearBtn.style.display = 'inline';
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      img.style.display = '';
+      if (fallback) fallback.style.display = 'none';
+      img.src = '/api/images/proxy?url=' + encodeURIComponent(url);
+      preview.style.display = 'block';
+    }
+  } else {
+    clearBtn.style.display = 'none';
+    preview.style.display = 'none';
+  }
+}
+
+function npClearLogo() {
+  npPendingBrandKitLogoUrl = null;
+  document.getElementById('np-wizard-logo-url').value = '';
+  document.getElementById('np-wizard-logo-preview').style.display = 'none';
+  document.getElementById('np-wizard-logo-clear').style.display = 'none';
+}
+
+async function npRefetchLogo(silent, brandOverride, websiteOverride) {
+  const rawName = (brandOverride || document.getElementById('np-brand-brand-name')?.value || '').trim();
+  const websiteUrl = (websiteOverride || document.getElementById('np-brand-website')?.value || '').trim();
+  if (!rawName) { if (!silent) npShowToast('Enter a brand name first'); return; }
+  const brandName = rawName.replace(/\s+(v?\d+|test|copy|draft|demo|new|old|backup|final)$/i, '').trim();
+
+  const loading = document.getElementById('np-wizard-logo-loading');
+  loading.style.display = 'block';
+  try {
+    const resp = await fetch('/api/images/logo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ brand: brandName, websiteUrl: websiteUrl || '' })
+    });
+    const result = await resp.json();
+    if (result.found && result.url) {
+      npRenderLogo(result.url);
+      if (!silent) npShowToast('Logo found!');
+    } else if (!silent) {
+      npShowToast('No logo found — try entering a URL manually');
+    }
+  } catch (e) {
+    console.error('Wizard logo refetch error:', e);
+    if (!silent) npShowToast('Failed to fetch logo', 'error');
+  } finally {
+    loading.style.display = 'none';
+  }
+}
+
+async function npHandleLogoFile(input) {
+  const file = input.files && input.files[0];
+  input.value = '';
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { npShowToast('Please select an image file', 'error'); return; }
+  if (file.size > 5 * 1024 * 1024) { npShowToast('Image too large (max 5MB)', 'error'); return; }
+
+  const loading = document.getElementById('np-wizard-logo-loading');
+  const reader = new FileReader();
+  reader.onload = async function() {
+    loading.style.display = 'block';
+    try {
+      const resp = await fetch('/api/images/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: reader.result, filename: file.name })
+      });
+      const result = await resp.json();
+      if (resp.ok && result.url) {
+        npRenderLogo(result.url);
+        npShowToast('Logo uploaded!');
+      } else {
+        npShowToast('Upload failed' + (result.error ? ': ' + result.error : ''), 'error');
+      }
+    } catch (e) {
+      npShowToast('Upload failed', 'error');
+    } finally {
+      loading.style.display = 'none';
+    }
+  };
+  reader.onerror = () => npShowToast('Failed to read file', 'error');
+  reader.readAsDataURL(file);
+}
+
+// ─── Industry ───
+async function npAutoDetectIndustry(brandName) {
+  const industryEl = document.getElementById('np-brand-industry');
+  if (industryEl.value) return;
+  const spinner = document.getElementById('np-industry-detecting-spinner');
+  const badge = document.getElementById('np-industry-detected-badge');
+  const container = document.getElementById('np-industry-auto-detect');
+  if (container) container.style.display = 'block';
+  if (spinner) spinner.style.display = 'inline';
+  if (badge) badge.style.display = 'none';
+  try {
+    const resp = await fetch('/api/detect-industry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ brand_name: brandName }),
+    });
+    if (!resp.ok) throw new Error('Failed');
+    const data = await resp.json();
+    if (data.industry && !industryEl.value) {
+      const options = Array.from(industryEl.options).map(o => o.value).filter(v => v && v !== 'Other');
+      const det = data.industry.toLowerCase();
+      let match = options.find(o => o.toLowerCase() === det);
+      if (!match) match = options.find(o => det.includes(o.toLowerCase()) || o.toLowerCase().includes(det));
+      if (match) {
+        industryEl.value = match;
+      } else {
+        industryEl.value = 'Other';
+        document.getElementById('np-brand-industry-custom').value = data.industry;
+        npToggleCustomIndustry(true);
+      }
+      npClearFieldError('np-brand-industry');
+      if (badge) { badge.style.display = 'inline'; badge.textContent = '✓ ' + data.industry; }
+    } else if (container) {
+      container.style.display = 'none';
+    }
+  } catch (err) {
+    console.log('Industry auto-detect failed:', err);
+    if (container) container.style.display = 'none';
+  } finally {
+    if (spinner) spinner.style.display = 'none';
+  }
+}
+
+function npToggleCustomIndustry(keepValue) {
+  const sel = document.getElementById('np-brand-industry');
+  const wrapper = document.getElementById('np-custom-industry-wrapper');
+  const custom = document.getElementById('np-brand-industry-custom');
+  if (sel.value === 'Other') {
+    wrapper.classList.remove('hidden');
+    if (keepValue !== true) custom.focus();
+  } else {
+    wrapper.classList.add('hidden');
+    custom.value = '';
+  }
+}
+
+// Close the brand kit picker when clicking outside it
+document.addEventListener('click', (e) => {
+  if (npBkPickerOpen && !e.target.closest('#np-bk-picker-container')) {
+    const dd = document.getElementById('np-bk-picker-dropdown');
+    if (dd) dd.style.display = 'none';
+    npBkPickerOpen = false;
+  }
+});
+
+// ─── Open / close / create ───
+function npResetForm() {
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  ['np-brand-name', 'np-brand-brand-name', 'np-brand-desc', 'np-brand-website', 'np-brand-tone',
+   'np-brand-visual-style', 'np-brand-industry', 'np-brand-industry-custom', 'np-wizard-logo-url'].forEach(id => setVal(id, ''));
+  setVal('np-brand-language', 'English');
+  setVal('np-brand-color-primary', '#032D60'); setVal('np-brand-color-primary-text', '#032D60');
+  setVal('np-brand-color-secondary', '#0176D3'); setVal('np-brand-color-secondary-text', '#0176D3');
+  document.getElementById('np-brand-brand-name').dataset.autoFilled = '';
+  document.getElementById('np-custom-industry-wrapper').classList.add('hidden');
+  const ad = document.getElementById('np-industry-auto-detect');
+  if (ad) ad.style.display = 'none';
+  npClearLogo();
+  const fields = document.getElementById('np-wizard-step-2-fields');
+  if (fields) fields.style.display = 'none';
+  npResetBrandKit();
+  npClearValidationErrors();
+  const btn = document.getElementById('np-brand-submit-btn');
+  btn.disabled = false;
+  btn.innerHTML = 'Create &amp; Generate';
+}
+
+function openNewPresentationDialog() {
+  npResetForm();
+  npShowWizardStep(1);
+  document.getElementById('new-presentation-dialog').classList.remove('hidden');
+  document.getElementById('np-brand-name').focus();
+}
+
+function closeNewPresentationDialog() {
+  document.getElementById('new-presentation-dialog').classList.add('hidden');
+  npResetForm();
+  npWizardStep = 1;
+}
+
+async function createPresentation() {
+  const name = document.getElementById('np-brand-name').value.trim();
+  const brandName = document.getElementById('np-brand-brand-name').value.trim();
+  const industrySelect = document.getElementById('np-brand-industry').value;
+  const industryCustom = document.getElementById('np-brand-industry-custom').value.trim();
+  const industry = industrySelect === 'Other' ? industryCustom : industrySelect;
+  const language = document.getElementById('np-brand-language').value || 'English';
+
+  // Re-validate every step (user may have gone Back and cleared a field)
+  npClearValidationErrors();
+  for (const step of [1, 2]) {
+    const missing = npValidateWizardStep(step);
+    if (missing.length > 0) {
+      if (step !== npWizardStep) npShowWizardStep(step);
+      npShowMissing(missing, 'Please fill in the following required fields:');
+      return;
+    }
+  }
+
+  const email = document.getElementById('user-email').textContent;
+  const btn = document.getElementById('np-brand-submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Creating...';
+
+  const desc = document.getElementById('np-brand-desc').value.trim();
+  const website = document.getElementById('np-brand-website').value.trim();
+  const tone = document.getElementById('np-brand-tone').value.trim();
+  const visualStyle = document.getElementById('np-brand-visual-style').value.trim();
+  const primary = document.getElementById('np-brand-color-primary').value || '';
+  const secondary = document.getElementById('np-brand-color-secondary').value || '';
+  const logoUrl = npPendingBrandKitLogoUrl || document.getElementById('np-wizard-logo-url').value.trim() || '';
+
+  const presData = {
+    useWebTemplate: true,
+    brandName,
+    brandDescription: desc,
+    brandWebsiteUrl: website,
+    brandIndustry: industry,
+    brandColorPrimary: primary,
+    brandColorSecondary: secondary,
+    brandTone: tone,
+    brandVisualStyle: visualStyle,
+    brandLogoUrl: logoUrl,
+    brandKitId: npPendingBrandKitId || '',
+    brandKitSource: npPendingBrandKitSource || '',
+    language,
+  };
+
+  try {
+    const resp = await fetch('/api/presentations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, name, data: presData })
+    });
+    if (!resp.ok) {
+      const d = await resp.json().catch(() => ({}));
+      throw new Error(d.error || 'Failed to create presentation');
+    }
+    const result = await resp.json();
+
+    // Sync edited brand kit fields back to Brand Kit Builder (fire-and-forget, same as DemoForge)
+    if (npPendingBrandKitId) {
+      try {
+        const syncData = {};
+        if (desc) syncData.elevator_pitch = desc;
+        if (website) syncData.website_url = website;
+        if (industry) syncData.industry = industry;
+        if (tone) syncData.tone = { summary: tone };
+        if (visualStyle) syncData.visual_style = { summary: visualStyle };
+        if (primary) { syncData.visual_style = syncData.visual_style || {}; syncData.visual_style.primary_color = primary; }
+        if (secondary) { syncData.visual_style = syncData.visual_style || {}; syncData.visual_style.secondary_color = secondary; }
+        const syncBody = { email, merge: true, data: { brandKit: syncData } };
+        if (logoUrl) syncBody.logo_url = logoUrl;
+        fetch('/api/brandkit-builder/update/' + npPendingBrandKitId, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(syncBody),
+        }).catch(err => console.log('Brand kit sync-back failed (non-critical):', err.message));
+      } catch (syncErr) {
+        console.log('Brand kit sync-back error (non-critical):', syncErr.message);
+      }
+    }
+
+    closeNewPresentationDialog();
+    viewItem(result.presentation.id);
+  } catch (err) {
+    const errDiv = document.getElementById('np-brand-validation-error');
+    errDiv.innerHTML = '<strong>' + esc(err.message) + '</strong>';
+    errDiv.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = 'Create &amp; Generate';
+  }
+}
+
+// Close detail-page brand kit picker when clicking outside
+document.addEventListener('click', (e) => {
+  // Close detail page brand kit picker
   const detailPicker = document.getElementById('detail-brandkit-picker');
   if (detailPicker && !detailPicker.classList.contains('hidden')) {
     const detailCard = document.getElementById('detail-brandkit-card');
@@ -2822,81 +3775,6 @@ function refreshAllUserSlidePreviews() {
   if (!userWebSlides || userWebSlides.length === 0) return;
   for (let i = 0; i < userWebSlides.length; i++) {
     if (typeof refreshUserSlidePreview === 'function') refreshUserSlidePreview(i);
-  }
-}
-
-function openNewPresentationDialog() {
-  document.getElementById('np-name').value = '';
-  document.getElementById('np-error').classList.add('hidden');
-  // Reset brand kit state
-  _selectedBrandKit = null;
-  document.getElementById('np-brandkit-success').classList.add('hidden');
-  document.getElementById('np-brandkit-success').style.display = 'none';
-  document.getElementById('np-brandkit-picker').classList.add('hidden');
-  document.getElementById('new-presentation-dialog').classList.remove('hidden');
-  document.getElementById('np-name').focus();
-}
-
-function closeNewPresentationDialog() {
-  document.getElementById('new-presentation-dialog').classList.add('hidden');
-}
-
-async function createPresentation() {
-  const name = document.getElementById('np-name').value.trim();
-  const errorEl = document.getElementById('np-error');
-
-  if (!name) {
-    errorEl.textContent = 'Presentation name is required.';
-    errorEl.classList.remove('hidden');
-    return;
-  }
-  if (!_selectedBrandKit) {
-    errorEl.textContent = 'Please select a Brand Kit.';
-    errorEl.classList.remove('hidden');
-    return;
-  }
-  errorEl.classList.add('hidden');
-
-  const btn = document.getElementById('np-create-btn');
-  btn.disabled = true;
-  btn.textContent = 'Creating...';
-
-  const email = document.getElementById('user-email').textContent;
-  const presData = {
-    useWebTemplate: true,
-    brandName: _selectedBrandKit.brandName,
-    brandColorPrimary: _selectedBrandKit.brandColorPrimary,
-    brandColorSecondary: _selectedBrandKit.brandColorSecondary,
-    brandTone: _selectedBrandKit.brandTone,
-    brandVisualStyle: _selectedBrandKit.brandVisualStyle,
-    brandLogoUrl: _selectedBrandKit.brandLogoUrl,
-    brandWebsiteUrl: _selectedBrandKit.brandWebsiteUrl,
-    brandDescription: _selectedBrandKit.brandDescription,
-    brandKitId: _selectedBrandKit.brandKitId,
-    brandKitSource: _selectedBrandKit.brandKitSource,
-  };
-
-  try {
-    const resp = await fetch('/api/presentations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, name, data: presData })
-    });
-    if (!resp.ok) {
-      const d = await resp.json();
-      throw new Error(d.error || 'Failed to create presentation');
-    }
-    const result = await resp.json();
-    closeNewPresentationDialog();
-
-    // Navigate to the new presentation detail
-    viewItem(result.presentation.id);
-  } catch (err) {
-    errorEl.textContent = err.message;
-    errorEl.classList.remove('hidden');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Create & Generate';
   }
 }
 
