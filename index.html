@@ -4607,8 +4607,12 @@ async function applyToGoogleSlides() {
     const resp = await fetch(`/api/presentations/${currentPresentationId}/apply-to-google`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email })
     });
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok || !data.jobId) throw new Error(data.error || 'Could not start');
+    const raw = await resp.text();
+    let data = {};
+    try { data = JSON.parse(raw); } catch (e) { /* not JSON — show what the server sent */ }
+    if (!resp.ok || !data.jobId) {
+      throw new Error(data.error || `Server responded ${resp.status}${raw ? ': ' + raw.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 160) : ''}`);
+    }
     const started = Date.now();
     while (true) {
       await new Promise(r => setTimeout(r, 2500));

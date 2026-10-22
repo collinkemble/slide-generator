@@ -4377,27 +4377,32 @@ app.post('/api/presentations/:id/apply-to-google', async (req, res) => {
     if (!auth) return res.status(500).json({ error: 'Google access isn\'t configured (service account missing).' });
     const slidesApi = google.slides({ version: 'v1', auth });
 
-    let target;
-    try {
-      target = (await slidesApi.presentations.get({ presentationId: targetId, fields: 'title,pageSize,slides.objectId' })).data;
-    } catch (err) {
-      const code = err.code || (err.response && err.response.status);
-      if (code === 403 || code === 404) return res.status(400).json({ error: `Slide Generator can't open your deck. Share it with ${serviceAccountEmail()} as Editor (File → Labels must be "External allowed"), then try again.` });
-      throw err;
-    }
-
     const slides = await query(
       'SELECT slide_index, html_content, css_content, bg_image_url, slide_name FROM presentation_slides WHERE presentation_id = ? ORDER BY slide_index',
       [presentation.id]
     );
     if (slides.length === 0) return res.status(400).json({ error: 'No slides to apply.' });
 
+    // Respond right away — all Google calls happen in the background job (no request time limits)
     const jobId = crypto.randomUUID();
     exportJobs.set(jobId, { status: 'processing', progress: 0, total: slides.length, googleUrl: null, error: null, startedAt: Date.now(), kind: 'apply' });
     res.json({ jobId, status: 'processing', total: slides.length });
+    console.log(`[ApplyGoogle] Presentation ${presentation.id}: job ${jobId} started for deck ${targetId}`);
 
     (async () => {
       const job = exportJobs.get(jobId);
+      let target;
+      try {
+        target = (await withTimeout(slidesApi.presentations.get({ presentationId: targetId, fields: 'title,pageSize,slides.objectId' }), 60000, 'Opening your Google deck')).data;
+      } catch (err) {
+        const code = err.code || (err.response && err.response.status);
+        console.error(`[ApplyGoogle] Could not open deck ${targetId}:`, code, err.message);
+        job.status = 'failed';
+        job.error = (code === 403 || code === 404)
+          ? `Slide Generator can't open your deck. Share it with ${serviceAccountEmail()} as Editor (File → Labels must be "External allowed"), then try again.`
+          : 'Could not open your Google Slides deck: ' + err.message;
+        return;
+      }
       try {
         let brandData = presentation.web_brand_data;
         if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch (e) { brandData = {}; } }
