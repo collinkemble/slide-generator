@@ -49,6 +49,49 @@ async function getSfLogoBuffer() {
 // Pre-load it
 getSfLogoBuffer();
 
+// Full-resolution Salesforce logo for slide renders / exports (the 36px version above is only for
+// small corner composites — stretching it to the 200px cover lockup made it blurry).
+let sfLogoHiResUrl = null;
+async function getSfLogoHiResUrl() {
+  if (sfLogoHiResUrl) return sfLogoHiResUrl;
+  const buf = await sharp(path.join(__dirname, 'sflogo.png')).png().toBuffer();
+  sfLogoHiResUrl = await uploadToR2(buf, 'system/salesforce-logo-hires.png', 'image/png');
+  return sfLogoHiResUrl;
+}
+
+/**
+ * Pixel boxes (on the 1920x1080 slide) of the logo lockup, mirroring buildSlideHtml exactly.
+ * aspects: { brand: w/h or 0, sf: w/h or 0 }. Returns [{ kind:'brand'|'sf'|'divider', x, y, w, h, alpha? }]
+ */
+function logoLockupBoxes(slide, slideIndex, aspects) {
+  const sName = (slide.slide_name || '').toLowerCase();
+  const isCover = slideIndex === 0 || sName === 'cover' || sName === 'title' || sName.includes('pov intro');
+  const hasB = aspects.brand > 0, hasS = aspects.sf > 0;
+  if (!hasB && !hasS) return [];
+  const L = isCover
+    ? { h: 200, gap: 80, divW: 3, divH: 160, alpha: 0.6 }
+    : { h: 48, gap: 12, divW: 1, divH: 40, alpha: 0.5 };
+  const items = [];
+  if (hasB) items.push({ kind: 'brand', w: L.h * aspects.brand, h: L.h });
+  if (hasB && hasS) items.push({ kind: 'divider', w: L.divW, h: L.divH, alpha: L.alpha });
+  if (hasS) items.push({ kind: 'sf', w: L.h * aspects.sf, h: L.h });
+  const totalW = items.reduce((s, it) => s + it.w, 0) + L.gap * (items.length - 1);
+  let left, centerY;
+  if (isCover) {
+    const topPct = sName.includes('pov intro') ? 0.30 : slideIndex === 0 ? 0.35 : 0.50;
+    left = 960 - totalW / 2;
+    centerY = 1080 * topPct;
+  } else {
+    left = 1920 - 30 - totalW;
+    centerY = 30 + L.h / 2;
+  }
+  return items.map(it => {
+    const box = { ...it, x: left, y: centerY - it.h / 2 };
+    left += it.w + L.gap;
+    return box;
+  });
+}
+
 // ─── Puppeteer browser pool for slide screenshots ───
 let _puppeteerBrowser = null;
 // Find Chrome the same way Video Builder does on Heroku Fir: env var → Puppeteer's own path → cache scan
@@ -4472,11 +4515,40 @@ app.post('/api/presentations/:id/apply-to-google', async (req, res) => {
         if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch (e) { brandData = {}; } }
         brandData = brandData || {};
         const brandLogoUrl = brandData.brandLogoUrl || '';
-        let sfLogoUrl = brandData.sfLogoUrl || '';
+        let sfLogoUrl = /^https?:\/\//i.test(brandData.sfLogoUrl || '') ? brandData.sfLogoUrl : '';
         if (!sfLogoUrl) {
-          try { const b = await getSfLogoBuffer(); if (b) sfLogoUrl = await uploadToR2(b, 'system/salesforce-logo-white.png', 'image/png'); } catch (e) { /* optional */ }
+          try { sfLogoUrl = await getSfLogoHiResUrl(); } catch (e) { console.warn('[ApplyGoogle] SF logo unavailable:', e.message); }
         }
         const renderOpts = { invertBrandLogo: !!brandData.brandLogoInverted };
+
+        // Logos go on each slide as separate, selectable images (not baked into the background).
+        // Each is converted to a full-resolution PNG (SVG rasterised, Reverse Logo applied) and uploaded once.
+        const logoAssets = {};
+        const prepLogo = async (kind, srcUrl, invert) => {
+          const resp = await fetch(srcUrl);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          let buf = Buffer.from(await resp.arrayBuffer());
+          const isSvg = /svg/i.test(resp.headers.get('content-type') || '') || /\.svg(\?|$)/i.test(srcUrl);
+          buf = await sharp(buf, isSvg ? { density: 400 } : {}).png().toBuffer();
+          let meta = await sharp(buf).metadata();
+          if (meta.height < 400) { // upscale small rasters so they stay sharp at cover size
+            buf = await sharp(buf).resize({ height: 400 }).png().toBuffer();
+            meta = await sharp(buf).metadata();
+          }
+          if (invert) buf = await whitenLogoBuffer(buf);
+          const hash = crypto.createHash('md5').update(buf).digest('hex').slice(0, 12);
+          const url = await uploadToR2(buf, `user-slides/${presentation.id}/export/${kind}-logo-${hash}.png`, 'image/png');
+          logoAssets[kind] = { url, aspect: meta.width / meta.height };
+        };
+        let logosSeparate = true;
+        try {
+          if (brandLogoUrl) await prepLogo('brand', brandLogoUrl, !!brandData.brandLogoInverted);
+          if (sfLogoUrl) await prepLogo('sf', sfLogoUrl, false);
+        } catch (e) {
+          console.warn('[ApplyGoogle] Could not prepare logos as separate images — keeping them in the background:', e.message);
+          logosSeparate = false;
+        }
+        const aspects = { brand: logoAssets.brand ? logoAssets.brand.aspect : 0, sf: logoAssets.sf ? logoAssets.sf.aspect : 0 };
         const pageW = (target.pageSize && target.pageSize.width && target.pageSize.width.magnitude) || 9144000;
         const pageH = (target.pageSize && target.pageSize.height && target.pageSize.height.magnitude) || 5143500;
         const fontScale = (pageW / 12700) / 720; // extractor sizes are for a 720pt-wide slide
@@ -4491,10 +4563,10 @@ app.post('/api/presentations/:id/apply-to-google', async (req, res) => {
 
         for (let i = 0; i < slides.length; i++) {
           let png;
-          try { png = await renderWebSlideToImage(slides[i], i, brandLogoUrl, sfLogoUrl, false, renderOpts); }
+          try { png = await renderWebSlideToImage(slides[i], i, brandLogoUrl, sfLogoUrl, logosSeparate, renderOpts); }
           catch (e) {
             console.warn(`[ApplyGoogle] Render failed for slide ${i + 1}, retrying once:`, e.message);
-            png = await renderWebSlideToImage(slides[i], i, brandLogoUrl, sfLogoUrl, false, renderOpts);
+            png = await renderWebSlideToImage(slides[i], i, brandLogoUrl, sfLogoUrl, logosSeparate, renderOpts);
           }
           const jpg = await sharp(png).jpeg({ quality: 88 }).toBuffer();
           const hash = crypto.createHash('md5').update(jpg).digest('hex').slice(0, 12);
@@ -4537,6 +4609,25 @@ app.post('/api/presentations/:id/apply-to-google', async (req, res) => {
               { updateShapeProperties: { objectId: tid, shapeProperties: { contentAlignment: el.vAlign === 'middle' ? 'MIDDLE' : el.vAlign === 'bottom' ? 'BOTTOM' : 'TOP' }, fields: 'contentAlignment' } },
             );
           });
+          if (logosSeparate) {
+            const px = pageW / 1920; // EMU per slide pixel (16:9)
+            logoLockupBoxes(slides[i], i, aspects).forEach(b => {
+              const elementProperties = { pageObjectId: sid,
+                size: { width: EMU(b.w * px), height: EMU(b.h * px) },
+                transform: { scaleX: 1, scaleY: 1, translateX: Math.round(b.x * px), translateY: Math.round(b.y * (pageH / 1080)), unit: 'EMU' } };
+              if (b.kind === 'divider') {
+                const did = `${sid}_logodiv`;
+                reqs.push(
+                  { createShape: { objectId: did, shapeType: 'RECTANGLE', elementProperties } },
+                  { updateShapeProperties: { objectId: did, shapeProperties: {
+                    shapeBackgroundFill: { solidFill: { color: { rgbColor: { red: 1, green: 1, blue: 1 } }, alpha: b.alpha } },
+                    outline: { propertyState: 'NOT_RENDERED' } }, fields: 'shapeBackgroundFill,outline' } },
+                );
+              } else {
+                reqs.push({ createImage: { objectId: `${sid}_logo_${b.kind}`, url: logoAssets[b.kind].url, elementProperties } });
+              }
+            });
+          }
           await slidesBatchWithRetry(slidesApi, targetId, reqs);
           job.progress = i + 1;
         }
@@ -4611,10 +4702,8 @@ app.post('/api/presentations/:id/export-pptx', async (req, res) => {
         const brandLogoUrl = brandData.brandLogoUrl || '';
         let sfLogoUrl = brandData.sfLogoUrl || '';
         if (!sfLogoUrl) {
-          try {
-            const sfLogoBuf = await getSfLogoBuffer();
-            if (sfLogoBuf) sfLogoUrl = await uploadToR2(sfLogoBuf, 'system/salesforce-logo-white.png', 'image/png');
-          } catch (e) { console.warn('[PptxExport] Could not prepare SF logo:', e.message); }
+          try { sfLogoUrl = await getSfLogoHiResUrl(); }
+          catch (e) { console.warn('[PptxExport] Could not prepare SF logo:', e.message); }
         }
         const renderOpts = { invertBrandLogo: !!brandData.brandLogoInverted };
         const outSlides = [];
