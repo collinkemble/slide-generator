@@ -1,0 +1,29 @@
+[_]
+schema-version = "0.2"
+
+# Install system libraries required by Chrome/Chromium for Puppeteer.
+# On Heroku Fir (CNB), classic buildpacks/Aptfile aren't used, so Chrome's dependencies
+# are installed via heroku/deb-packages and Puppeteer downloads its own Chrome binary
+# during heroku-postbuild (cached under node_modules/.cache/puppeteer — see .puppeteerrc.cjs).
+# Mirrors the working setup in Video Builder.
+[com.heroku.buildpacks.deb-packages]
+install = [
+  "libnss3",
+  "libatk1.0-0",
+  "libatk-bridge2.0-0",
+  "libcups2",
+  "libdrm2",
+  "libxkbcommon0",
+  "libxcomposite1",
+  "libxdamage1",
+  "libxrandr2",
+  "libgbm1",
+  "libpango-1.0-0",
+  "libcairo2",
+  "libasound2t64",
+  "libxshmfence1",
+  "libx11-xcb1",
+  "libxcb-dri3-0",
+  "fonts-liberation",
+  "fontconfig",
+]

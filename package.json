@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "heroku-postbuild": "npx puppeteer browsers install chrome"
+    "heroku-postbuild": "rm -rf /home/heroku/.cache/puppeteer ~/.cache/puppeteer && npx puppeteer browsers install chrome"
   },
   "keywords": [
     "salesforce",

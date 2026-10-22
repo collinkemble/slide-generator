@@ -56,14 +56,23 @@ async function getPuppeteerBrowser() {
   const launchOptions = {
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-           '--disable-gpu', '--disable-web-security', '--hide-scrollbars']
+           '--disable-gpu', '--disable-web-security', '--hide-scrollbars',
+           // Memory-saving flags for Heroku Fir dynos (see platform rules)
+           '--single-process', '--no-zygote', '--js-flags=--max-old-space-size=256']
   };
   // On Heroku or other PaaS, the puppeteer npm package bundles its own Chromium.
   // If PUPPETEER_EXECUTABLE_PATH is set (e.g. by a buildpack), use that instead.
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
     launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
   }
-  _puppeteerBrowser = await puppeteer.launch(launchOptions);
+  try {
+    _puppeteerBrowser = await puppeteer.launch(launchOptions);
+  } catch (err) {
+    _puppeteerBrowser = null;
+    console.error('[Puppeteer] Chrome failed to launch:', err.message, '| expected at:', (() => { try { return puppeteer.executablePath(); } catch (e) { return 'unknown'; } })());
+    throw new Error('The slide renderer (Chrome) could not start on the server. ' + err.message.split('\n')[0]);
+  }
+  _puppeteerBrowser.on('disconnected', () => { _puppeteerBrowser = null; });
   return _puppeteerBrowser;
 }
 
