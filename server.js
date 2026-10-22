@@ -1770,6 +1770,7 @@ function getRestyler() {
     _restyler = createRestyler({
       query, isPostgres, getGenAIClient, GEMINI_FALLBACK_MODELS, uploadToR2, storage,
       generateUserBackgroundsInBackground, MASTER_TEMPLATE_REF_ID,
+      activeJobs: activeGenerationJobs,
     });
   }
   return _restyler;
@@ -1915,6 +1916,30 @@ app.get('/api/presentations', async (req, res) => {
   }
 });
 
+async function resumeStalledPresentation(presentation) {
+  const id = Number(presentation.id);
+  if (activeGenerationJobs.has(id)) return;
+  activeGenerationJobs.add(id); // claim it before any await so polling doesn't start a second resume
+  try {
+    const slides = await query('SELECT COUNT(*) AS n FROM presentation_slides WHERE presentation_id = ?', [id]);
+    const n = Number(slides[0] && slides[0].n) || 0;
+    if (n === 0) {
+      await query('UPDATE presentations SET status = ?, status_message = ? WHERE id = ?',
+        ['failed', 'This presentation was interrupted before its slides were ready. Please create it again.', id]);
+      console.warn(`[Resume] Presentation ${id}: no slides — marked failed`);
+      return;
+    }
+    let brandData = presentation.web_brand_data;
+    if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch (e) { brandData = {}; } }
+    console.log(`[Resume] Presentation ${id}: resuming background images for missing slides`);
+    await query('UPDATE presentations SET status_message = ? WHERE id = ?', ['Picking up where it left off…', id]).catch(() => {});
+    activeGenerationJobs.delete(id); // generateUserBackgroundsInBackground re-adds it for its own lifetime
+    await generateUserBackgroundsInBackground(id, brandData || {}, { keepExistingPrompts: true, onlyMissing: true });
+  } finally {
+    activeGenerationJobs.delete(id);
+  }
+}
+
 // GET /api/presentations/:id — get single presentation
 app.get('/api/presentations/:id', async (req, res) => {
   try {
@@ -1934,6 +1959,15 @@ app.get('/api/presentations/:id', async (req, res) => {
     const presentation = rows[0];
     if (typeof presentation.data === 'string') {
       try { presentation.data = JSON.parse(presentation.data); } catch(e) {}
+    }
+
+    // Recover decks whose background job died (e.g. server restart): no progress for 10 min and no job running here
+    if (presentation.is_web_slides && presentation.status === 'generating' && !activeGenerationJobs.has(Number(presentation.id))) {
+      const last = new Date(presentation.updated_at || presentation.created_at || 0).getTime();
+      if (Date.now() - last > 10 * 60 * 1000) {
+        resumeStalledPresentation(presentation).catch(err => console.error(`[Resume] ${presentation.id} failed:`, err.message));
+        presentation.status_message = 'Picking up where it left off…';
+      }
     }
 
     res.json({ presentation });
@@ -2702,13 +2736,30 @@ async function translatePresentationSlides(presentationId, language, brandName) 
  * Generate branded background images for a user's web-template presentation.
  * Generates FRESH prompts from slide names + brand context — no reference template prompts used.
  */
+// Presentations with a background job running in THIS process (lost on restart → used to detect stalls)
+const activeGenerationJobs = new Set();
+function withTimeout(promise, ms, label) {
+  let t;
+  return Promise.race([promise, new Promise((_, rej) => { t = setTimeout(() => rej(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms); })])
+    .finally(() => clearTimeout(t));
+}
+
 async function generateUserBackgroundsInBackground(presentationId, brandData, opts = {}) {
+  activeGenerationJobs.add(Number(presentationId));
+  try {
+    return await _generateUserBackgrounds(presentationId, brandData, opts);
+  } finally {
+    activeGenerationJobs.delete(Number(presentationId));
+  }
+}
+
+async function _generateUserBackgrounds(presentationId, brandData, opts = {}) {
   try {
     console.log(`[WebBG] Starting background generation for presentation ${presentationId}`);
 
     // 1. Get all slides (bg_image_prompt will be NULL since we don't copy from reference)
     const slides = await query(
-      'SELECT slide_index, bg_image_prompt, slide_name FROM presentation_slides WHERE presentation_id = ? ORDER BY slide_index',
+      'SELECT slide_index, bg_image_prompt, slide_name, bg_image_url FROM presentation_slides WHERE presentation_id = ? ORDER BY slide_index',
       [presentationId]
     );
 
@@ -2769,6 +2820,12 @@ async function generateUserBackgroundsInBackground(presentationId, brandData, op
       const slideName = (slide.slide_name || '').toLowerCase();
       await query('UPDATE presentations SET status_message = ? WHERE id = ?', [`Generating background images… ${i + 1} of ${slides.length}`, presentationId]).catch(() => {});
 
+      // Resuming an interrupted job: keep backgrounds that already exist
+      if (opts.onlyMissing && slide.bg_image_url) {
+        if (slideName && !duplicateCache[slideName]) duplicateCache[slideName] = slide.bg_image_url;
+        continue;
+      }
+
       // Check if we already have a cached background for this slide type
       if (duplicateCache[slideName]) {
         console.log(`[WebBG] Reusing cached background for "${slide.slide_name}" (slide ${i})`);
@@ -2792,7 +2849,7 @@ async function generateUserBackgroundsInBackground(presentationId, brandData, op
 
       try {
         console.log(`[WebBG] Generating background for slide ${i} ("${slide.slide_name}")...`);
-        const imageResult = await generateSlideImage(photoPrompt, null);
+        const imageResult = await withTimeout(generateSlideImage(photoPrompt, null), 150000, `Background image for slide ${i + 1}`);
 
         if (imageResult && imageResult.imageBase64) {
           // Resize to 1920x1080

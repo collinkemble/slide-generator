@@ -9,7 +9,12 @@ function createRestyler(deps) {
   const {
     query, isPostgres, getGenAIClient, GEMINI_FALLBACK_MODELS, uploadToR2, storage,
     generateUserBackgroundsInBackground, MASTER_TEMPLATE_REF_ID,
+    activeJobs = new Set(),
   } = deps;
+  const withTimeout = (promise, ms, label) => {
+    let t;
+    return Promise.race([promise, new Promise((_, rej) => { t = setTimeout(() => rej(new Error(`${label} timed out`)), ms); })]).finally(() => clearTimeout(t));
+  };
 
   // ─── House style guide (cached) ───────────────────────────────────────────
   let styleCache = { at: 0, value: null };
@@ -164,11 +169,11 @@ Return ONLY JSON (no markdown):
     for (const model of modelsToTry) {
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-          const response = await ai.models.generateContent({
+          const response = await withTimeout(ai.models.generateContent({
             model,
             contents: [{ role: 'user', parts }],
             config: { temperature: 0.4, maxOutputTokens: 12000 },
-          });
+          }), 120000, `Slide ${slide.index + 1} redesign`);
           const text = (response.candidates?.[0]?.content?.parts || [])
             .filter(p => p.text !== undefined && !p.thought).map(p => p.text).join('\n').trim();
           const out = parseJsonLoose(text);
@@ -224,6 +229,7 @@ Return ONLY JSON (no markdown):
    */
   async function runRestyleJob(presId, loadDeck, brandData) {
     const language = (brandData && brandData.language) || 'English';
+    activeJobs.add(Number(presId));
     try {
       await setStatus(presId, 'Reading your deck…');
       const deck = await loadDeck();
@@ -288,10 +294,13 @@ Return ONLY JSON (no markdown):
       await mergePresentationData(presId, { source: { flaggedSlides, slideCount: slides.length, truncated: !!deck.truncated, totalSlides: deck.totalSlides || slides.length } });
 
       await setStatus(presId, deck.truncated ? `Only the first ${slides.length} of ${deck.totalSlides} slides were restyled (limit ${slides.length}). Generating background images…` : 'Generating background images…');
+      activeJobs.delete(Number(presId)); // the background step tracks itself from here
       await generateUserBackgroundsInBackground(presId, brandData, { keepExistingPrompts: true });
     } catch (err) {
       console.error(`[Restyle] Presentation ${presId} failed:`, err);
       await query('UPDATE presentations SET status = ?, status_message = ? WHERE id = ?', ['failed', err.message || 'Restyle failed', presId]).catch(() => {});
+    } finally {
+      activeJobs.delete(Number(presId));
     }
   }
 
