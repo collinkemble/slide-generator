@@ -208,6 +208,21 @@ ${logoHtml}
 </html>`;
 }
 
+// Load slide HTML into a page without failing on slow images (small dynos can take a while to fetch photos)
+async function loadSlideContent(page, html) {
+  try {
+    await page.setContent(html, { waitUntil: 'load', timeout: 45000 });
+  } catch (e) {
+    console.warn('[Render] Slide content still loading after 45s — rendering anyway:', e.message);
+  }
+  try {
+    await page.evaluate(() => Promise.race([
+      Promise.all(Array.from(document.images).filter(i => !i.complete).map(i => new Promise(r => { i.onload = i.onerror = r; }))),
+      new Promise(r => setTimeout(r, 8000)),
+    ]));
+  } catch (e) { /* ignore */ }
+}
+
 async function renderWebSlideToImage(slide, slideIndex, brandLogoUrl, sfLogoUrl, hideLogos = false, opts = {}) {
   const fullHtml = buildSlideHtml(slide, slideIndex, brandLogoUrl, sfLogoUrl, true, hideLogos, opts); // hideText = true
 
@@ -215,7 +230,7 @@ async function renderWebSlideToImage(slide, slideIndex, brandLogoUrl, sfLogoUrl,
   const page = await browser.newPage();
   try {
     await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
-    await page.setContent(fullHtml, { waitUntil: 'networkidle0', timeout: 15000 });
+    await loadSlideContent(page, fullHtml);
 
     // Wait a bit for images and fonts to load
     await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 500)));
@@ -243,7 +258,7 @@ async function extractTextPositionsFromBrowser(slide, slideIndex, brandLogoUrl, 
   const page = await browser.newPage();
   try {
     await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
-    await page.setContent(fullHtml, { waitUntil: 'networkidle0', timeout: 15000 });
+    await loadSlideContent(page, fullHtml);
     await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 300)));
 
     // Extract all visible text elements with their computed positions and styles
@@ -4451,6 +4466,7 @@ app.post('/api/presentations/:id/apply-to-google', async (req, res) => {
           : 'Could not open your Google Slides deck: ' + err.message;
         return;
       }
+      const createdSlideIds = []; // removed again if this run fails part-way
       try {
         let brandData = presentation.web_brand_data;
         if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch (e) { brandData = {}; } }
@@ -4474,7 +4490,12 @@ app.post('/api/presentations/:id/apply-to-google', async (req, res) => {
         const EMU = v => ({ magnitude: Math.round(v), unit: 'EMU' });
 
         for (let i = 0; i < slides.length; i++) {
-          const png = await renderWebSlideToImage(slides[i], i, brandLogoUrl, sfLogoUrl, false, renderOpts);
+          let png;
+          try { png = await renderWebSlideToImage(slides[i], i, brandLogoUrl, sfLogoUrl, false, renderOpts); }
+          catch (e) {
+            console.warn(`[ApplyGoogle] Render failed for slide ${i + 1}, retrying once:`, e.message);
+            png = await renderWebSlideToImage(slides[i], i, brandLogoUrl, sfLogoUrl, false, renderOpts);
+          }
           const jpg = await sharp(png).jpeg({ quality: 88 }).toBuffer();
           const hash = crypto.createHash('md5').update(jpg).digest('hex').slice(0, 12);
           const bgUrl = await uploadToR2(jpg, `user-slides/${presentation.id}/export/${i}-${hash}.jpg`, 'image/jpeg');
@@ -4485,6 +4506,7 @@ app.post('/api/presentations/:id/apply-to-google', async (req, res) => {
           await slidesBatchWithRetry(slidesApi, targetId, [
             { createSlide: { objectId: sid, insertionIndex: originalIds.length + i, ...(blankLayout ? { slideLayoutReference: { layoutId: blankLayout.objectId } } : {}) } },
           ]);
+          createdSlideIds.push(sid);
           // Remove any placeholders the chosen layout added
           let placeholderIds = [];
           try {
@@ -4535,11 +4557,18 @@ app.post('/api/presentations/:id/apply-to-google', async (req, res) => {
         console.log(`[ApplyGoogle] Presentation ${presentation.id}: replaced ${originalIds.length} slides with ${slides.length} in ${targetId}`);
       } catch (err) {
         console.error('[ApplyGoogle] Failed:', err.message);
+        // Put the deck back the way it was: remove any slides this run already added
+        if (createdSlideIds.length) {
+          try {
+            await slidesBatchWithRetry(slidesApi, targetId, createdSlideIds.map(objectId => ({ deleteObject: { objectId } })));
+            console.log(`[ApplyGoogle] Removed ${createdSlideIds.length} partially added slides`);
+          } catch (cleanupErr) { console.warn('[ApplyGoogle] Cleanup failed:', cleanupErr.message); }
+        }
         const code = err.code || (err.response && err.response.status);
         job.status = 'failed';
         job.error = (code === 403)
           ? `Slide Generator only has view access. Share your deck with ${serviceAccountEmail()} as Editor, then try again. Your original slides were not changed.`
-          : 'Could not update your Google Slides deck: ' + err.message + ' — your original slides were not removed.';
+          : 'Could not update your Google Slides deck: ' + err.message + ' — your deck was left unchanged.';
       }
     })();
   } catch (err) {
