@@ -26,4 +26,23 @@ install = [
   "libxcb-dri3-0",
   "fonts-liberation",
   "fontconfig",
+  # Remaining packages from Chrome's own deb.deps list (the Fir base image doesn't ship them;
+  # Video Builder gets most of these indirectly via ffmpeg). Missing ones make Chrome exit with code 127.
+  "libatspi2.0-0",
+  "libdbus-1-3",
+  "libexpat1",
+  "libglib2.0-0",
+  "libnspr4",
+  "libudev1",
+  "libvulkan1",
+  "libx11-6",
+  "libxcb1",
+  "libxext6",
+  "libxfixes3",
+  "libxi6",
+  "libxrender1",
+  "libxtst6",
+  "libgtk-3-0",
+  "libcurl4",
+  "ca-certificates",
 ]

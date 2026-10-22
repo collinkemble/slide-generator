@@ -51,26 +51,65 @@ getSfLogoBuffer();
 
 // ─── Puppeteer browser pool for slide screenshots ───
 let _puppeteerBrowser = null;
+// Find Chrome the same way Video Builder does on Heroku Fir: env var → Puppeteer's own path → cache scan
+function findChromePath() {
+  const fsx = require('fs'), pathx = require('path'), osx = require('os');
+  if (process.env.PUPPETEER_EXECUTABLE_PATH && fsx.existsSync(process.env.PUPPETEER_EXECUTABLE_PATH)) return process.env.PUPPETEER_EXECUTABLE_PATH;
+  try { const p = puppeteer.executablePath(); if (p && fsx.existsSync(p)) return p; } catch (e) { /* fall through */ }
+  const cacheDirs = [process.env.PUPPETEER_CACHE_DIR, pathx.join(__dirname, 'node_modules', '.cache', 'puppeteer'),
+    '/workspace/node_modules/.cache/puppeteer', '/app/.cache/puppeteer', pathx.join(osx.homedir(), '.cache', 'puppeteer')].filter(Boolean);
+  for (const dir of cacheDirs) {
+    try {
+      const chromeDir = pathx.join(dir, 'chrome');
+      for (const ver of fsx.readdirSync(chromeDir).filter(d => !d.startsWith('.'))) {
+        const p = pathx.join(chromeDir, ver, 'chrome-linux64', 'chrome');
+        if (fsx.existsSync(p)) return p;
+      }
+    } catch (e) { /* not here */ }
+  }
+  return null;
+}
+
+let _chromeInstallAttempted = false;
+function ensureChromeInstalled() {
+  if (findChromePath() || _chromeInstallAttempted) return;
+  _chromeInstallAttempted = true;
+  try {
+    console.log('[Puppeteer] Chrome not found — installing at runtime…');
+    require('child_process').execSync('npx puppeteer browsers install chrome', { stdio: 'pipe', timeout: 180000 });
+  } catch (e) { console.error('[Puppeteer] Runtime Chrome install failed:', e.message); }
+}
+
+// When Chrome won't start, report exactly which shared libraries are missing
+function missingChromeLibs(chromePath) {
+  try {
+    const out = require('child_process').execSync(`ldd "${chromePath}" 2>&1 | grep "not found" || true`, { encoding: 'utf-8', timeout: 10000 });
+    return out.split('\n').map(l => l.trim().split(' ')[0]).filter(Boolean);
+  } catch (e) { return []; }
+}
+
 async function getPuppeteerBrowser() {
   if (_puppeteerBrowser && _puppeteerBrowser.connected) return _puppeteerBrowser;
+  ensureChromeInstalled();
+  const chromePath = findChromePath();
   const launchOptions = {
     headless: true,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
            '--disable-gpu', '--disable-web-security', '--hide-scrollbars',
+           '--disable-extensions', '--disable-background-networking', '--disable-default-apps',
            // Memory-saving flags for Heroku Fir dynos (see platform rules)
-           '--single-process', '--no-zygote', '--js-flags=--max-old-space-size=256']
+           '--single-process', '--js-flags=--max-old-space-size=256']
   };
-  // On Heroku or other PaaS, the puppeteer npm package bundles its own Chromium.
-  // If PUPPETEER_EXECUTABLE_PATH is set (e.g. by a buildpack), use that instead.
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-    launchOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
-  }
+  if (chromePath) launchOptions.executablePath = chromePath;
   try {
     _puppeteerBrowser = await puppeteer.launch(launchOptions);
   } catch (err) {
     _puppeteerBrowser = null;
-    console.error('[Puppeteer] Chrome failed to launch:', err.message, '| expected at:', (() => { try { return puppeteer.executablePath(); } catch (e) { return 'unknown'; } })());
-    throw new Error('The slide renderer (Chrome) could not start on the server. ' + err.message.split('\n')[0]);
+    const missing = chromePath ? missingChromeLibs(chromePath) : [];
+    console.error('[Puppeteer] Chrome failed to launch:', err.message, '| path:', chromePath || '(none found)', '| missing libs:', missing.join(', ') || 'none detected');
+    throw new Error('The slide renderer (Chrome) could not start on the server. ' +
+      (missing.length ? `Missing system libraries: ${missing.join(', ')}.` : (chromePath ? '' : 'Chrome was not found. ')) +
+      ' ' + err.message.split('\n')[0]);
   }
   _puppeteerBrowser.on('disconnected', () => { _puppeteerBrowser = null; });
   return _puppeteerBrowser;
