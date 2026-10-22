@@ -847,8 +847,7 @@
                     <li>Paste the deck's link below.</li>
                   </ol>
                   <div style="display: flex; gap: 8px;">
-                    <input id="np-gslides-url" type="url" placeholder="https://docs.google.com/presentation/d/…/edit" oninput="npLinkChanged()" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" style="background: white;">
-                    <button type="button" id="np-check-access-btn" onclick="npCheckGoogleAccess()" style="padding: 7px 14px; font-size: 12px; font-weight: 700; color: #fff; background: #0176D3; border: none; border-radius: 7px; cursor: pointer; white-space: nowrap;">Check access</button>
+                    <input id="np-gslides-url" type="url" placeholder="https://docs.google.com/presentation/d/…/edit" oninput="npLinkChanged()" onkeydown="if (event.key === 'Enter') { event.preventDefault(); npWizardNext(); }" class="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm" style="background: white;">
                   </div>
                   <div id="np-access-result" style="display: none; margin-top: 8px; font-size: 12px; line-height: 1.5; padding: 8px 12px; border-radius: 8px;"></div>
                 </div>
@@ -2961,6 +2960,7 @@ function npShowWizardStep(step) {
   submitBtn.style.display = step === NP_WIZARD_TOTAL_STEPS ? 'inline-block' : 'none';
   submitBtn.style.background = '#0176D3';
   document.getElementById('np-brand-validation-error').classList.add('hidden');
+  npUpdateNextButton();
   const body = document.querySelector('#new-presentation-dialog [style*="overflow-y: auto"]');
   if (body) body.scrollTop = 0;
 }
@@ -3002,7 +3002,38 @@ function npShowMissing(missing, prefix) {
   errDiv.classList.remove('hidden');
 }
 
-function npWizardNext() {
+// Footer button on the Presentation Type step:
+// restyle + link  → "Check access" until access is confirmed, then "Next →"
+// restyle + file  → "Next →" disabled until a file is chosen
+function npUpdateNextButton() {
+  const btn = document.getElementById('np-wizard-next-btn');
+  if (!btn || btn.dataset.busy === '1') return;
+  let label = 'Next →', disabled = false;
+  if (npWizardStep === 2 && npStartFrom === 'restyle') {
+    if (npRestyleSource === 'link' && !npLinkVerified) label = 'Check access';
+    if (npRestyleSource === 'file' && !npRestyleFile) disabled = true;
+  }
+  btn.textContent = label;
+  btn.disabled = disabled;
+  btn.style.opacity = disabled ? '0.45' : '1';
+  btn.style.cursor = disabled ? 'not-allowed' : 'pointer';
+  btn.title = disabled ? 'Choose a .pptx or PDF file first' : '';
+}
+
+async function npWizardNext() {
+  // Presentation Type step with a Google Slides link: the button checks access first
+  if (npWizardStep === 2 && npStartFrom === 'restyle' && npRestyleSource === 'link' && !npLinkVerified) {
+    const btn = document.getElementById('np-wizard-next-btn');
+    if (!document.getElementById('np-gslides-url').value.trim()) {
+      npClearValidationErrors();
+      npShowMissing([{ id: 'np-restyle-panel', label: 'Google Slides link' }]);
+      return;
+    }
+    btn.dataset.busy = '1'; btn.disabled = true; btn.textContent = 'Checking…';
+    try { await npCheckGoogleAccess(); }
+    finally { btn.dataset.busy = ''; npUpdateNextButton(); }
+    return; // on success the button now says "Next →"
+  }
   const missing = npValidateWizardStep(npWizardStep);
   npClearValidationErrors();
   if (missing.length > 0) { npShowMissing(missing); return; }
@@ -3673,6 +3704,7 @@ function npSelectStartFrom(v) {
   if (npStartFrom === 'restyle') npSelectRestyleSource(npRestyleSource);
   npClearFieldError('np-restyle-panel');
   npUpdateSubmitLabel();
+  npUpdateNextButton();
 }
 
 function npSelectRestyleSource(v) {
@@ -3683,6 +3715,7 @@ function npSelectRestyleSource(v) {
   Object.assign(document.getElementById('np-src-link-tab').style, npRestyleSource === 'link' ? on : off);
   document.getElementById('np-src-file-panel').style.display = npRestyleSource === 'file' ? 'block' : 'none';
   document.getElementById('np-src-link-panel').style.display = npRestyleSource === 'link' ? 'block' : 'none';
+  npUpdateNextButton();
 }
 
 function npHandleDeckFile(file) {
@@ -3694,6 +3727,7 @@ function npHandleDeckFile(file) {
   npRestyleFile = file;
   text.innerHTML = '✓ ' + esc(file.name) + ' <span style="font-weight: 400; color: #5a6f85;">(' + (file.size / 1048576).toFixed(1) + ' MB) — click to change</span>';
   npClearFieldError('np-restyle-panel');
+  npUpdateNextButton();
 }
 
 function npCopySaEmail(btn) {
@@ -3705,14 +3739,13 @@ function npLinkChanged() {
   npLinkVerified = false;
   const r = document.getElementById('np-access-result');
   if (r) r.style.display = 'none';
+  npUpdateNextButton();
 }
 
 async function npCheckGoogleAccess() {
   const url = document.getElementById('np-gslides-url').value.trim();
-  const btn = document.getElementById('np-check-access-btn');
   const out = document.getElementById('np-access-result');
   if (!url) { npShowToast('Paste a Google Slides link first', 'error'); return false; }
-  btn.disabled = true; btn.textContent = 'Checking…';
   try {
     const email = document.getElementById('user-email').textContent;
     const resp = await fetch('/api/google-slides/check-access', {
@@ -3736,8 +3769,6 @@ async function npCheckGoogleAccess() {
     out.style.display = 'block'; out.style.background = '#FEF2F2'; out.style.border = '1px solid #FECACA'; out.style.color = '#991B1B';
     out.textContent = 'Could not check access. Please try again.';
     return false;
-  } finally {
-    btn.disabled = false; btn.textContent = 'Check access';
   }
 }
 
