@@ -1790,7 +1790,7 @@ function serviceAccountEmail() {
   try { return JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY || '{}').client_email || SA_EMAIL_FALLBACK; } catch (e) { return SA_EMAIL_FALLBACK; }
 }
 function googleAccessHelp() {
-  return `Slide Generator can't open this deck yet. In Google Slides: 1) File → Labels → set to "External allowed", 2) Share → add ${serviceAccountEmail()} as Viewer (tick "Notify people" if Google asks), 3) try again.`;
+  return `Slide Generator can't open this deck yet. In Google Slides: 1) File → Labels → set to "External allowed", 2) Share → add ${serviceAccountEmail()} as Editor (tick "Notify people" if Google asks), 3) try again.`;
 }
 
 /** Quick read-only access check for a Google Slides link via the service account. */
@@ -1897,9 +1897,17 @@ app.get('/api/presentations', async (req, res) => {
 
     const user = await getOrCreateUser(email);
     const presentations = await query(
-      `SELECT id, name, status, google_presentation_url, shared_by_email, shared_at, created_at, updated_at FROM presentations WHERE user_id = ? ORDER BY COALESCE(updated_at, created_at, '1970-01-01') DESC`,
+      `SELECT id, name, status, google_presentation_url, shared_by_email, shared_at, created_at, updated_at, is_web_slides, share_token, web_brand_data FROM presentations WHERE user_id = ? ORDER BY COALESCE(updated_at, created_at, '1970-01-01') DESC`,
       [user.id]
     );
+    // Expose just the brand logo for the home cards (don't send the whole brand blob)
+    for (const p of presentations) {
+      let bd = p.web_brand_data;
+      if (typeof bd === 'string') { try { bd = JSON.parse(bd); } catch (e) { bd = null; } }
+      p.brand_logo_url = (bd && bd.brandLogoUrl) || '';
+      p.brand_logo_inverted = !!(bd && bd.brandLogoInverted);
+      delete p.web_brand_data;
+    }
     res.json({ presentations });
   } catch (err) {
     console.error('Failed to list presentations:', err);
@@ -1959,8 +1967,8 @@ app.post('/api/presentations', async (req, res) => {
     const brandData = useWebTemplate ? buildWebBrandData(parsedData, req.body) : null;
 
     const result = await query(
-      'INSERT INTO presentations (user_id, name, data, is_web_slides, web_brand_data, status) VALUES (?, ?, ?, ?, ?, ?)',
-      [user.id, name.trim(), data ? JSON.stringify(data) : null, useWebTemplate, brandData ? JSON.stringify(brandData) : null, useWebTemplate ? 'generating' : 'draft']
+      'INSERT INTO presentations (user_id, name, data, is_web_slides, web_brand_data, status, status_message) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [user.id, name.trim(), data ? JSON.stringify(data) : null, useWebTemplate, brandData ? JSON.stringify(brandData) : null, useWebTemplate ? 'generating' : 'draft', useWebTemplate ? 'Copying slides from the template…' : null]
     );
 
     const presId = result.insertId;
@@ -1980,6 +1988,7 @@ app.post('/api/presentations', async (req, res) => {
         (async () => {
           if (!isEnglishLanguage(brandData.language)) {
             try {
+              await query('UPDATE presentations SET status_message = ? WHERE id = ?', [`Translating slides to ${brandData.language}…`, presId]).catch(() => {});
               await translatePresentationSlides(presId, brandData.language, brandData.brandName);
             } catch (trErr) {
               console.error(`[Translate] Failed for presentation ${presId}:`, trErr.message);
@@ -2713,6 +2722,9 @@ async function generateUserBackgroundsInBackground(presentationId, brandData, op
     const brandName = (brandData && brandData.brandName) || '';
     const brandDescription = (brandData && brandData.brandDescription) || '';
     try {
+      if (!(opts.keepExistingPrompts && slides.every(sl => sl.bg_image_prompt && String(sl.bg_image_prompt).trim()))) {
+        await query('UPDATE presentations SET status_message = ? WHERE id = ?', ['Writing background photo descriptions…', presentationId]).catch(() => {});
+      }
       if (opts.keepExistingPrompts && slides.every(sl => sl.bg_image_prompt && String(sl.bg_image_prompt).trim())) {
         console.log(`[WebBG] Keeping ${slides.length} existing per-slide background prompts (restyled deck)`);
         throw Object.assign(new Error('skip-fresh-prompts'), { skip: true });
@@ -2740,6 +2752,7 @@ async function generateUserBackgroundsInBackground(presentationId, brandData, op
     let photoStyleDirective = '';
     if (photoDescriptions.length >= 2) {
       try {
+        await query('UPDATE presentations SET status_message = ? WHERE id = ?', ['Choosing a consistent photo style…', presentationId]).catch(() => {});
         photoStyleDirective = await generatePhotoStyleDirective(photoDescriptions, brandData);
         console.log(`[WebBG] Photo style directive: ${photoStyleDirective.substring(0, 100)}...`);
       } catch (err) {
@@ -2754,6 +2767,7 @@ async function generateUserBackgroundsInBackground(presentationId, brandData, op
     for (let i = 0; i < slides.length; i++) {
       const slide = slides[i];
       const slideName = (slide.slide_name || '').toLowerCase();
+      await query('UPDATE presentations SET status_message = ? WHERE id = ?', [`Generating background images… ${i + 1} of ${slides.length}`, presentationId]).catch(() => {});
 
       // Check if we already have a cached background for this slide type
       if (duplicateCache[slideName]) {
@@ -2816,6 +2830,7 @@ async function generateUserBackgroundsInBackground(presentationId, brandData, op
     // 6. Mark as completed
     await query('UPDATE presentations SET status = ? WHERE id = ?', ['completed', presentationId]);
     console.log(`[WebBG] Background generation completed for presentation ${presentationId}`);
+    await query('UPDATE presentations SET status_message = ? WHERE id = ?', ['Done', presentationId]).catch(() => {});
   } catch (err) {
     console.error(`[WebBG] Fatal error generating backgrounds for presentation ${presentationId}:`, err);
     await query('UPDATE presentations SET status = ?, status_message = ? WHERE id = ?', ['failed', `[WebBG] ${err.message}`, presentationId]);
@@ -4265,6 +4280,150 @@ app.get('/api/debug-slides/:presentationId', async (req, res) => {
 });
 
 // GET /api/export-jobs/:jobId — Poll for export job progress
+// ═══════════════════════════════════════════════
+// APP-SPECIFIC — Apply restyled slides back to the user's Google Slides deck
+// (service account, Editor share). Replaces the original slides; Google keeps version history.
+// ═══════════════════════════════════════════════
+function hexToRgb01(hex) {
+  const h = String(hex || '#ffffff').replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h.slice(0, 6), 16) || 0xffffff;
+  return { red: ((n >> 16) & 255) / 255, green: ((n >> 8) & 255) / 255, blue: (n & 255) / 255 };
+}
+
+async function slidesBatchWithRetry(slidesApi, presentationId, requests) {
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      return await slidesApi.presentations.batchUpdate({ presentationId, requestBody: { requests } });
+    } catch (err) {
+      const code = err.code || (err.response && err.response.status);
+      if ((code === 429 || code === 503) && attempt < 4) { await new Promise(r => setTimeout(r, 4000 * attempt)); continue; }
+      throw err;
+    }
+  }
+}
+
+// POST /api/presentations/:id/apply-to-google — starts an async job; poll GET /api/export-jobs/:jobId
+app.post('/api/presentations/:id/apply-to-google', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    const user = await getOrCreateUser(email);
+    const rows = await query('SELECT * FROM presentations WHERE id = ? AND user_id = ?', [req.params.id, user.id]);
+    if (rows.length === 0) return res.status(404).json({ error: 'Presentation not found' });
+    const presentation = rows[0];
+    let pdata = presentation.data;
+    if (typeof pdata === 'string') { try { pdata = JSON.parse(pdata); } catch (e) { pdata = {}; } }
+    const src = (pdata && pdata.source) || {};
+    const targetId = src.type === 'google' ? deckParser.extractPresentationId(src.url) : null;
+    if (!targetId) return res.status(400).json({ error: 'This presentation wasn\'t restyled from a Google Slides link.' });
+    const auth = getServiceAccountClient(['https://www.googleapis.com/auth/presentations']);
+    if (!auth) return res.status(500).json({ error: 'Google access isn\'t configured (service account missing).' });
+    const slidesApi = google.slides({ version: 'v1', auth });
+
+    let target;
+    try {
+      target = (await slidesApi.presentations.get({ presentationId: targetId, fields: 'title,pageSize,slides.objectId' })).data;
+    } catch (err) {
+      const code = err.code || (err.response && err.response.status);
+      if (code === 403 || code === 404) return res.status(400).json({ error: `Slide Generator can't open your deck. Share it with ${serviceAccountEmail()} as Editor (File → Labels must be "External allowed"), then try again.` });
+      throw err;
+    }
+
+    const slides = await query(
+      'SELECT slide_index, html_content, css_content, bg_image_url, slide_name FROM presentation_slides WHERE presentation_id = ? ORDER BY slide_index',
+      [presentation.id]
+    );
+    if (slides.length === 0) return res.status(400).json({ error: 'No slides to apply.' });
+
+    const jobId = crypto.randomUUID();
+    exportJobs.set(jobId, { status: 'processing', progress: 0, total: slides.length, googleUrl: null, error: null, startedAt: Date.now(), kind: 'apply' });
+    res.json({ jobId, status: 'processing', total: slides.length });
+
+    (async () => {
+      const job = exportJobs.get(jobId);
+      try {
+        let brandData = presentation.web_brand_data;
+        if (typeof brandData === 'string') { try { brandData = JSON.parse(brandData); } catch (e) { brandData = {}; } }
+        brandData = brandData || {};
+        const brandLogoUrl = brandData.brandLogoUrl || '';
+        let sfLogoUrl = brandData.sfLogoUrl || '';
+        if (!sfLogoUrl) {
+          try { const b = await getSfLogoBuffer(); if (b) sfLogoUrl = await uploadToR2(b, 'system/salesforce-logo-white.png', 'image/png'); } catch (e) { /* optional */ }
+        }
+        const renderOpts = { invertBrandLogo: !!brandData.brandLogoInverted };
+        const pageW = (target.pageSize && target.pageSize.width && target.pageSize.width.magnitude) || 9144000;
+        const pageH = (target.pageSize && target.pageSize.height && target.pageSize.height.magnitude) || 5143500;
+        const fontScale = (pageW / 12700) / 720; // extractor sizes are for a 720pt-wide slide
+        const originalIds = (target.slides || []).map(s => s.objectId);
+        const stamp = Date.now().toString(36);
+        const EMU = v => ({ magnitude: Math.round(v), unit: 'EMU' });
+
+        for (let i = 0; i < slides.length; i++) {
+          const png = await renderWebSlideToImage(slides[i], i, brandLogoUrl, sfLogoUrl, false, renderOpts);
+          const jpg = await sharp(png).jpeg({ quality: 88 }).toBuffer();
+          const hash = crypto.createHash('md5').update(jpg).digest('hex').slice(0, 12);
+          const bgUrl = await uploadToR2(jpg, `user-slides/${presentation.id}/export/${i}-${hash}.jpg`, 'image/jpeg');
+          let elements = [];
+          try { elements = await extractTextPositionsFromBrowser(slides[i], i, brandLogoUrl, sfLogoUrl, renderOpts); } catch (e) { /* background only */ }
+
+          const sid = `sg_${stamp}_${i}`;
+          const reqs = [
+            { createSlide: { objectId: sid, insertionIndex: originalIds.length + i, slideLayoutReference: { predefinedLayout: 'BLANK' } } },
+            { updatePageProperties: { objectId: sid, pageProperties: { pageBackgroundFill: { stretchedPictureFill: { contentUrl: bgUrl } } }, fields: 'pageBackgroundFill' } },
+          ];
+          elements.forEach((el, n) => {
+            const text = String(el.text || '').trim();
+            if (!text) return;
+            const tid = `${sid}_t${n}`;
+            const w = Math.min(100 - (el.x || 0), (el.w || 10) * 1.04 + 0.5);
+            reqs.push(
+              { createShape: { objectId: tid, shapeType: 'TEXT_BOX', elementProperties: { pageObjectId: sid,
+                size: { width: EMU(pageW * w / 100), height: EMU(pageH * Math.max(el.h || 4, 2) / 100) },
+                transform: { scaleX: 1, scaleY: 1, translateX: Math.round(pageW * (el.x || 0) / 100), translateY: Math.round(pageH * (el.y || 0) / 100), unit: 'EMU' } } } },
+              { insertText: { objectId: tid, text } },
+              { updateTextStyle: { objectId: tid, textRange: { type: 'ALL' }, style: {
+                fontSize: { magnitude: Math.max(6, Math.round((el.fontSize || 18) * fontScale)), unit: 'PT' },
+                foregroundColor: { opaqueColor: { rgbColor: hexToRgb01(el.color) } },
+                bold: !!el.bold, italic: !!el.italic,
+                fontFamily: require('./src/utils/pptxExport').pickFont(el.fontFamily),
+              }, fields: 'fontSize,foregroundColor,bold,italic,fontFamily' } },
+              { updateParagraphStyle: { objectId: tid, textRange: { type: 'ALL' }, style: { alignment: el.align === 'center' ? 'CENTER' : el.align === 'right' ? 'END' : 'START' }, fields: 'alignment' } },
+              { updateShapeProperties: { objectId: tid, shapeProperties: { contentAlignment: el.vAlign === 'middle' ? 'MIDDLE' : el.vAlign === 'bottom' ? 'BOTTOM' : 'TOP' }, fields: 'contentAlignment' } },
+            );
+          });
+          await slidesBatchWithRetry(slidesApi, targetId, reqs);
+          job.progress = i + 1;
+        }
+
+        // Only after every new slide is in place: remove the originals
+        if (originalIds.length) {
+          await slidesBatchWithRetry(slidesApi, targetId, originalIds.map(objectId => ({ deleteObject: { objectId } })));
+        }
+        const url = `https://docs.google.com/presentation/d/${targetId}/edit`;
+        job.googleUrl = url;
+        job.status = 'completed';
+        const fresh = await query('SELECT data FROM presentations WHERE id = ?', [presentation.id]);
+        let d = fresh[0] && fresh[0].data;
+        if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e) { d = {}; } }
+        d = d || {};
+        d.source = { ...(d.source || {}), appliedAt: new Date().toISOString() };
+        await query('UPDATE presentations SET data = ?, google_presentation_url = ? WHERE id = ?', [JSON.stringify(d), url, presentation.id]);
+        console.log(`[ApplyGoogle] Presentation ${presentation.id}: replaced ${originalIds.length} slides with ${slides.length} in ${targetId}`);
+      } catch (err) {
+        console.error('[ApplyGoogle] Failed:', err.message);
+        const code = err.code || (err.response && err.response.status);
+        job.status = 'failed';
+        job.error = (code === 403)
+          ? `Slide Generator only has view access. Share your deck with ${serviceAccountEmail()} as Editor, then try again. Your original slides were not changed.`
+          : 'Could not update your Google Slides deck: ' + err.message + ' — your original slides were not removed.';
+      }
+    })();
+  } catch (err) {
+    console.error('Apply to Google error:', err);
+    res.status(500).json({ error: 'Failed to start applying to Google Slides' });
+  }
+});
+
 // ═══════════════════════════════════════════════
 // APP-SPECIFIC — Download as PowerPoint (.pptx)
 // ═══════════════════════════════════════════════
@@ -5991,6 +6150,7 @@ app.get('/api/present-web/item/:presId/data', async (req, res) => {
       name: pres.name,
       brandLogoUrl: brandData.brandLogoUrl || '',
       brandLogoInverted: !!brandData.brandLogoInverted,
+      sfLogoUrl: brandData.sfLogoUrl || '',
       brandName: brandData.brandName || '',
       slides: slides.map(s => ({
         slideIndex: s.slide_index,

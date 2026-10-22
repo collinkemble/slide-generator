@@ -323,6 +323,7 @@
           <button id="detail-present-btn" onclick="openPresentation()" class="hidden cursor-pointer" style="background: #10B981; color: white; font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 8px; border: none; display: inline-flex; align-items: center; gap: 4px;">▶ Present</button>
           <button id="detail-export-google-btn" onclick="exportToGoogleSlides()" class="hidden cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #374151; font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 8px;">Export to Google Slides</button>
           <button id="detail-reexport-google-btn" onclick="exportToGoogleSlides()" class="hidden cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #6B7280; font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 8px;">↻ Re-export to Google Slides</button>
+          <button id="detail-apply-google-btn" onclick="applyToGoogleSlides()" class="hidden cursor-pointer" style="background: #0176D3; border: 1px solid #0176D3; color: #fff; font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 8px;">Apply to Google Slides</button>
           <button id="detail-download-pptx-btn" onclick="downloadPowerPoint()" class="hidden cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #374151; font-size: 13px; font-weight: 500; padding: 6px 14px; border-radius: 8px;">⬇ Download PowerPoint</button>
           <button onclick="openShareDialogForItem()" class="cursor-pointer" style="background: none; border: 1px solid #d1d5db; color: #374151; font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 8px;">Share</button>
         </div>
@@ -335,7 +336,7 @@
       </div>
 
       <!-- Google Export Warning (detail page) -->
-      <div style="margin-bottom: 16px; border-radius: 10px; padding: 12px 16px; background: #FFFBEB; border: 1px solid #FDE68A; display: flex; align-items: flex-start; gap: 10px;">
+      <div id="detail-google-warning" style="margin-bottom: 16px; border-radius: 10px; padding: 12px 16px; background: #FFFBEB; border: 1px solid #FDE68A; display: flex; align-items: flex-start; gap: 10px;">
         <span style="font-size: 16px; flex-shrink: 0; margin-top: 1px;">⚠️</span>
         <div style="font-size: 13px; color: #92400E; line-height: 20px;">
           <strong>Google Slides export currently supports personal Google accounts only.</strong> Salesforce (corporate) Google account support is pending approval. Once exported, you can share the presentation to your Salesforce Google account.
@@ -375,7 +376,11 @@
 
       <!-- Brand Kit & Logos Card (for web slides presentations) -->
       <div id="detail-brandkit-card" class="hidden mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <p class="font-bold mb-4" style="font-size: 15px; color: #032D60;">Brand Kit & Logos</p>
+        <button type="button" onclick="toggleBrandKitCard()" class="cursor-pointer" style="display: flex; align-items: center; justify-content: space-between; width: 100%; background: none; border: none; padding: 0; text-align: left;">
+          <span class="font-bold" style="font-size: 15px; color: #032D60;">Brand Kit & Logos</span>
+          <span id="detail-brandkit-chevron" style="font-size: 12px; color: #6B7280; transition: transform 0.2s;">▼ Show</span>
+        </button>
+        <div id="detail-brandkit-body" style="display: none; margin-top: 16px;">
 
         <!-- Current Brand Kit — blue gradient pattern -->
         <div style="background: linear-gradient(135deg, #f0f7ff, #e8f2ff); border-radius: 10px; padding: 16px; border: 1px dashed #b0d4f1; margin-bottom: 16px;">
@@ -449,6 +454,17 @@
           <span id="reverse-logo-status" class="text-xs text-gray-400"></span>
         </div>
         <p id="detail-logo-status" style="font-size: 12px; color: #16A34A; margin-top: 8px; display: none;"></p>
+      </div>
+      </div>
+
+      <!-- Web Slides Editor (for is_web_slides presentations) -->
+      <div id="detail-restyle-notice" class="hidden" style="margin-bottom: 16px; border-radius: 10px; padding: 12px 16px; background: #FFFBEB; border: 1px solid #FDE68A; font-size: 13px; color: #92400E; line-height: 20px;"></div>
+      <div id="web-slides-editor" class="hidden" style="margin-bottom: 16px;">
+        <div class="flex items-center justify-between mb-4">
+          <p class="font-bold" style="font-size: 15px; color: #032D60;">Slides</p>
+          <span id="web-slides-count-badge" style="font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; background: #E8F5E9; color: #2E7D32;"></span>
+        </div>
+        <div id="web-slides-editor-body"></div>
       </div>
 
       <!-- Regenerate All Slides Card (for web slides presentations) -->
@@ -545,16 +561,6 @@
       </div>
 
       <!-- Generated slides preview -->
-      <!-- Web Slides Editor (for is_web_slides presentations) -->
-      <div id="detail-restyle-notice" class="hidden" style="margin-bottom: 16px; border-radius: 10px; padding: 12px 16px; background: #FFFBEB; border: 1px solid #FDE68A; font-size: 13px; color: #92400E; line-height: 20px;"></div>
-      <div id="web-slides-editor" class="hidden" style="margin-bottom: 16px;">
-        <div class="flex items-center justify-between mb-4">
-          <p class="font-bold" style="font-size: 15px; color: #032D60;">Slides</p>
-          <span id="web-slides-count-badge" style="font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 999px; background: #E8F5E9; color: #2E7D32;"></span>
-        </div>
-        <div id="web-slides-editor-body"></div>
-      </div>
-
       <div id="slides-preview" class="hidden" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 16px;">
         <div class="flex items-center justify-between mb-4">
           <p class="font-bold" style="font-size: 15px; color: #032D60;">Slides</p>
@@ -719,11 +725,14 @@
             <div id="np-wiz-prog-1" style="flex: 1; height: 4px; border-radius: 2px; background: #0176D3; transition: background 0.3s;"></div>
             <div style="width: 4px;"></div>
             <div id="np-wiz-prog-2" style="flex: 1; height: 4px; border-radius: 2px; background: #e5e7eb; transition: background 0.3s;"></div>
+            <div style="width: 4px;"></div>
+            <div id="np-wiz-prog-3" style="flex: 1; height: 4px; border-radius: 2px; background: #e5e7eb; transition: background 0.3s;"></div>
           </div>
           <!-- Step labels -->
           <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
             <span id="np-wiz-label-1" style="font-size: 11px; font-weight: 700; color: #0176D3; transition: color 0.3s;">1. Presentation Settings</span>
-            <span id="np-wiz-label-2" style="font-size: 11px; font-weight: 600; color: #9ca3af; transition: color 0.3s;">2. Brand Identity</span>
+            <span id="np-wiz-label-2" style="font-size: 11px; font-weight: 600; color: #9ca3af; transition: color 0.3s;">2. Presentation Type</span>
+            <span id="np-wiz-label-3" style="font-size: 11px; font-weight: 600; color: #9ca3af; transition: color 0.3s;">3. Brand Identity</span>
           </div>
         </div>
 
@@ -786,9 +795,13 @@
               </select>
               <p style="font-size: 11px; color: #9ca3af; margin: 6px 0 0 0; line-height: 1.4;">All generated content will be in this language.</p>
             </div>
+          </div>
+
+          <!-- ═══ STEP 2: Presentation Type ═══ -->
+          <div id="np-wizard-step-2" style="display: none; flex-direction: column; gap: 12px;">
             <!-- Start from (scratch vs restyle an existing deck) -->
             <div>
-              <label class="block text-xs font-bold mb-1" style="color: #032D60;">Start from <span style="color: #ea001e;">*</span></label>
+              <label class="block text-xs font-bold mb-1" style="color: #032D60;">How do you want to start? <span style="color: #ea001e;">*</span></label>
               <div style="display: flex; flex-direction: column; gap: 8px;">
                 <label id="np-start-scratch-card" onclick="npSelectStartFrom('scratch')" style="display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border-radius: 12px; border: 2px solid #e5e7eb; background: #fafbfc; cursor: pointer; transition: all 0.2s;">
                   <div id="np-start-scratch-radio" style="width: 20px; height: 20px; border-radius: 50%; border: 2px solid #d1d5db; margin-top: 2px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; transition: all 0.2s;">
@@ -830,7 +843,7 @@
                 <div id="np-src-link-panel" style="display: none;">
                   <ol style="margin: 0 0 10px; padding-left: 18px; font-size: 12px; color: #374151; line-height: 20px;">
                     <li>In Google Slides, set <strong>File → Labels</strong> to <strong>External allowed</strong>.</li>
-                    <li><strong>Share</strong> the deck with <code id="np-sa-email" style="font-size: 11px; background: #fff; padding: 1px 5px; border-radius: 4px; border: 1px solid #d1d5db;">slide-reader@slide-generator-500915.iam.gserviceaccount.com</code> <button type="button" onclick="npCopySaEmail(this)" style="font-size: 11px; font-weight: 600; color: #0176D3; background: none; border: none; cursor: pointer;">Copy</button> as <strong>Viewer</strong> (tick "Notify people" if Google asks).</li>
+                    <li><strong>Share</strong> the deck with <code id="np-sa-email" style="font-size: 11px; background: #fff; padding: 1px 5px; border-radius: 4px; border: 1px solid #d1d5db;">slide-reader@slide-generator-500915.iam.gserviceaccount.com</code> <button type="button" onclick="npCopySaEmail(this)" style="font-size: 11px; font-weight: 600; color: #0176D3; background: none; border: none; cursor: pointer;">Copy</button> as <strong>Editor</strong> (tick "Notify people" if Google asks). Editor lets Slide Generator apply the restyled slides back to your deck later.</li>
                     <li>Paste the deck's link below.</li>
                   </ol>
                   <div style="display: flex; gap: 8px;">
@@ -843,8 +856,8 @@
             </div>
           </div>
 
-          <!-- ═══ STEP 2: Brand Identity ═══ -->
-          <div id="np-wizard-step-2" style="display: none; flex-direction: column; gap: 12px;">
+          <!-- ═══ STEP 3: Brand Identity ═══ -->
+          <div id="np-wizard-step-3" style="display: none; flex-direction: column; gap: 12px;">
             <!-- Why brand kit callout -->
             <div style="background: linear-gradient(135deg, #FFFBEB, #FEF3C7); border-radius: 10px; padding: 14px 16px; border: 1px solid rgba(245,158,11,0.25);">
               <p style="margin: 0; font-size: 12px; color: #92400E; line-height: 1.5;">
@@ -2254,7 +2267,10 @@ async function checkGoogleStatus() {
     const detailText = document.getElementById('detail-google-text');
     const detailActions = document.getElementById('detail-google-actions');
     const authErr = document.getElementById('detail-auth-error');
-    if (detailBanner) {
+    if (detailBanner && window._googleSourceDeck && currentPage === 'item-detail') {
+      detailBanner.classList.add('hidden'); detailBanner.style.display = 'none';
+      if (authErr) { authErr.classList.add('hidden'); authErr.style.display = 'none'; }
+    } else if (detailBanner) {
       if (data.connected) {
         // Connected — show green banner, hide auth error
         detailBanner.classList.remove('hidden');
@@ -2459,9 +2475,14 @@ async function loadItems() {
         onmouseleave="this.style.boxShadow='0 1px 3px rgba(0,0,0,0.08)'; this.style.transform='none'; this.querySelector('.delete-btn').style.opacity='0';">
         <div style="display: flex; flex-direction: column; gap: 8px;">
           <div style="display: flex; align-items: center; gap: 12px;">
+            ${item.brand_logo_url ? `
+            <div style="width: 40px; height: 40px; border-radius: 10px; background: ${item.brand_logo_inverted ? '#032D60' : '#fff'}; border: 1px solid #e5e7eb; display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; position: relative;">
+              <img src="${esc(item.brand_logo_url)}" alt="" style="max-width: 32px; max-height: 32px; object-fit: contain;${item.brand_logo_inverted ? ' filter: brightness(0) invert(1);' : ''}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+              <span style="display: none; position: absolute; inset: 0; background: linear-gradient(135deg, #032D60, #0176D3); color: #fff; align-items: center; justify-content: center; font-size: 18px; font-weight: 700;">${esc(item.name.charAt(0).toUpperCase())}</span>
+            </div>` : `
             <div style="width: 40px; height: 40px; border-radius: 10px; background: linear-gradient(135deg, #032D60, #0176D3); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 700; flex-shrink: 0;">
               ${esc(item.name.charAt(0).toUpperCase())}
-            </div>
+            </div>`}
             <div style="flex: 1; min-width: 0;">
               <div style="font-weight: 600; font-size: 18px; line-height: 26px; letter-spacing: -0.01em; color: #111; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(item.name)}</div>
             </div>
@@ -2506,6 +2527,7 @@ async function viewItem(id, skipPush) {
     currentPresentationData = data;
     currentItemName = presentation.name; // For share dialog
     window._isWebSlides = !!presentation.is_web_slides;
+    window._googleSourceDeck = (data && data.source && data.source.type === 'google' && data.source.url) ? data.source.url : null;
 
     // Populate header
     document.getElementById('detail-breadcrumb').textContent = presentation.name;
@@ -2515,6 +2537,13 @@ async function viewItem(id, skipPush) {
     const exportGoogleBtn = document.getElementById('detail-export-google-btn');
     const reexportGoogleBtn = document.getElementById('detail-reexport-google-btn');
     const pptxBtn = document.getElementById('detail-download-pptx-btn');
+    const applyBtn = document.getElementById('detail-apply-google-btn');
+    if (applyBtn) {
+      const showApply = presentation.status === 'completed' && !!window._googleSourceDeck;
+      applyBtn.classList.toggle('hidden', !showApply);
+      applyBtn.style.display = showApply ? 'inline-flex' : 'none';
+      if (!applyBtn.disabled) applyBtn.innerHTML = (data.source && data.source.appliedAt) ? '↻ Apply to Google Slides again' : 'Apply to Google Slides';
+    }
     if (pptxBtn) {
       const showPptx = presentation.status === 'completed' && !!presentation.is_web_slides;
       pptxBtn.classList.toggle('hidden', !showPptx);
@@ -2557,6 +2586,13 @@ async function viewItem(id, skipPush) {
       reexportGoogleBtn.style.display = 'none';
     }
 
+    if (window._googleSourceDeck) {
+      // Restyled from a Google Slides link: "Apply to Google Slides" replaces the personal-account export
+      [exportGoogleBtn, reexportGoogleBtn].forEach(b => { if (b) { b.classList.add('hidden'); b.style.display = 'none'; } });
+    }
+    const gWarn = document.getElementById('detail-google-warning');
+    if (gWarn) gWarn.style.display = window._googleSourceDeck ? 'none' : 'flex';
+
     // Status banner
     const statusBanner = document.getElementById('detail-status-banner');
     const statusIcon = document.getElementById('detail-status-icon');
@@ -2573,8 +2609,14 @@ async function viewItem(id, skipPush) {
     statusIcon.textContent = sc.icon;
     statusText.textContent = sc.label;
     statusText.style.color = sc.color;
-    statusBanner.classList.remove('hidden');
-    statusBanner.style.display = 'flex';
+    if (presentation.is_web_slides && presentation.status === 'generating') {
+      // Progress is shown inside the Slides section instead
+      statusBanner.classList.add('hidden');
+      statusBanner.style.display = 'none';
+    } else {
+      statusBanner.classList.remove('hidden');
+      statusBanner.style.display = 'flex';
+    }
 
     // For web slides presentations: hide old settings/generate cards, show web editor
     const settingsCard = document.getElementById('settings-card');
@@ -2637,7 +2679,10 @@ async function viewItem(id, skipPush) {
 
         // Populate SF logo
         const sfLogoImg = document.getElementById('detail-sf-logo-img');
+        userWebSfLogoUrl = brandData.sfLogoUrl || '';
         if (sfLogoImg) {
+          sfLogoImg.onerror = function () { if (!this.src.endsWith('/sflogo.png')) this.src = '/sflogo.png'; };
+          sfLogoImg.style.display = 'block';
           sfLogoImg.src = brandData.sfLogoUrl || '/sflogo.png';
         }
       }
@@ -2852,7 +2897,7 @@ document.getElementById('edit-style').addEventListener('change', checkSettingsCh
 // Step 1: Presentation Settings · Step 2: Brand Identity
 // ═══════════════════════════════════════════════
 let npWizardStep = 1;
-const NP_WIZARD_TOTAL_STEPS = 2;
+const NP_WIZARD_TOTAL_STEPS = 3;
 let npBrandKitFiles = [];
 let npBrandKitAnalyzing = false;
 let npPendingBrandKitSource = null;  // brand kit source name for saving
@@ -2925,11 +2970,12 @@ function npValidateWizardStep(step) {
   if (step === 1) {
     if (!document.getElementById('np-brand-name').value.trim()) missing.push({ id: 'np-brand-name', label: 'Presentation Name' });
     if (!document.getElementById('np-brand-brand-name').value.trim()) missing.push({ id: 'np-brand-brand-name', label: 'Brand Name' });
+  } else if (step === 2) {
     if (npStartFrom === 'restyle') {
       if (npRestyleSource === 'file' && !npRestyleFile) missing.push({ id: 'np-restyle-panel', label: 'Deck file (.pptx or PDF)' });
       if (npRestyleSource === 'link' && !npLinkVerified) missing.push({ id: 'np-restyle-panel', label: 'Google Slides link (click "Check access")' });
     }
-  } else if (step === 2) {
+  } else if (step === 3) {
     // Brand kit must be applied (fields visible) before proceeding
     const fieldsContainer = document.getElementById('np-wizard-step-2-fields');
     if (fieldsContainer && fieldsContainer.style.display === 'none') {
@@ -3091,6 +3137,7 @@ function npResetBrandKit() {
   const dropdown = document.getElementById('np-bk-picker-dropdown');
   if (dropdown) dropdown.style.display = 'none';
   npBkPickerOpen = false;
+  npUnfloatMenu();
 }
 
 // ─── Brand kit: applied badge ───
@@ -3222,17 +3269,53 @@ function npScheduleLogoRetries(itemId, email) {
   });
 }
 
+
+// ─── Floating dropdown (same approach as PocketSIC): render at the top level of the page so the
+// modal's scroll area / footer can never clip it; follow the button while scrolling; flip up if needed.
+const NP_MENU_WIDTH = 280, NP_MENU_MAX_HEIGHT = 240, NP_MENU_GAP = 6;
+let npFloatingPlace = null;
+function npFloatMenu(menu, anchor) {
+  if (menu.parentElement !== document.body) document.body.appendChild(menu);
+  const place = () => {
+    const r = anchor.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - r.bottom - NP_MENU_GAP - 8;
+    const spaceAbove = r.top - NP_MENU_GAP - 8;
+    const openUp = spaceBelow < Math.min(NP_MENU_MAX_HEIGHT, 160) && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(120, Math.min(NP_MENU_MAX_HEIGHT, openUp ? spaceAbove : spaceBelow));
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - NP_MENU_WIDTH - 8));
+    Object.assign(menu.style, {
+      position: 'fixed', left: left + 'px', width: NP_MENU_WIDTH + 'px', maxHeight: maxHeight + 'px',
+      top: openUp ? 'auto' : (r.bottom + NP_MENU_GAP) + 'px',
+      bottom: openUp ? (window.innerHeight - r.top + NP_MENU_GAP) + 'px' : 'auto',
+      marginBottom: '0', zIndex: '10000', overflowY: 'auto',
+    });
+  };
+  npUnfloatMenu();
+  place();
+  npFloatingPlace = place;
+  window.addEventListener('scroll', place, true);   // capture: scrolling inside the modal body also repositions
+  window.addEventListener('resize', place);
+}
+function npUnfloatMenu() {
+  if (!npFloatingPlace) return;
+  window.removeEventListener('scroll', npFloatingPlace, true);
+  window.removeEventListener('resize', npFloatingPlace);
+  npFloatingPlace = null;
+}
+
 // ─── Brand kit: select from Brand Kit Builder ───
 async function npOpenBrandKitPicker() {
   const dropdown = document.getElementById('np-bk-picker-dropdown');
   const content = document.getElementById('np-bk-picker-content');
-  if (npBkPickerOpen) { dropdown.style.display = 'none'; npBkPickerOpen = false; return; }
+  if (npBkPickerOpen) { dropdown.style.display = 'none'; npBkPickerOpen = false; npUnfloatMenu(); return; }
 
   const email = document.getElementById('user-email').textContent;
   if (!email) { alert('Unable to load brand kits — not logged in.'); return; }
 
   dropdown.style.display = 'block';
   npBkPickerOpen = true;
+  const anchorBtn = document.querySelector('#np-bk-picker-container button');
+  if (anchorBtn) npFloatMenu(dropdown, anchorBtn);
   content.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 13px; color: #888;">⏳ Loading brand kits...</div>';
 
   try {
@@ -3292,11 +3375,12 @@ async function npSelectBrandKit(itemId, kitName) {
     npApplyBrandKitToForm(bk);
     dropdown.style.display = 'none';
     npBkPickerOpen = false;
+    npUnfloatMenu();
     npScheduleLogoRetries(itemId, email);
   } catch (err) {
     console.error('Failed to apply brand kit:', err);
     content.innerHTML = '<div style="padding: 20px; text-align: center; font-size: 13px; color: #e5534b;">Failed to apply brand kit</div>';
-    setTimeout(() => { dropdown.style.display = 'none'; npBkPickerOpen = false; }, 1500);
+    setTimeout(() => { dropdown.style.display = 'none'; npBkPickerOpen = false; npUnfloatMenu(); }, 1500);
   }
 }
 
@@ -3549,10 +3633,12 @@ function npToggleCustomIndustry(keepValue) {
 
 // Close the brand kit picker when clicking outside it
 document.addEventListener('click', (e) => {
-  if (npBkPickerOpen && !e.target.closest('#np-bk-picker-container')) {
+  // The menu lives at the top level of the page — clicks inside it aren't "outside"
+  if (npBkPickerOpen && !e.target.closest('#np-bk-picker-container') && !e.target.closest('#np-bk-picker-dropdown')) {
     const dd = document.getElementById('np-bk-picker-dropdown');
     if (dd) dd.style.display = 'none';
     npBkPickerOpen = false;
+    npUnfloatMenu();
   }
 });
 
@@ -3712,7 +3798,7 @@ async function createPresentation() {
 
   // Re-validate every step (user may have gone Back and cleared a field)
   npClearValidationErrors();
-  for (const step of [1, 2]) {
+  for (const step of [1, 2, 3]) {
     const missing = npValidateWizardStep(step);
     if (missing.length > 0) {
       if (step !== npWizardStep) npShowWizardStep(step);
@@ -3990,12 +4076,23 @@ async function selectDetailBrandKit(itemId, btnEl) {
   }
 }
 
+// Brand Kit & Logos card — collapsed by default
+function toggleBrandKitCard(forceOpen) {
+  const body = document.getElementById('detail-brandkit-body');
+  const chev = document.getElementById('detail-brandkit-chevron');
+  if (!body) return;
+  const open = typeof forceOpen === 'boolean' ? forceOpen : body.style.display === 'none';
+  body.style.display = open ? 'block' : 'none';
+  if (chev) chev.textContent = open ? '▲ Hide' : '▼ Show';
+}
+
 // ═══════════════════════════════════════════════
 // DETAIL PAGE: Reverse Logo (White) — mirrors Leave Behind Generator
 // Turns a dark brand logo solid white (CSS brightness(0) invert(1)) so it reads on dark slides.
 // Saved per presentation as web_brand_data.brandLogoInverted.
 // ═══════════════════════════════════════════════
 let userWebBrandLogoInverted = false;
+let userWebSfLogoUrl = ''; // custom Salesforce logo (empty = default /sflogo.png)
 
 async function toggleReverseLogo() {
   if (!currentPresentationId) return;
@@ -4109,6 +4206,7 @@ function applyLogoUpdate(type, url) {
     userWebBrandLogoUrl = url;
   } else {
     document.getElementById('detail-sf-logo-img').src = url;
+    userWebSfLogoUrl = url;
   }
   // Refresh slide previews without regenerating
   if (typeof refreshAllUserSlidePreviews === 'function') refreshAllUserSlidePreviews();
@@ -4123,6 +4221,7 @@ async function resetSfLogo() {
       body: JSON.stringify({ email, logoType: 'sf', url: '' })
     });
     document.getElementById('detail-sf-logo-img').src = '/sflogo.png';
+    userWebSfLogoUrl = '';
     if (typeof refreshAllUserSlidePreviews === 'function') refreshAllUserSlidePreviews();
   } catch (err) { console.error('Reset SF logo failed:', err); }
 }
@@ -4459,6 +4558,52 @@ function openPresentation() {
   }
 }
 
+
+
+// ═══════════════════════════════════════════════
+// APP: Apply restyled slides to the original Google Slides deck (service account — no Google sign-in)
+// ═══════════════════════════════════════════════
+async function applyToGoogleSlides() {
+  if (!currentPresentationId || !window._googleSourceDeck) return;
+  const sa = (document.getElementById('np-sa-email') || {}).textContent || 'slide-reader@slide-generator-500915.iam.gserviceaccount.com';
+  if (!confirm(`This replaces the slides in your original Google Slides deck with the restyled slides.\n\nGoogle keeps the old version — you can restore it from File → Version history.\n\nMake sure the deck is shared with ${sa.trim()} as Editor.\n\nContinue?`)) return;
+  const btn = document.getElementById('detail-apply-google-btn');
+  const email = document.getElementById('user-email').textContent;
+  const spin = '<svg class="animate-spin" style="width:14px;height:14px" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="3" opacity="0.3"/><path fill="currentColor" d="M12 2a10 10 0 0 1 10 10h-3a7 7 0 0 0-7-7V2z"/></svg>';
+  btn.disabled = true;
+  btn.innerHTML = `<span class="inline-flex items-center gap-2">${spin} Applying…</span>`;
+  try {
+    const resp = await fetch(`/api/presentations/${currentPresentationId}/apply-to-google`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email })
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.jobId) throw new Error(data.error || 'Could not start');
+    const started = Date.now();
+    while (true) {
+      await new Promise(r => setTimeout(r, 2500));
+      if (Date.now() - started > 20 * 60 * 1000) throw new Error('This is taking too long. Check your deck, then try again.');
+      const jr = await fetch(`/api/export-jobs/${data.jobId}`);
+      const job = await jr.json().catch(() => ({}));
+      if (!jr.ok) throw new Error(job.error || 'Job not found');
+      if (job.status === 'processing') {
+        btn.innerHTML = `<span class="inline-flex items-center gap-2">${spin} Applying… ${job.progress || 0}/${job.total || data.total}</span>`;
+        continue;
+      }
+      if (job.status === 'failed') throw new Error(job.error || 'Apply failed');
+      if (job.status === 'completed') {
+        btn.disabled = false;
+        btn.innerHTML = '✓ Applied — open deck ↗';
+        btn.onclick = () => window.open(job.googleUrl || window._googleSourceDeck, '_blank');
+        if (typeof npShowToast === 'function') npShowToast('Your Google Slides deck has been updated');
+        return;
+      }
+    }
+  } catch (err) {
+    alert('Apply to Google Slides failed: ' + err.message);
+    btn.disabled = false;
+    btn.innerHTML = 'Apply to Google Slides';
+  }
+}
 
 // ═══════════════════════════════════════════════
 // APP: Download as PowerPoint (no Google connection needed)
@@ -5027,7 +5172,17 @@ let userWebBrandLogoUrl = '';  // brand logo URL
 let userTemplateTypes = [];    // available template types from master ref
 let userWebBrandData = null;   // brand data stored on the presentation
 
+// Restyled decks keep their own layouts — use the free-text editor until a slide is swapped to a template
+function userSlideType(slide, idx) {
+  if (window._restyledDeck && !slide.template_type) return 'free-text';
+  return detectSlideType(slide.slide_name, idx, userWebSlides.length, slide.template_type);
+}
+
 async function loadWebSlideEditor(presentation) {
+  try {
+    const pdata = typeof presentation.data === 'string' ? JSON.parse(presentation.data || '{}') : (presentation.data || {});
+    window._restyledDeck = !!(pdata && pdata.source && ['upload', 'google'].includes(pdata.source.type));
+  } catch (e) { window._restyledDeck = false; }
   const editorContainer = document.getElementById('web-slides-editor');
   const editorBody = document.getElementById('web-slides-editor-body');
   const countBadge = document.getElementById('web-slides-count-badge');
@@ -5048,8 +5203,8 @@ async function loadWebSlideEditor(presentation) {
           <div style="width: 10px; height: 10px; background: #0176D3; border-radius: 50%; animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.2s;"></div>
           <div style="width: 10px; height: 10px; background: #0176D3; border-radius: 50%; animation: pulse-dot 1.4s infinite ease-in-out both; animation-delay: 0.4s;"></div>
         </div>
-        <p style="font-size: 14px; font-weight: 600; color: #374151;">Generating background images...</p>
-        <p style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">Your slides are ready — AI backgrounds are being created. This takes about a minute.</p>
+        <p id="web-gen-status-text" style="font-size: 14px; font-weight: 600; color: #374151;">${esc(presentation.status_message || 'Getting started…')}</p>
+        <p style="font-size: 12px; color: #9CA3AF; margin-top: 4px;">This page updates automatically — you can leave and come back.</p>
       </div>`;
     pollWebBgGeneration(presentation.id);
     return;
@@ -5119,7 +5274,7 @@ function buildUserSlidePreviewSrcdoc(webSlide, slideIndex) {
       logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:200px;width:auto;object-fit:contain;${logoInvert}">`;
       logoHtml += '<div style="width:3px;height:160px;background:rgba(255,255,255,0.6);"></div>';
     }
-    logoHtml += '<img src="/sflogo.png" alt="SF" style="height:200px;width:auto;object-fit:contain;">';
+    logoHtml += '<img src="' + (userWebSfLogoUrl || '/sflogo.png') + '" alt="SF" style="height:200px;width:auto;object-fit:contain;">';
     logoHtml += '</div>';
   } else {
     logoHtml = '<div style="position:absolute;top:30px;right:30px;z-index:10;display:flex;align-items:center;gap:12px;pointer-events:none;">';
@@ -5127,7 +5282,7 @@ function buildUserSlidePreviewSrcdoc(webSlide, slideIndex) {
       logoHtml += `<img src="${brandLogo}" alt="Brand" style="height:48px;width:auto;object-fit:contain;${logoInvert}">`;
       logoHtml += '<div style="width:1px;height:40px;background:rgba(255,255,255,0.5);"></div>';
     }
-    logoHtml += '<img src="/sflogo.png" alt="SF" style="height:48px;width:auto;object-fit:contain;">';
+    logoHtml += '<img src="' + (userWebSfLogoUrl || '/sflogo.png') + '" alt="SF" style="height:48px;width:auto;object-fit:contain;">';
     logoHtml += '</div>';
   }
 
@@ -5150,7 +5305,7 @@ function renderUserWebSlides() {
 
   editorBody.innerHTML = userWebSlides.map((slide, i) => {
     const hasSlideData = slide.html_content || slide.bg_image_url;
-    const slideType = detectSlideType(slide.slide_name, i, userWebSlides.length, slide.template_type);
+    const slideType = userSlideType(slide, i);
     const fields = extractSlideFields(slide.html_content || '', slideType);
 
     // Build template type dropdown options
@@ -5248,7 +5403,7 @@ async function saveUserSlideContent(slideIndex) {
   const slide = userWebSlides[slideIndex];
   if (!slide) { if (statusEl) statusEl.textContent = 'Error: no slide data'; return; }
 
-  const slideType = detectSlideType(slide.slide_name, slideIndex, userWebSlides.length, slide.template_type);
+  const slideType = userSlideType(slide, slideIndex);
   const fields = collectSlideEditorFields(slideIndex, slideType);
   const newHtml = reconstructSlideHtml(slide.html_content, slideType, fields);
 
@@ -5437,9 +5592,9 @@ function pollWebBgGeneration(presId) {
       const result = await resp.json();
       const pres = result.presentation;
 
-      if (pres.status === 'generating' && pres.status_message) {
-        const st = document.getElementById('detail-status-text');
-        if (st && currentPresentationId === presId) st.textContent = pres.status_message;
+      if (pres.status === 'generating' && pres.status_message && currentPresentationId === presId) {
+        const st = document.getElementById('web-gen-status-text');
+        if (st) st.textContent = pres.status_message;
       }
       if (pres.status === 'completed') {
         clearInterval(pollInterval);
@@ -5735,9 +5890,32 @@ const SLIDE_ICON_PRESETS = ['🔍','✨','🌐','💡','🎯','🚀','⚡','🔒
  * If the annotation has a templateType set, use that directly.
  * Otherwise fall back to name-based detection.
  */
+// Map an admin Template Name (e.g. "Thank You", "POV Themes") to a known editor slide type.
+const KNOWN_SLIDE_TYPES = ['intro','simple-heading','thank-you','forward-looking','pov-intro','pov-themes','agenda','demo-chapter-intro','demo-chapter-closing','content'];
+function slideTypeFromLabel(label) {
+  const l = String(label || '').toLowerCase().trim();
+  if (!l) return null;
+  const slug = l.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (KNOWN_SLIDE_TYPES.includes(slug)) return slug;
+  if (l.includes('thank')) return 'thank-you';
+  if (l.includes('forward')) return 'forward-looking';
+  if (l.includes('pov') && l.includes('intro')) return 'pov-intro';
+  if (l.includes('pov') || l.includes('theme') || l.includes('pillar')) return 'pov-themes';
+  if (l.includes('agenda')) return 'agenda';
+  if (l.includes('chapter') && l.includes('clos')) return 'demo-chapter-closing';
+  if (l.includes('chapter') || l.includes('transition')) return 'demo-chapter-intro';
+  if (l === 'demo intro' || l.includes('welcome') || l.includes('section') || l.includes('heading') || l.includes('our path') || l.includes('divider')) return 'simple-heading';
+  if (l === 'intro' || l.includes('cover') || l.includes('title slide') || l.includes('opening') || l.includes('hero')) return 'intro';
+  if (l.includes('content') || l.includes('text') || l.includes('bullet') || l.includes('voice') || l.includes('body')) return 'content';
+  return null;
+}
+
 function detectSlideType(slideName, slideIndex, totalSlides, templateType) {
-  // If an explicit template type is set, use it directly
-  if (templateType) return templateType;
+  // If an explicit template type is set, map it to a known editor type (falls back to name detection)
+  if (templateType) {
+    const mapped = slideTypeFromLabel(templateType);
+    if (mapped) return mapped;
+  }
   // Fall back to name-based detection
   const name = (slideName || '').toLowerCase().trim();
   if (slideIndex === 0) return 'intro';
@@ -5772,7 +5950,56 @@ function editableTextToHtml(text) {
 /**
  * Extract structured field values from existing slide HTML based on type.
  */
+// ─── Free-text editing (restyled slides): every visible text block is its own field ───
+function freeTextNodes(root) {
+  const out = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(n) {
+      if (!n.nodeValue || !n.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+      const p = n.parentElement;
+      if (p && /^(STYLE|SCRIPT|NOSCRIPT)$/.test(p.tagName)) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  let n;
+  while ((n = walker.nextNode()) && out.length < 80) out.push(n);
+  return out;
+}
+
+function freeTextLabel(node) {
+  const el = node.parentElement;
+  if (!el) return 'Text';
+  const cls = (el.className && typeof el.className === 'string') ? el.className.toLowerCase() : '';
+  if (/^H[1-2]$/.test(el.tagName) || /title/.test(cls)) return 'Heading';
+  if (/^H[3-6]$/.test(el.tagName) || /heading|subtitle/.test(cls)) return 'Subheading';
+  if (el.closest('li')) return 'List item';
+  if (el.closest('td, th')) return 'Table cell';
+  if (/stat|metric|number|value|percent/.test(cls)) return 'Number';
+  return 'Text';
+}
+
+function extractFreeTextFields(htmlString) {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = htmlString || '';
+  return { blocks: freeTextNodes(tmp).map(n => ({ label: freeTextLabel(n), text: n.nodeValue.trim() })) };
+}
+
+function reconstructFreeText(originalHtml, newFields) {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = originalHtml || '';
+  const nodes = freeTextNodes(tmp);
+  const blocks = (newFields && newFields.blocks) || [];
+  nodes.forEach((n, i) => {
+    if (blocks[i] === undefined) return;
+    const lead = (n.nodeValue.match(/^\s*/) || [''])[0];
+    const trail = (n.nodeValue.match(/\s*$/) || [''])[0];
+    n.nodeValue = lead + String(blocks[i]).replace(/\s*\n\s*/g, ' ') + trail;
+  });
+  return tmp.innerHTML;
+}
+
 function extractSlideFields(htmlString, slideType) {
+  if (slideType === 'free-text') return extractFreeTextFields(htmlString);
   if (!htmlString) return {};
   const tmp = document.createElement('div');
   tmp.innerHTML = htmlString;
@@ -5891,6 +6118,7 @@ function extractSlideFields(htmlString, slideType) {
  * Preserves all CSS class names and wrapper structure.
  */
 function reconstructSlideHtml(originalHtml, slideType, newFields) {
+  if (slideType === 'free-text') return reconstructFreeText(originalHtml, newFields);
   if (!originalHtml) return originalHtml;
   const tmp = document.createElement('div');
   tmp.innerHTML = originalHtml;
@@ -6012,6 +6240,12 @@ function reconstructSlideHtml(originalHtml, slideType, newFields) {
  */
 function collectSlideEditorFields(slideIndex, slideType) {
   const val = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
+  if (slideType === 'free-text') {
+    const els = document.querySelectorAll(`[data-ft-slide="${slideIndex}"]`);
+    const blocks = [];
+    els.forEach(el => { blocks[parseInt(el.dataset.ftIndex, 10)] = el.value; });
+    return { blocks };
+  }
 
   switch (slideType) {
     case 'intro':
@@ -6157,6 +6391,21 @@ function buildSlideEditorHtml(slideIndex, slideType, fields, webSlide) {
       fieldsHtml += buildCapabilityRowHtml(slideIndex, idx, cap);
     });
     fieldsHtml += `</div>`;
+  }
+
+  // === Free text (restyled slides): every text block ===
+  if (slideType === 'free-text') {
+    const blocks = fields.blocks || [];
+    if (blocks.length === 0) {
+      fieldsHtml += `<p class="text-xs text-gray-400" style="margin:0">This slide has no editable text.</p>`;
+    } else {
+      fieldsHtml += `<p class="text-xs text-gray-500" style="margin:0 0 4px">Edit any text on this slide. The layout and styling stay the same.</p>`;
+      blocks.forEach((b, n) => {
+        const rows = Math.min(6, Math.max(1, Math.ceil((b.text || '').length / 70)));
+        fieldsHtml += `<label class="${labelClass}">${esc(b.label || 'Text')}</label>`;
+        fieldsHtml += `<textarea data-ft-slide="${slideIndex}" data-ft-index="${n}" class="${textareaClass}" rows="${rows}">${esc(b.text || '')}</textarea>`;
+      });
+    }
   }
 
   // === Background Image Controls ===

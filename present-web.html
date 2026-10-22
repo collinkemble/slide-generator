@@ -128,6 +128,7 @@
     let cursorTimeout = null;
     let brandLogoUrl = '';
     let brandLogoInverted = false; // Reverse Logo (White) — set per presentation
+    let sfLogoSrc = '/sflogo.png';
 
     // Detect whether this is a reference presentation or a user presentation
     // URL patterns: /present-web/:refId (reference) or /present-web-item/:presId (user)
@@ -178,7 +179,7 @@
           logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:200px;width:auto;object-fit:contain;${brandLogoInverted ? 'filter:brightness(0) invert(1);' : ''}">`;
           logoHtml += '<div style="width:3px;height:160px;background:rgba(255,255,255,0.6);"></div>';
         }
-        logoHtml += '<img src="/sflogo.png" alt="Salesforce" style="height:200px;width:auto;object-fit:contain;">';
+        logoHtml += '<img src="' + sfLogoSrc + '" alt="Salesforce" style="height:200px;width:auto;object-fit:contain;">';
         logoHtml += '</div>';
       } else {
         // ALL OTHER SLIDES: Upper-right logo lockup
@@ -187,7 +188,7 @@
           logoHtml += `<img src="${brandLogoUrl}" alt="Brand" style="height:48px;width:auto;object-fit:contain;${brandLogoInverted ? 'filter:brightness(0) invert(1);' : ''}">`;
           logoHtml += '<div style="width:1px;height:40px;background:rgba(255,255,255,0.5);"></div>';
         }
-        logoHtml += '<img src="/sflogo.png" alt="Salesforce" style="height:48px;width:auto;object-fit:contain;">';
+        logoHtml += '<img src="' + sfLogoSrc + '" alt="Salesforce" style="height:48px;width:auto;object-fit:contain;">';
         logoHtml += '</div>';
       }
 
@@ -245,6 +246,7 @@ ${logoHtml}
         document.title = data.name || 'Presentation';
         brandLogoUrl = data.brandLogoUrl || '';
         brandLogoInverted = !!data.brandLogoInverted;
+        sfLogoSrc = data.sfLogoUrl || '/sflogo.png';
 
         // Create an iframe for each slide — CSS isolation prevents class collisions
         const container = document.getElementById('slide-container');
