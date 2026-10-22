@@ -4441,7 +4441,7 @@ app.post('/api/presentations/:id/apply-to-google', async (req, res) => {
       const job = exportJobs.get(jobId);
       let target;
       try {
-        target = (await withTimeout(slidesApi.presentations.get({ presentationId: targetId, fields: 'title,pageSize,slides.objectId' }), 60000, 'Opening your Google deck')).data;
+        target = (await withTimeout(slidesApi.presentations.get({ presentationId: targetId, fields: 'title,pageSize,slides.objectId,layouts(objectId,layoutProperties(name,displayName),pageElements(objectId))' }), 60000, 'Opening your Google deck')).data;
       } catch (err) {
         const code = err.code || (err.response && err.response.status);
         console.error(`[ApplyGoogle] Could not open deck ${targetId}:`, code, err.message);
@@ -4465,6 +4465,11 @@ app.post('/api/presentations/:id/apply-to-google', async (req, res) => {
         const pageH = (target.pageSize && target.pageSize.height && target.pageSize.height.magnitude) || 5143500;
         const fontScale = (pageW / 12700) / 720; // extractor sizes are for a 720pt-wide slide
         const originalIds = (target.slides || []).map(s => s.objectId);
+        // Not every theme has a predefined BLANK layout — use it if present, otherwise the layout with the
+        // fewest placeholders (any placeholders it adds are deleted from each new slide below).
+        const layouts = target.layouts || [];
+        const blankLayout = layouts.find(l => l.layoutProperties && l.layoutProperties.name === 'BLANK')
+          || layouts.slice().sort((a, b) => (a.pageElements || []).length - (b.pageElements || []).length)[0];
         const stamp = Date.now().toString(36);
         const EMU = v => ({ magnitude: Math.round(v), unit: 'EMU' });
 
@@ -4477,8 +4482,17 @@ app.post('/api/presentations/:id/apply-to-google', async (req, res) => {
           try { elements = await extractTextPositionsFromBrowser(slides[i], i, brandLogoUrl, sfLogoUrl, renderOpts); } catch (e) { /* background only */ }
 
           const sid = `sg_${stamp}_${i}`;
+          await slidesBatchWithRetry(slidesApi, targetId, [
+            { createSlide: { objectId: sid, insertionIndex: originalIds.length + i, ...(blankLayout ? { slideLayoutReference: { layoutId: blankLayout.objectId } } : {}) } },
+          ]);
+          // Remove any placeholders the chosen layout added
+          let placeholderIds = [];
+          try {
+            const pg = await slidesApi.presentations.pages.get({ presentationId: targetId, pageObjectId: sid, fields: 'pageElements(objectId)' });
+            placeholderIds = (pg.data.pageElements || []).map(e => e.objectId);
+          } catch (e) { /* none */ }
           const reqs = [
-            { createSlide: { objectId: sid, insertionIndex: originalIds.length + i, slideLayoutReference: { predefinedLayout: 'BLANK' } } },
+            ...placeholderIds.map(objectId => ({ deleteObject: { objectId } })),
             { updatePageProperties: { objectId: sid, pageProperties: { pageBackgroundFill: { stretchedPictureFill: { contentUrl: bgUrl } } }, fields: 'pageBackgroundFill' } },
           ];
           elements.forEach((el, n) => {
