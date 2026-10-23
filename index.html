@@ -457,6 +457,26 @@
       </div>
       </div>
 
+      <!-- Sharing Controls -->
+      <div id="sharing-controls" class="hidden mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <p class="font-bold" style="font-size: 15px; color: #032D60;">Sharing & Presentation</p>
+            <p style="font-size: 13px; color: #888; margin-top: 4px;">Control who can view your presentation</p>
+          </div>
+          <button id="present-btn-secondary" onclick="openPresentation()" class="cursor-pointer" style="background: #10B981; color: white; font-weight: 700; font-size: 13px; height: 36px; padding: 0 16px; border-radius: 8px; border: none;">▶ Present</button>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
+          <button id="sharing-private" onclick="updateSharing('private')" class="cursor-pointer" style="padding: 8px 16px; font-size: 13px; font-weight: 600; border-radius: 8px; border: 2px solid #d1d5db; background: white; color: #374151;">🔒 Private</button>
+          <button id="sharing-salesforce" onclick="updateSharing('salesforce')" class="cursor-pointer" style="padding: 8px 16px; font-size: 13px; font-weight: 600; border-radius: 8px; border: 2px solid #d1d5db; background: white; color: #374151;">🏢 Salesforce Only</button>
+          <button id="sharing-everyone" onclick="updateSharing('everyone')" class="cursor-pointer" style="padding: 8px 16px; font-size: 13px; font-weight: 600; border-radius: 8px; border: 2px solid #d1d5db; background: white; color: #374151;">🌐 Everyone</button>
+        </div>
+        <div id="share-link-box" class="hidden" style="display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #F0F9FF; border: 1px solid #BAE6FD; border-radius: 8px;">
+          <span style="font-size: 12px; color: #0369A1; flex: 1; word-break: break-all;" id="share-link-url"></span>
+          <button onclick="copyShareLink()" class="cursor-pointer" style="padding: 4px 12px; font-size: 12px; font-weight: 600; color: #0176D3; background: white; border: 1px solid #0176D3; border-radius: 6px; white-space: nowrap;">Copy Link</button>
+        </div>
+      </div>
+
       <!-- Web Slides Editor (for is_web_slides presentations) -->
       <div id="detail-restyle-notice" class="hidden" style="margin-bottom: 16px; border-radius: 10px; padding: 12px 16px; background: #FFFBEB; border: 1px solid #FDE68A; font-size: 13px; color: #92400E; line-height: 20px;"></div>
       <div id="web-slides-editor" class="hidden" style="margin-bottom: 16px;">
@@ -537,26 +557,6 @@
             </div>
             <span id="generate-status" style="font-size: 13px; color: #6B7280;">Generating slides...</span>
           </div>
-        </div>
-      </div>
-
-      <!-- Sharing Controls -->
-      <div id="sharing-controls" class="hidden mb-6" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-        <div class="flex items-center justify-between mb-3">
-          <div>
-            <p class="font-bold" style="font-size: 15px; color: #032D60;">Sharing & Presentation</p>
-            <p style="font-size: 13px; color: #888; margin-top: 4px;">Control who can view your presentation</p>
-          </div>
-          <button id="present-btn-secondary" onclick="openPresentation()" class="cursor-pointer" style="background: #10B981; color: white; font-weight: 700; font-size: 13px; height: 36px; padding: 0 16px; border-radius: 8px; border: none;">▶ Present</button>
-        </div>
-        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
-          <button id="sharing-private" onclick="updateSharing('private')" class="cursor-pointer" style="padding: 8px 16px; font-size: 13px; font-weight: 600; border-radius: 8px; border: 2px solid #d1d5db; background: white; color: #374151;">🔒 Private</button>
-          <button id="sharing-salesforce" onclick="updateSharing('salesforce')" class="cursor-pointer" style="padding: 8px 16px; font-size: 13px; font-weight: 600; border-radius: 8px; border: 2px solid #d1d5db; background: white; color: #374151;">🏢 Salesforce Only</button>
-          <button id="sharing-everyone" onclick="updateSharing('everyone')" class="cursor-pointer" style="padding: 8px 16px; font-size: 13px; font-weight: 600; border-radius: 8px; border: 2px solid #d1d5db; background: white; color: #374151;">🌐 Everyone</button>
-        </div>
-        <div id="share-link-box" class="hidden" style="display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #F0F9FF; border: 1px solid #BAE6FD; border-radius: 8px;">
-          <span style="font-size: 12px; color: #0369A1; flex: 1; word-break: break-all;" id="share-link-url"></span>
-          <button onclick="copyShareLink()" class="cursor-pointer" style="padding: 4px 12px; font-size: 12px; font-weight: 600; color: #0176D3; background: white; border: 1px solid #0176D3; border-radius: 6px; white-space: nowrap;">Copy Link</button>
         </div>
       </div>
 
