@@ -853,6 +853,46 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════
+// SHARED ROUTES — Admin Stats (DemoForge Dashboard)
+// ═══════════════════════════════════════════════
+
+// GET /api/admin/stats — analytics data for DemoForge dashboard
+app.get('/api/admin/stats', async (req, res) => {
+  try {
+    const apiKey = req.headers['x-api-key'];
+    if (!apiKey) return res.status(401).json({ error: 'API key required' });
+    const keyHash = crypto.createHash('sha256').update(apiKey).digest('hex');
+    const keys = await query('SELECT id FROM api_keys WHERE key_hash = ?', [keyHash]);
+    if (keys.length === 0) return res.status(403).json({ error: 'Invalid API key' });
+
+    const from = req.query.from || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const to = req.query.to || new Date().toISOString().slice(0, 10);
+    const toEnd = to + 'T23:59:59.999Z';
+
+    const daily = await query(`
+      SELECT DATE(created_at) as date, COUNT(*) as count
+      FROM presentations WHERE created_at >= ? AND created_at <= ?
+      GROUP BY DATE(created_at) ORDER BY date
+    `, [from, toEnd]);
+
+    const items = await query(`
+      SELECT t.id, t.name as name, u.email, t.created_at
+      FROM presentations t JOIN users u ON u.id = t.user_id
+      WHERE t.created_at >= ? AND t.created_at <= ?
+      ORDER BY t.created_at DESC
+    `, [from, toEnd]);
+
+    res.json({
+      daily: daily.map(r => ({ date: r.date, count: Number(r.count) })),
+      items: items.map(r => ({ id: r.id, name: r.name, email: r.email, created_at: r.created_at })),
+    });
+  } catch (err) {
+    console.error('Admin stats error:', err);
+    res.status(500).json({ error: 'Failed to load stats' });
+  }
+});
+
 // ─── Gemini API: Fallback model chain ───
 const GEMINI_FALLBACK_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash'];
 
