@@ -2510,7 +2510,7 @@ async function loadItems() {
 
 // ═══════════════════════════════════════════════
 function checkDemoForgeLink(appSlug, itemId) {
-  const demoforgeUrl = 'https://demoforge.aubreydemo.com';
+  const demoforgeUrl = window.location.hostname.includes('-stg-') ? 'https://aubreydemo-stg-demoforge-d6ea375c53a0.redbud-virginia.herokuapp.com' : 'https://demoforge.aubreydemo.com';
   const badge = document.getElementById('demoforge-link-badge');
   if (!badge || !itemId) return;
   badge.style.display = 'none';
