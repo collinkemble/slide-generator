@@ -308,6 +308,7 @@
     <!-- APP: Presentation Detail Page                  -->
     <!-- ═══════════════════════════════════════════════ -->
     <div id="item-detail" class="hidden" style="max-width: 912px; margin: 0 auto; padding: 32px 16px 0;">
+      <div id="demoforge-link-badge" style="display: none; padding: 8px 14px; background: #EBF5FF; border: 1px solid #B3D9FF; border-radius: 8px; font-size: 13px; color: #032D60; margin-bottom: 12px;"></div>
       <!-- Header row with back button -->
       <div class="flex items-center justify-between" style="margin-bottom: 24px;">
         <div class="flex items-center gap-3">
@@ -2508,11 +2509,27 @@ async function loadItems() {
 }
 
 // ═══════════════════════════════════════════════
+function checkDemoForgeLink(appSlug, itemId) {
+  const demoforgeUrl = 'https://demoforge.aubreydemo.com';
+  const badge = document.getElementById('demoforge-link-badge');
+  if (!badge || !itemId) return;
+  badge.style.display = 'none';
+  fetch(demoforgeUrl + '/api/project-link?app=' + encodeURIComponent(appSlug) + '&remote_id=' + encodeURIComponent(itemId))
+    .then(r => r.json())
+    .then(data => {
+      if (!data.linked) return;
+      badge.innerHTML = '\u{1F517} <strong>DemoForge Project:</strong> ' + (data.projectName || 'Unknown').replace(/</g, '&lt;') + ' <a href="' + data.projectUrl + '" target="_blank" style="color: #0176D3; font-weight: 600; text-decoration: none; margin-left: 6px;">View in DemoForge \u2197</a>';
+      badge.style.display = 'block';
+    })
+    .catch(() => {});
+}
+
 // APP: View Presentation Detail
 // ═══════════════════════════════════════════════
 async function viewItem(id, skipPush) {
   const email = document.getElementById('user-email').textContent;
   showPage('item-detail', true);
+  checkDemoForgeLink('slidegenerator', id);
 
   try {
     const resp = await fetch(`/api/presentations/${id}?email=${encodeURIComponent(email)}`);
