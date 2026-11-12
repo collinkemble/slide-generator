@@ -2517,8 +2517,7 @@ function checkDemoForgeLink(appSlug, itemId) {
     .then(r => r.json())
     .then(data => {
       if (!data.linked) return;
-      const pid = data.projectId || '';
-      badge.innerHTML = '\u{1F517} <strong>DemoForge Project:</strong> ' + (data.projectName || 'Unknown').replace(/</g, '&lt;') + ' <a href="https://demoforge.aubreydemo.com/demos/' + pid + '" target="_blank" style="color: #0176D3; font-weight: 600; text-decoration: none; margin-left: 6px;">View in DemoForge \u2197</a>';
+      badge.innerHTML = '\u{1F517} <strong>DemoForge Project:</strong> ' + (data.projectName || 'Unknown').replace(/</g, '&lt;') + ' <a href="' + (data.projectUrl || '#') + '" target="_blank" style="color: #0176D3; font-weight: 600; text-decoration: none; margin-left: 6px;">View in DemoForge \u2197</a>';
       badge.style.display = 'block';
     })
     .catch(() => {});
