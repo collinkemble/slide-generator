@@ -857,6 +857,18 @@ app.get('/api/users', async (req, res) => {
 // SHARED ROUTES — Admin Stats (DemoForge Dashboard)
 // ═══════════════════════════════════════════════
 
+// GET /api/demoforge-link/:id — proxy to DemoForge project-link
+app.get('/api/demoforge-link/:id', async (req, res) => {
+  try {
+    const demoforgeUrl = (process.env.DEMOFORGE_URL || 'https://demoforge.aubreydemo.com').replace(/\/+$/, '');
+    const resp = await fetch(`${demoforgeUrl}/api/project-link?app=slidegenerator&remote_id=${encodeURIComponent(req.params.id)}`, { signal: AbortSignal.timeout(5000) });
+    const data = await resp.json();
+    res.json(data);
+  } catch (err) {
+    res.json({ linked: false });
+  }
+});
+
 // GET /api/admin/stats — analytics data for DemoForge dashboard
 app.get('/api/admin/stats', async (req, res) => {
   try {
